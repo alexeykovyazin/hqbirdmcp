@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -20,26 +22,58 @@ func main() {
 		os.Exit(1)
 	}
 	defer sess.Close()
-	for _, call := range []struct {
-		name string
-		args map[string]any
-	}{
-		{"fb_ping", nil},
-		{"fb_db_list", nil},
-		{"fb_db_health", map[string]any{"db": "spike5"}},
-		{"fb_db_health", map[string]any{"db": "ghost"}},
-	} {
-		res, err := sess.CallTool(context.Background(), &mcp.CallToolParams{Name: call.name, Arguments: call.args})
+
+	call := func(name string, args map[string]any) string {
+		res, err := sess.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: args})
 		if err != nil {
-			fmt.Printf("%s -> protocol error: %v\n", call.name, err)
-			continue
+			return "PROTO-ERR: " + err.Error()
 		}
-		txt := ""
 		if len(res.Content) > 0 {
 			if tc, ok := res.Content[0].(*mcp.TextContent); ok {
-				txt = tc.Text
+				return tc.Text
 			}
 		}
-		fmt.Printf("%s %v -> %q\n", call.name, call.args, txt)
+		return ""
 	}
+
+	fmt.Println("ping:", call("fb_ping", nil))
+	fmt.Println("list:", strings.ReplaceAll(call("fb_db_list", nil), "\n", " | "))
+
+	// gated demo: no token => pending only, no effect
+	pending := call("fb_demo_write", map[string]any{"db": "spike5"})
+	fmt.Println("request:", firstLine(pending))
+
+	re := regexp.MustCompile(`Request ID: ([0-9a-f]+)`)
+	m := re.FindStringSubmatch(pending)
+	if m == nil {
+		fmt.Println("FAIL: no request id in pending action")
+		os.Exit(1)
+	}
+	reqID := m[1]
+
+	tokRe := regexp.MustCompile(`token \(Tier 1 only\): ([0-9a-f]+)`)
+	tm := tokRe.FindStringSubmatch(pending)
+
+	// confirm without token must fail
+	fmt.Println("confirm-no-token:", firstLine(call("fb_confirm", map[string]any{"request_id": reqID})))
+
+	// confirm with token -> job
+	confirmed := call("fb_confirm", map[string]any{"request_id": reqID, "token": tm[1]})
+	fmt.Println("confirm:", firstLine(confirmed))
+
+	// replay must fail
+	fmt.Println("replay:", firstLine(call("fb_confirm", map[string]any{"request_id": reqID, "token": tm[1]})))
+
+	jobRe := regexp.MustCompile(`job (j[0-9]+)`)
+	jm := jobRe.FindStringSubmatch(confirmed)
+	if jm != nil {
+		fmt.Println("job:", firstLine(call("fb_job_status", map[string]any{"job_id": jm[1]})))
+	}
+}
+
+func firstLine(s string) string {
+	if i := strings.Index(s, "\n"); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
