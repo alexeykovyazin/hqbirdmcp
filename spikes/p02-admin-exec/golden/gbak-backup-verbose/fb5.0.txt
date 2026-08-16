@@ -1,0 +1,38 @@
+gbak:readied database C:\HQbirdData\output\fbmcp-spike\spike_FB5.0.fdb for backup
+gbak:creating file C:\HQbirdData\output\fbmcp-spike\spike_FB5.0.fbk
+gbak:starting transaction
+gbak:database C:\HQbirdData\output\fbmcp-spike\spike_FB5.0.fdb has a page size of 8192 bytes.
+gbak:writing domains
+gbak:    writing domain RDB$1
+gbak:    writing domain RDB$2
+gbak:writing shadow files
+gbak:writing character sets
+gbak:writing collations
+gbak:writing tables
+gbak:    writing table SPIKE_RO
+gbak:         writing column ID
+gbak:         writing column VAL
+gbak:writing types
+gbak:writing filters
+gbak:writing id generators
+gbak:writing exceptions
+gbak:writing functions
+gbak:writing stored procedures
+gbak:writing packages
+gbak:    writing data for table SPIKE_RO
+gbak:0 records written
+gbak:writing triggers
+gbak:writing trigger messages
+gbak:    writing privilege for user SYSDBA
+gbak:    writing privilege for user SYSDBA
+gbak:    writing privilege for user SYSDBA
+gbak:    writing privilege for user SYSDBA
+gbak:    writing privilege for user SYSDBA
+gbak:writing security classes
+gbak:writing table constraints
+gbak:writing referential constraints
+gbak:writing check constraints
+gbak:writing SQL roles
+gbak:writing names mapping
+gbak:writing publications
+gbak:closing file, committing, and finishing. 1024 bytes written

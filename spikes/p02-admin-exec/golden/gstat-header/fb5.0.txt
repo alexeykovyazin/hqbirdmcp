@@ -1,0 +1,29 @@
+
+Database "C:\HQBIRDDATA\OUTPUT\FBMCP-SPIKE\SPIKE_FB5.0.FDB"
+Gstat execution time Sun Aug 16 23:04:30 2026
+
+Database header page information:
+	Flags			0
+	Generation		52
+	System Change Number	0
+	Page size		8192
+	ODS version		13.1
+	Oldest transaction	44
+	Oldest active		45
+	Oldest snapshot		45
+	Next transaction	45
+	Sequence number		0
+	Next attachment ID	48
+	Implementation		HW=AMD/Intel/x64 little-endian OS=Windows CC=MSVC
+	Shadow count		0
+	Page buffers		0
+	Next header page	0
+	Database dialect	3
+	Creation date		Aug 16, 2026 20:55:42
+	Attributes		force write
+
+    Variable header data:
+	Database GUID:	{3571215D-9DAC-4F76-BC71-D00E72CCF365}
+	*END*
+Gstat completion time Sun Aug 16 23:04:30 2026
+

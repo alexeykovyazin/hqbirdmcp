@@ -1,0 +1,2 @@
+gbak: ERROR:requires both input and output filenames
+gbak:Exiting before completion due to errors

@@ -1,0 +1,6 @@
+spike/#*
+*.fdb
+*.fbk
+*.bk
+*.log
+bin/
