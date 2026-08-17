@@ -22,6 +22,7 @@ import (
 	"github.com/aleks/fbmcp/internal/facts"
 	"github.com/aleks/fbmcp/internal/gate"
 	"github.com/aleks/fbmcp/internal/identity"
+	"github.com/aleks/fbmcp/internal/instlock"
 	"github.com/aleks/fbmcp/internal/jobs"
 	"github.com/aleks/fbmcp/internal/policy"
 	"github.com/aleks/fbmcp/internal/state"
@@ -52,6 +53,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "fbmcp: %v\n", err)
 		os.Exit(1)
 	}
+	instLock, err := instlock.Acquire(cfg.State.Dir) // D8: fail fast on second instance
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fbmcp: %v\n", err)
+		os.Exit(1)
+	}
+	defer instLock.Release()
 	aud, err := audit.Open(cfg.State.Dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fbmcp: audit: %v\n", err)
