@@ -85,9 +85,9 @@ func (e *EngineFacts) snapshot(ctx context.Context, dbID string) (map[string]any
 		return nil, err
 	}
 	var (
-		pageSize, odsMajor, odsMinor, dialect   int
-		readOnly, forcedWrites                  bool
-		sweepInterval                           int
+		pageSize, odsMajor, odsMinor, dialect int
+		readOnly, forcedWrites                bool
+		sweepInterval                         int
 	)
 	err = pool.QueryRowContext(ctx, `SELECT MON$PAGE_SIZE, MON$ODS_MAJOR, MON$ODS_MINOR,
 		MON$SQL_DIALECT, MON$READ_ONLY, MON$FORCED_WRITES, MON$SWEEP_INTERVAL FROM MON$DATABASE`).

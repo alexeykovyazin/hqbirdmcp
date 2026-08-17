@@ -6,14 +6,17 @@ instances:
     addr: localhost:3053
     bin_dir: C:/HQbird/Firebird30
     version: "3.0"
+    service: FirebirdServerHQBirdInstanceFB3
   - id: fb4
     addr: localhost:3054
     bin_dir: C:/HQbird/Firebird40
     version: "4.0"
+    service: FirebirdServerHQBirdInstanceFB4
   - id: fb5
     addr: localhost:3055
     bin_dir: C:/HQbird/Firebird50
     version: "5.0"
+    service: FirebirdServerHQBirdInstanceFB5
 databases:
   - id: spike3
     instance: fb3

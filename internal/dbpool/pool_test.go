@@ -23,7 +23,7 @@ func TestFuse1ReadPoolRefusesWrites(t *testing.T) {
 	}
 
 	cfg := &config.Config{
-		State: config.State{Dir: t.TempDir()},
+		State:     config.State{Dir: t.TempDir()},
 		Instances: []config.FBInstance{{ID: "fb5", Addr: "localhost:3055", BinDir: "C:/HQbird/Firebird50"}},
 		Databases: []config.Database{{
 			ID: "fuse", Instance: "fb5", Path: dbFile,

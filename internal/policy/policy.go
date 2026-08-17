@@ -19,37 +19,37 @@ import (
 
 // ToolMeta is the per-tool policy metadata (Appendix B).
 type ToolMeta struct {
-	Name        string   `json:"name"`
-	Tier        int      `json:"tier"` // 0 read … 3 critical (disabled by default)
-	Scope       string   `json:"scope"` // "database" | "instance"
-	MinFB       string  `json:"min_fb,omitempty"` // "3.0" style
+	Name          string         `json:"name"`
+	Tier          int            `json:"tier"`             // 0 read … 3 critical (disabled by default)
+	Scope         string         `json:"scope"`            // "database" | "instance"
+	MinFB         string         `json:"min_fb,omitempty"` // "3.0" style
 	Preconditions []Precondition `json:"preconditions,omitempty"`
-	RetrySafe   bool     `json:"retry_safe"`
+	RetrySafe     bool           `json:"retry_safe"`
 }
 
 // Precondition is a declarative check against facts providers.
 type Precondition struct {
-	Name string            `json:"name"` // fact name
-	Op   string            `json:"op"`   // lt | le | gt | ge | eq | true | exists
-	Value any              `json:"value,omitempty"`
-	Args map[string]string `json:"args,omitempty"`
-	Why  string            `json:"why"` // human explanation when it fails
+	Name  string            `json:"name"` // fact name
+	Op    string            `json:"op"`   // lt | le | gt | ge | eq | true | exists
+	Value any               `json:"value,omitempty"`
+	Args  map[string]string `json:"args,omitempty"`
+	Why   string            `json:"why"` // human explanation when it fails
 }
 
 // Identity is the caller (P1.3 minimal form; remote identities arrive in P5.1).
 type Identity struct {
-	Name     string
-	MaxTier  int      // identity ceiling: requests above this are denied
-	DBs      []string // empty = all registered
-	Kind     string   // "local" | "api-key" | "operator"
+	Name    string
+	MaxTier int      // identity ceiling: requests above this are denied
+	DBs     []string // empty = all registered
+	Kind    string   // "local" | "api-key" | "operator"
 }
 
 // Engine is the policy decision point.
 type Engine struct {
-	tools  map[string]ToolMeta
-	facts  state.FactsProvider
-	st     *state.Store
-	now    func() time.Time
+	tools map[string]ToolMeta
+	facts state.FactsProvider
+	st    *state.Store
+	now   func() time.Time
 }
 
 func New(tools []ToolMeta, facts state.FactsProvider, st *state.Store) *Engine {
@@ -64,9 +64,9 @@ func (e *Engine) WithNow(f func() time.Time) *Engine { e.now = f; return e }
 
 // Decision is the outcome of Evaluate.
 type Decision struct {
-	Outcome string   // "allow" | "pending" | "deny"
-	Reason  string
-	Meta    ToolMeta
+	Outcome             string // "allow" | "pending" | "deny"
+	Reason              string
+	Meta                ToolMeta
 	FailedPreconditions []string // human-readable, for the pending message
 }
 

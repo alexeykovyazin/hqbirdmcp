@@ -16,16 +16,16 @@ import (
 
 // Entry is one audit record. Chain: each entry hashes the previous hash.
 type Entry struct {
-	Time    time.Time              `json:"time"`
-	Identity string                `json:"identity"`
-	Database string                `json:"database,omitempty"`
-	Tool    string                 `json:"tool"`
-	Tier    int                    `json:"tier"`
-	Decision string                `json:"decision"` // allow | pending | approved | denied | error
-	Channel string                 `json:"channel,omitempty"` // elicitation | in-band-token | out-of-band | —
-	Detail  map[string]interface{} `json:"detail,omitempty"`
-	PrevHash string                `json:"prev_hash"`
-	Hash     string                `json:"hash"`
+	Time     time.Time              `json:"time"`
+	Identity string                 `json:"identity"`
+	Database string                 `json:"database,omitempty"`
+	Tool     string                 `json:"tool"`
+	Tier     int                    `json:"tier"`
+	Decision string                 `json:"decision"`          // allow | pending | approved | denied | error
+	Channel  string                 `json:"channel,omitempty"` // elicitation | in-band-token | out-of-band | —
+	Detail   map[string]interface{} `json:"detail,omitempty"`
+	PrevHash string                 `json:"prev_hash"`
+	Hash     string                 `json:"hash"`
 }
 
 // scrubbed keys never appear in Detail values (defense against credential

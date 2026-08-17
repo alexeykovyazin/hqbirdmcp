@@ -19,9 +19,9 @@ import (
 
 // Manager owns the pools for every registered database.
 type Manager struct {
-	cfg  *config.Config
-	mu   sync.Mutex
-	read map[string]*sql.DB  // db id -> read pool
+	cfg   *config.Config
+	mu    sync.Mutex
+	read  map[string]*sql.DB // db id -> read pool
 	admin map[string]*sql.DB // db id -> admin pool
 }
 
@@ -131,4 +131,19 @@ func (m *Manager) Close() {
 	}
 	m.read = map[string]*sql.DB{}
 	m.admin = map[string]*sql.DB{}
+}
+
+// CloseDB closes both pools for one database (used by guarded restore before
+// replacing the file).
+func (m *Manager) CloseDB(dbID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if p, ok := m.read[dbID]; ok {
+		p.Close()
+		delete(m.read, dbID)
+	}
+	if p, ok := m.admin[dbID]; ok {
+		p.Close()
+		delete(m.admin, dbID)
+	}
 }

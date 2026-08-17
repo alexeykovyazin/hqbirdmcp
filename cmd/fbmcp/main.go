@@ -17,6 +17,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/aleks/fbmcp/internal/audit"
+	"github.com/aleks/fbmcp/internal/backupsvc"
 	"github.com/aleks/fbmcp/internal/config"
 	"github.com/aleks/fbmcp/internal/dbpool"
 	"github.com/aleks/fbmcp/internal/facts"
@@ -49,6 +50,17 @@ var toolMeta = []policy.ToolMeta{
 	{Name: "fb_schema_list", Tier: 0, Scope: "database", MinFB: "2.5"},
 	{Name: "fb_describe", Tier: 0, Scope: "database", MinFB: "2.5"},
 	{Name: "fb_activity_sample", Tier: 0, Scope: "database", MinFB: "2.5"},
+	{Name: "fb_backup_start", Tier: 1, Scope: "database"},
+	{Name: "fb_restore_test", Tier: 1, Scope: "database"},
+	{Name: "fb_validate", Tier: 1, Scope: "database"},
+	{Name: "fb_sweep", Tier: 1, Scope: "database"},
+	{Name: "fb_set_forcewrite", Tier: 1, Scope: "database"},
+	{Name: "fb_set_readonly", Tier: 1, Scope: "database"},
+	{Name: "fb_service_status", Tier: 0, Scope: "instance"},
+	{Name: "fb_restore_replace", Tier: 2, Scope: "database", Preconditions: []policy.Precondition{
+		{Name: "verified_backup_exists", Op: "true", Why: "verified backup required"},
+		{Name: "backup_freshness", Op: "lt", Value: 24.0, Why: "backup < 24h"},
+	}},
 }
 
 func main() {
@@ -84,7 +96,8 @@ func main() {
 	runner := jobs.NewRunner(st)
 	defer runner.Close()
 	engFacts := facts.NewEngineFacts(cfg, pools) // first real facts provider (P2.1)
-	eng := policy.New(toolMeta, engFacts, st)
+	allFacts := state.CompositeFacts{engFacts, backupsvc.NewCatalog(st)}
+	eng := policy.New(toolMeta, allFacts, st)
 	localID := identity.Local(2, nil) // local ceiling: Tier 2 (Tier 3 disabled regardless)
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "fbmcp", Version: "0.1.0"}, nil)
@@ -120,7 +133,12 @@ func main() {
 	})
 
 	// fb_demo_write — the M1 gated-tool demo: policy → pending action →
-	// fb_confirm → job manager. The "mutation" is a no-op report.
+	gt := &gatedTools{cfg: cfg, pools: pools, eng: eng, g: g, runner: runner, aud: aud, st: st,
+		execs: map[string]executor{}, args: map[string]map[string]any{}}
+	registerP3Tools(server, gt)
+	gt.registerRestore(server)
+	gt.startApprovalWatcher(context.Background())
+	// fb_confirm → gate → dispatcher → job manager.
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_demo_write", Description: "DEMO Tier-1 gated tool: policy → impact statement → confirm → job (no real mutation)"}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
 		d := eng.Evaluate(localID, a.Db, "fb_demo_write")
 		if d.Outcome == "deny" {
@@ -150,12 +168,19 @@ func main() {
 		if err != nil {
 			return text("confirmation rejected: " + err.Error()), nil, nil
 		}
-		id, err := runner.Submit("demo_write", p.Database, p.Identity, p.ID, func(ctx context.Context, prog func(float64, string)) (string, error) {
-			prog(0.5, "demo work")
-			return "demo mutation 'executed' (no-op)", nil
-		})
+		if p.Tool == "fb_demo_write" { // legacy demo path
+			id, err := runner.Submit("demo_write", p.Database, p.Identity, p.ID, func(ctx context.Context, prog func(float64, string)) (string, error) {
+				prog(0.5, "demo work")
+				return "demo mutation 'executed' (no-op)", nil
+			})
+			if err != nil {
+				return text("submit failed: " + err.Error()), nil, nil
+			}
+			return text(fmt.Sprintf("confirmed; job %s submitted — check fb_job_status", id)), nil, nil
+		}
+		id, err := gt.dispatch(p)
 		if err != nil {
-			return text("submit failed: " + err.Error()), nil, nil
+			return text("dispatch failed: " + err.Error()), nil, nil
 		}
 		return text(fmt.Sprintf("confirmed; job %s submitted — check fb_job_status", id)), nil, nil
 	})

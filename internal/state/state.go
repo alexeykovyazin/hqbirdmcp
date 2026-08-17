@@ -23,8 +23,8 @@ type FactsProvider interface {
 
 // FactContext carries the database/instance a fact is evaluated for.
 type FactContext struct {
-	Database  string
-	Instance  string
+	Database string
+	Instance string
 }
 
 // StubFacts returns fixed values (Phase 1 tests).
@@ -39,15 +39,15 @@ func (s StubFacts) Fact(_ FactContext, name string, _ map[string]string) (any, e
 
 // PendingAction is a gated request awaiting confirmation.
 type PendingAction struct {
-	ID           string            `json:"id"`
-	Created      time.Time         `json:"created"`
-	Expires      time.Time         `json:"expires"`
-	Identity     string            `json:"identity"`
-	Database     string            `json:"database"`
-	Tool         string            `json:"tool"`
-	Tier         int               `json:"tier"`
-	ImpactText   string            `json:"impact_text"`
-	ArgHash      string            `json:"arg_hash"` // re-validation: changed args ⇒ re-request
+	ID            string            `json:"id"`
+	Created       time.Time         `json:"created"`
+	Expires       time.Time         `json:"expires"`
+	Identity      string            `json:"identity"`
+	Database      string            `json:"database"`
+	Tool          string            `json:"tool"`
+	Tier          int               `json:"tier"`
+	ImpactText    string            `json:"impact_text"`
+	ArgHash       string            `json:"arg_hash"`                // re-validation: changed args ⇒ re-request
 	Preconditions map[string]string `json:"preconditions,omitempty"` // name → human-readable requirement
 }
 
@@ -76,10 +76,10 @@ type CatalogEntry struct {
 }
 
 type snapshot struct {
-	Pending  []PendingAction `json:"pending"`
-	Jobs     []Job           `json:"jobs"`
-	Catalog  []CatalogEntry  `json:"catalog"`
-	Windows  []Window        `json:"windows"`
+	Pending []PendingAction `json:"pending"`
+	Jobs    []Job           `json:"jobs"`
+	Catalog []CatalogEntry  `json:"catalog"`
+	Windows []Window        `json:"windows"`
 }
 
 // Window is a maintenance window (db "" = all databases).
@@ -224,4 +224,24 @@ func (s *Store) LatestVerifiedBackup(db string) (time.Time, bool) {
 		}
 	}
 	return best, found
+}
+
+// CompositeFacts merges several providers (first match wins, fail-closed).
+type CompositeFacts []FactsProvider
+
+func (c CompositeFacts) Fact(fc FactContext, name string, args map[string]string) (any, error) {
+	var firstErr error
+	for _, p := range c {
+		v, err := p.Fact(fc, name, args)
+		if err == nil {
+			return v, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	if firstErr == nil {
+		firstErr = fmt.Errorf("no facts providers registered")
+	}
+	return nil, firstErr
 }

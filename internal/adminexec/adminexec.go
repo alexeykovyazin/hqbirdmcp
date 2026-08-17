@@ -70,4 +70,6 @@ func (l *limited) Write(p []byte) (int, error) {
 }
 
 // IsTimeout reports whether the error was the wall-clock timeout.
-func (r Result) IsTimeout() bool { return errors.Is(r.Err, os.ErrDeadlineExceeded) || r.Err != nil && r.Exit == -1 }
+func (r Result) IsTimeout() bool {
+	return errors.Is(r.Err, os.ErrDeadlineExceeded) || r.Err != nil && r.Exit == -1
+}

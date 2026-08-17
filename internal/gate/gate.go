@@ -47,7 +47,7 @@ func New(st *state.Store, aud *audit.Logger) *Gate {
 	return &Gate{st: st, aud: aud, ttl: DefaultTTL, now: time.Now}
 }
 
-func (g *Gate) WithTTL(d time.Duration) *Gate { g.ttl = d; return g }
+func (g *Gate) WithTTL(d time.Duration) *Gate    { g.ttl = d; return g }
 func (g *Gate) WithNow(f func() time.Time) *Gate { g.now = f; return g }
 
 // Request records a pending action and returns it (with its id) for the
@@ -107,6 +107,12 @@ func (g *Gate) Confirm(requestID, identity, channel, token string) (state.Pendin
 		g.requeue(p)
 		return state.PendingAction{}, ErrIdentity
 	}
+	if p.Tier >= 2 && channel != ChannelOutOfBand {
+		g.requeue(p)
+		g.aud.Log(audit.Entry{Identity: identity, Database: p.Database, Tool: p.Tool, Tier: p.Tier, Decision: "denied", Channel: channel,
+			Detail: map[string]interface{}{"request_id": requestID, "reason": "channel policy: tier >= 2 requires out-of-band"}})
+		return state.PendingAction{}, fmt.Errorf("%w (tier %d)", ErrChannelPolicy, p.Tier)
+	}
 	if channel == ChannelInBand {
 		if token == "" {
 			g.requeue(p)
@@ -117,12 +123,7 @@ func (g *Gate) Confirm(requestID, identity, channel, token string) (state.Pendin
 			return state.PendingAction{}, ErrReplay
 		}
 	}
-	if p.Tier >= 2 && channel != ChannelOutOfBand {
-		g.requeue(p)
-		g.aud.Log(audit.Entry{Identity: identity, Database: p.Database, Tool: p.Tool, Tier: p.Tier, Decision: "denied", Channel: channel,
-			Detail: map[string]interface{}{"request_id": requestID, "reason": "channel policy: tier >= 2 requires out-of-band"}})
-		return state.PendingAction{}, fmt.Errorf("%w (tier %d)", ErrChannelPolicy, p.Tier)
-	}
+
 	g.aud.Log(audit.Entry{Identity: identity, Database: p.Database, Tool: p.Tool, Tier: p.Tier, Decision: "approved", Channel: channel,
 		Detail: map[string]interface{}{"request_id": requestID}})
 	return p, nil

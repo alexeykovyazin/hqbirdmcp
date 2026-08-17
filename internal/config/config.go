@@ -13,9 +13,9 @@ import (
 
 // Config is the root of fbmcp.yaml.
 type Config struct {
-	State     State     `yaml:"state"`
+	State     State        `yaml:"state"`
 	Instances []FBInstance `yaml:"instances"`
-	Databases []Database `yaml:"databases"`
+	Databases []Database   `yaml:"databases"`
 }
 
 // State locates kernel state (audit log, job store, pending actions).
@@ -28,20 +28,21 @@ type FBInstance struct {
 	ID      string `yaml:"id"`
 	Addr    string `yaml:"addr"` // host:port
 	BinDir  string `yaml:"bin_dir"`
+	Service string `yaml:"service"` // OS service name (P3.7); derived fallback if empty
 	Version string `yaml:"version"` // informational, e.g. "5.0"
 }
 
 // Database is one managed database. Tool args reference it by ID only —
 // never by path or connection string (main plan §4.2).
 type Database struct {
-	ID         string `yaml:"id"`
-	Instance   string `yaml:"instance"`
-	Path       string `yaml:"path"`
-	BackupDir  string `yaml:"backup_dir"`
-	WorkDir    string `yaml:"work_dir"`
-	ROUser     string `yaml:"ro_user"`
-	ROSecretEnv string `yaml:"ro_secret_env"` // env var name holding the RO password
-	AdminUser  string `yaml:"admin_user"`
+	ID             string `yaml:"id"`
+	Instance       string `yaml:"instance"`
+	Path           string `yaml:"path"`
+	BackupDir      string `yaml:"backup_dir"`
+	WorkDir        string `yaml:"work_dir"`
+	ROUser         string `yaml:"ro_user"`
+	ROSecretEnv    string `yaml:"ro_secret_env"` // env var name holding the RO password
+	AdminUser      string `yaml:"admin_user"`
 	AdminSecretEnv string `yaml:"admin_secret_env"`
 }
 
