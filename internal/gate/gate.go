@@ -108,7 +108,11 @@ func (g *Gate) Confirm(requestID, identity, channel, token string) (state.Pendin
 		return state.PendingAction{}, ErrIdentity
 	}
 	if channel == ChannelInBand {
-		if token == "" || token != IssueToken(requestID, p.ArgHash) {
+		if token == "" {
+			g.requeue(p)
+			return state.PendingAction{}, errors.New("missing in-band token")
+		}
+		if token != IssueToken(requestID, p.ArgHash) {
 			g.requeue(p)
 			return state.PendingAction{}, ErrReplay
 		}

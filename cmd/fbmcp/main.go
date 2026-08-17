@@ -12,12 +12,14 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/aleks/fbmcp/internal/audit"
 	"github.com/aleks/fbmcp/internal/config"
 	"github.com/aleks/fbmcp/internal/dbpool"
+	"github.com/aleks/fbmcp/internal/facts"
 	"github.com/aleks/fbmcp/internal/gate"
 	"github.com/aleks/fbmcp/internal/identity"
 	"github.com/aleks/fbmcp/internal/jobs"
@@ -36,6 +38,9 @@ var toolMeta = []policy.ToolMeta{
 	{Name: "fb_confirm", Tier: 0, Scope: "database"}, // gate entry point, not a mutation
 	{Name: "fb_cancel", Tier: 0, Scope: "database"},
 	{Name: "fb_demo_write", Tier: 1, Scope: "database", RetrySafe: true},
+	{Name: "fb_info", Tier: 0, Scope: "database", MinFB: "2.5"},
+	{Name: "fb_sessions", Tier: 0, Scope: "database", MinFB: "2.5"},
+	{Name: "fb_transactions", Tier: 0, Scope: "database", MinFB: "2.5"},
 }
 
 func main() {
@@ -58,12 +63,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "fbmcp: state: %v\n", err)
 		os.Exit(1)
 	}
-	eng := policy.New(toolMeta, state.StubFacts{}, st) // stub facts until P2.1/P3.1
+
 	g := gate.New(st, aud)
 	pools := dbpool.NewManager(cfg)
 	defer pools.Close()
 	runner := jobs.NewRunner(st)
 	defer runner.Close()
+	engFacts := facts.NewEngineFacts(cfg, pools) // first real facts provider (P2.1)
+	eng := policy.New(toolMeta, engFacts, st)
 	localID := identity.Local(2, nil) // local ceiling: Tier 2 (Tier 3 disabled regardless)
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "fbmcp", Version: "0.1.0"}, nil)
@@ -158,6 +165,71 @@ func main() {
 			return text("unknown job"), nil, nil
 		}
 		return text(fmt.Sprintf("%s: %s (%.0f%%) %s", j.ID, j.State, j.Progress*100, j.Message)), nil, nil
+	})
+
+	// fb_info — P2.1: capability probe; the facts also feed version gating.
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_info", Description: "Tier 0: engine version, ODS, dialect, page size, RO/ForceWrite state"}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
+		snap, err := engFacts.Snapshot(ctx, a.Db)
+		if err != nil {
+			return text("error: " + err.Error()), nil, nil
+		}
+		var b strings.Builder
+		for _, k := range []string{"engine_version_full", "engine_version", "ods", "sql_dialect", "page_size", "read_only", "forced_writes", "sweep_interval"} {
+			if v, ok := snap[k]; ok {
+				fmt.Fprintf(&b, "%s: %v\n", k, v)
+			}
+		}
+		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_info", Tier: 0, Decision: "allow"})
+		return text(b.String()), nil, nil
+	})
+
+	// fb_sessions — P2.2: MON$ATTACHMENTS (+running statement per attachment).
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_sessions", Description: "Tier 0: list attachments (user, remote address, state, timestamp) with running statements"}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
+		tx, err := pools.ReadOnly(ctx, a.Db) // engine-enforced read-only
+		if err != nil {
+			return text("error: " + err.Error()), nil, nil
+		}
+		defer tx.Rollback()
+		rows, err := tx.QueryContext(ctx, `SELECT MON$USER, COALESCE(MON$REMOTE_ADDRESS,''), COALESCE(MON$STATE,''), MON$TIMESTAMP
+			FROM MON$ATTACHMENTS ORDER BY MON$TIMESTAMP`)
+		if err != nil {
+			return text("error: " + err.Error()), nil, nil
+		}
+		defer rows.Close()
+		var b strings.Builder
+		n := 0
+		for rows.Next() {
+			var user, addr, st string
+			var ts time.Time
+			if err := rows.Scan(&user, &addr, &st, &ts); err != nil {
+				return text("error: " + err.Error()), nil, nil
+			}
+			fmt.Fprintf(&b, "- %s from %s state=%s since %s\n", user, addr, st, ts.UTC().Format(time.RFC3339))
+			n++
+			if n >= 100 { // row cap (§2 ADR-014 discipline)
+				b.WriteString("... (capped at 100 rows)\n")
+				break
+			}
+		}
+		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_sessions", Tier: 0, Decision: "allow"})
+		return text(b.String()), nil, nil
+	})
+
+	// fb_transactions — P2.3: MGA health: OIT/OAT/OST/Next from MON$DATABASE.
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_transactions", Description: "Tier 0: transaction health — OIT/OAT/OST/Next and gap sizes"}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
+		tx, err := pools.ReadOnly(ctx, a.Db)
+		if err != nil {
+			return text("error: " + err.Error()), nil, nil
+		}
+		defer tx.Rollback()
+		var oit, oat, ost, next int64
+		if err := tx.QueryRowContext(ctx, `SELECT MON$OLDEST_TRANSACTION, MON$OLDEST_ACTIVE, MON$OLDEST_SNAPSHOT, MON$NEXT_TRANSACTION FROM MON$DATABASE`).
+			Scan(&oit, &oat, &ost, &next); err != nil {
+			return text("error: " + err.Error()), nil, nil
+		}
+		out := fmt.Sprintf("oldest_transaction: %d\noldest_active: %d\noldest_snapshot: %d\nnext: %d\nnext-oit gap: %d\n", oit, oat, ost, next, next-oit)
+		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_transactions", Tier: 0, Decision: "allow"})
+		return text(out), nil, nil
 	})
 
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {

@@ -182,3 +182,33 @@ func (e *Engine) Tools() []ToolMeta {
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
+
+// V3Op is one row of the generated v3 operations table.
+type V3Op struct {
+	Num      int
+	Category string
+	Action   string
+	Risk     string
+	OpType   string
+	ExclDB   bool
+	ExclObj  bool
+	Restart  bool
+}
+
+// TierForRisk maps the v3 Risk column to the tool tier (main plan §5.2).
+// Read rows are Tier 0; Write rows map by risk; Critical = Tier 3 (disabled).
+func TierForRisk(o V3Op) int {
+	if o.OpType == "Read" {
+		return 0
+	}
+	switch o.Risk {
+	case "Critical":
+		return 3
+	case "High":
+		return 2
+	default: // Medium / Low writes
+		return 1
+	}
+}
+
+//go:generate go run github.com/aleks/fbmcp/internal/gen/fromv3

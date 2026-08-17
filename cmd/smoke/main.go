@@ -37,6 +37,10 @@ func main() {
 	}
 
 	fmt.Println("ping:", call("fb_ping", nil))
+	fmt.Println("info5:", strings.ReplaceAll(call("fb_info", map[string]any{"db": "spike5"}), "\n", " | "))
+	fmt.Println("sess5:", firstLine(call("fb_sessions", map[string]any{"db": "spike5"})))
+	fmt.Println("tx5:", strings.ReplaceAll(call("fb_transactions", map[string]any{"db": "spike5"}), "\n", " | "))
+	fmt.Println("info-ghost:", firstLine(call("fb_info", map[string]any{"db": "ghost"})))
 	fmt.Println("list:", strings.ReplaceAll(call("fb_db_list", nil), "\n", " | "))
 
 	// gated demo: no token => pending only, no effect
