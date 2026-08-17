@@ -31,6 +31,8 @@ import (
 // demo tool set (Phase 1). The real Tier-0..2 surface arrives in Phases 2–4;
 // metadata generation from firebird_dba_tasks_table_v3.md lands with P1.5's
 // CI diff (plan §8) — entries here are explicitly demo-only.
+var registerExtra func(server *mcp.Server, cfg *config.Config, pools *dbpool.Manager, engFacts *facts.EngineFacts, aud *audit.Logger)
+
 var toolMeta = []policy.ToolMeta{
 	{Name: "fb_ping", Tier: 0, Scope: "database"},
 	{Name: "fb_db_list", Tier: 0, Scope: "database"},
@@ -42,6 +44,11 @@ var toolMeta = []policy.ToolMeta{
 	{Name: "fb_info", Tier: 0, Scope: "database", MinFB: "2.5"},
 	{Name: "fb_sessions", Tier: 0, Scope: "database", MinFB: "2.5"},
 	{Name: "fb_transactions", Tier: 0, Scope: "database", MinFB: "2.5"},
+	{Name: "fb_analyze_query", Tier: 0, Scope: "database", MinFB: "2.5"},
+	{Name: "fb_index_stats", Tier: 0, Scope: "database", MinFB: "2.5"},
+	{Name: "fb_schema_list", Tier: 0, Scope: "database", MinFB: "2.5"},
+	{Name: "fb_describe", Tier: 0, Scope: "database", MinFB: "2.5"},
+	{Name: "fb_activity_sample", Tier: 0, Scope: "database", MinFB: "2.5"},
 }
 
 func main() {
@@ -239,6 +246,7 @@ func main() {
 		return text(out), nil, nil
 	})
 
+	registerExtra(server, cfg, pools, engFacts, aud)
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatalf("fbmcp: server: %v", err)
 	}
@@ -252,3 +260,5 @@ func hashOf(s string) string {
 func text(s string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: s}}}
 }
+
+func init() { registerExtra = registerP2Tools }

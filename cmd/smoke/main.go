@@ -37,6 +37,11 @@ func main() {
 	}
 
 	fmt.Println("ping:", call("fb_ping", nil))
+	fmt.Println("plan:", firstLine(call("fb_analyze_query", map[string]any{"db": "spike5", "query": "SELECT * FROM RDB$RELATIONS WHERE RDB$RELATION_NAME = 'CUSTOMER'"})))
+	fmt.Println("idx:", firstLine(call("fb_index_stats", map[string]any{"db": "spike5"})))
+	fmt.Println("schema:", firstLine(call("fb_schema_list", map[string]any{"db": "spike5"})))
+	fmt.Println("describe:", firstLine(call("fb_describe", map[string]any{"db": "spike5", "table": "SPIKE_RO"})))
+	fmt.Println("sample:", strings.ReplaceAll(call("fb_activity_sample", map[string]any{"db": "spike5", "seconds": 2}), "\n", " | "))
 	fmt.Println("info5:", strings.ReplaceAll(call("fb_info", map[string]any{"db": "spike5"}), "\n", " | "))
 	fmt.Println("sess5:", firstLine(call("fb_sessions", map[string]any{"db": "spike5"})))
 	fmt.Println("tx5:", strings.ReplaceAll(call("fb_transactions", map[string]any{"db": "spike5"}), "\n", " | "))
