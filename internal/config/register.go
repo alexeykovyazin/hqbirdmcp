@@ -9,15 +9,15 @@ import (
 )
 
 type RegisterOptions struct {
-	InstanceID       string
-	DBID             string
-	Path             string
-	BackupDir        string
-	WorkDir          string
-	ROUser           string
-	ROSecretEnv      string
-	AdminUser        string
-	AdminSecretEnv   string
+	InstanceID     string
+	DBID           string
+	Path           string
+	BackupDir      string
+	WorkDir        string
+	ROUser         string
+	ROSecretEnv    string
+	AdminUser      string
+	AdminSecretEnv string
 }
 
 func MaterializeDatabase(cfg *Config, opt RegisterOptions) (Database, error) {

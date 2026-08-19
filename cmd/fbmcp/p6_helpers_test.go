@@ -14,6 +14,7 @@ import (
 	"github.com/aleks/fbmcp/internal/jobs"
 	"github.com/aleks/fbmcp/internal/policy"
 	"github.com/aleks/fbmcp/internal/state"
+	"github.com/aleks/fbmcp/internal/statetest"
 )
 
 func testCfg(t *testing.T) *config.Config {
@@ -48,7 +49,7 @@ func newTestGT(t *testing.T) *gatedTools {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { aud.Close() })
-	facts := state.StubFacts{"engine_version": "5.0", "verified_backup_exists": true, "backup_freshness": 1.0}
+	facts := statetest.StubFacts{"engine_version": "5.0", "verified_backup_exists": true, "backup_freshness": 1.0}
 	eng := policy.New(toolMeta, facts, st)
 	runner := jobs.NewRunner(st)
 	t.Cleanup(func() { runner.Close() })

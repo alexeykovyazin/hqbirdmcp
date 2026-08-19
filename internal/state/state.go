@@ -1,5 +1,5 @@
-// Package state implements the P1.8 kernel state store: pending actions,
-// maintenance windows, backup catalog (stub until P3.1), job records —
+// Package state implements the kernel state store: pending actions,
+// maintenance windows, backup catalog, job records —
 // single persistent component under the state dir, written atomically
 // (temp+rename, ADR-009/D6), guarded by the single-instance lock (D8).
 package state
@@ -14,8 +14,8 @@ import (
 )
 
 // FactsProvider supplies named facts to the policy engine's precondition
-// checker. Real providers register in later phases (P2.1 engine_version,
-// P3.1 backup_freshness…); Phase 1 runs stubs. Fail-closed: a missing
+// checker. Real providers register at startup (P2.1 engine_version,
+// P3.1 backup_freshness…). Fail-closed: a missing
 // provider is an evaluation error, never a silent pass.
 type FactsProvider interface {
 	Fact(ctx FactContext, name string, args map[string]string) (any, error)
@@ -25,16 +25,6 @@ type FactsProvider interface {
 type FactContext struct {
 	Database string
 	Instance string
-}
-
-// StubFacts returns fixed values (Phase 1 tests).
-type StubFacts map[string]any
-
-func (s StubFacts) Fact(_ FactContext, name string, _ map[string]string) (any, error) {
-	if v, ok := s[name]; ok {
-		return v, nil
-	}
-	return nil, fmt.Errorf("no facts provider registered for %q (fail-closed)", name)
 }
 
 // PendingAction is a gated request awaiting confirmation.

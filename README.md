@@ -207,7 +207,7 @@ Approving/denying writes the same marker files the CLI below writes.
 fbmcp-tray.exe [fbmcp.yaml]
 ```
 
-**`fbmcpctl`** / **`fbmcp-approve`** (cross-platform):
+**`fbmcpctl`** (cross-platform; absorbs the former `fbmcp-approve` alias):
 
 ```
 fbmcpctl approve <state_dir> [request_id]

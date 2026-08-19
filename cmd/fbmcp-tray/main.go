@@ -4,7 +4,7 @@
 // (§5.5c, Tier ≥ 2). Watches the same state dir the running fbmcp server
 // reads/writes and pops a native Approve/Deny dialog for each Tier ≥ 2
 // pending action, writing the same approvals/denials markers the
-// fbmcp-approve / fbmcpctl approve CLIs already write. The MCP client
+// fbmcpctl approve CLI already writes. The MCP client
 // cannot reach this surface.
 package main
 

@@ -85,7 +85,7 @@ func registerFBWrite(server *mcp.Server, gt *gatedTools, localID policy.Identity
 		if meta.Tier <= 1 {
 			fmt.Fprintf(&b, "In-band token (Tier 1 only): %s\n", gate.IssueToken(p.ID, argHash))
 		} else {
-			b.WriteString("Confirmation: out-of-band only (fbmcp-approve CLI)\n")
+			b.WriteString("Confirmation: out-of-band only (fbmcp-tray popup or fbmcpctl approve)\n")
 		}
 		gt.aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_write", Tier: prep.MaxTier, Decision: "pending", Detail: map[string]interface{}{"templates": classify.Template(a.SQL)}})
 		return text(b.String()), nil, nil

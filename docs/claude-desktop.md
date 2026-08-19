@@ -12,7 +12,7 @@ Built with `CGO_ENABLED=0 -trimpath` into `fbmcp/dist/`:
 |---|---|
 | `fbmcp.exe` | MCP server (stdio) |
 | `fbmcpctl.exe` | Operator CLI: `approve`, `status`, `setup`, `doctor` |
-| `fbmcp-approve.exe` | Alias for writing an out-of-band approval marker |
+| `fbmcp-tray.exe` | Windows tray Approve/Deny popup for Tier ≥ 2 confirmations |
 
 This host (Windows amd64):
 

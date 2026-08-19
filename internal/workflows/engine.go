@@ -20,10 +20,10 @@ type CompensateFunc func(ctx context.Context, wf *state.Workflow) error
 
 // StepDef is one node of a registered workflow type.
 type StepDef struct {
-	Name        string
-	Do          StepFunc
-	Compensate  CompensateFunc
-	AlwaysRun   bool // run even during reconcilation-to-online (e.g. gfix -online)
+	Name       string
+	Do         StepFunc
+	Compensate CompensateFunc
+	AlwaysRun  bool // run even during reconcilation-to-online (e.g. gfix -online)
 }
 
 // Engine runs named graphs against the state store.

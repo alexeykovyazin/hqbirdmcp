@@ -21,8 +21,8 @@ const (
 // dialogWorker shows one Approve/Deny dialog at a time (TaskDialogIndirect
 // blocks until dismissed, which is what naturally serializes them — two
 // pending actions never stack as overlapping windows). Approve/Deny write
-// the same out-of-band marker files the fbmcp-approve / fbmcpctl approve
-// CLIs already write; the running server's approval/denial watchers
+// the same out-of-band marker files the fbmcpctl approve CLI already
+// writes; the running server's approval/denial watchers
 // (cmd/fbmcp/p3tools.go) pick them up within 2s.
 func dialogWorker(stateDir string, queue <-chan state.PendingAction) {
 	for p := range queue {

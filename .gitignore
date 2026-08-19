@@ -1,6 +1,16 @@
-spike/#*
+# build outputs
+*.exe
+dist/
+bin/
+*.test
+*.out
+
+# databases / backups / logs
 *.fdb
 *.fbk
 *.bk
 *.log
-bin/
+
+# config rollbacks and local scratch
+*.prev
+spikes/scratch/

@@ -14,29 +14,29 @@ import (
 
 // Param is one registry entry.
 type Param struct {
-	Name             string
-	Kind             string // int | string | enum | bool
-	Enum             []string
-	Min, Max         *int
-	Restart          bool
-	Security         bool // escalate to Tier 2
-	MinFB            string
-	Default          string
+	Name     string
+	Kind     string // int | string | enum | bool
+	Enum     []string
+	Min, Max *int
+	Restart  bool
+	Security bool // escalate to Tier 2
+	MinFB    string
+	Default  string
 }
 
 // Registry is the curated firebird.conf parameter set.
 var Registry = map[string]Param{
-	"DefaultDbCachePages": {Name: "DefaultDbCachePages", Kind: "int", Restart: true, Default: "2048"},
-	"TempCacheLimit":      {Name: "TempCacheLimit", Kind: "int", Restart: true},
-	"TempDirectories":     {Name: "TempDirectories", Kind: "string", Restart: true},
-	"RemoteServicePort":   {Name: "RemoteServicePort", Kind: "int", Restart: true, Security: true},
-	"RemoteBindAddress":   {Name: "RemoteBindAddress", Kind: "string", Restart: true, Security: true},
-	"WireCrypt":           {Name: "WireCrypt", Kind: "enum", Enum: []string{"Enabled", "Required", "Disabled"}, Restart: true, Security: true, MinFB: "3.0", Default: "Enabled"},
-	"AuthServer":          {Name: "AuthServer", Kind: "string", Restart: true, Security: true, MinFB: "3.0"},
-	"AuthClient":          {Name: "AuthClient", Kind: "string", Restart: true, Security: true, MinFB: "3.0"},
-	"WireCompression":     {Name: "WireCompression", Kind: "bool", Restart: true, MinFB: "3.0"},
-	"MaxUnflushedWrites":  {Name: "MaxUnflushedWrites", Kind: "int", Restart: false},
-	"BugcheckAbort":       {Name: "BugcheckAbort", Kind: "bool", Restart: true},
+	"DefaultDbCachePages":      {Name: "DefaultDbCachePages", Kind: "int", Restart: true, Default: "2048"},
+	"TempCacheLimit":           {Name: "TempCacheLimit", Kind: "int", Restart: true},
+	"TempDirectories":          {Name: "TempDirectories", Kind: "string", Restart: true},
+	"RemoteServicePort":        {Name: "RemoteServicePort", Kind: "int", Restart: true, Security: true},
+	"RemoteBindAddress":        {Name: "RemoteBindAddress", Kind: "string", Restart: true, Security: true},
+	"WireCrypt":                {Name: "WireCrypt", Kind: "enum", Enum: []string{"Enabled", "Required", "Disabled"}, Restart: true, Security: true, MinFB: "3.0", Default: "Enabled"},
+	"AuthServer":               {Name: "AuthServer", Kind: "string", Restart: true, Security: true, MinFB: "3.0"},
+	"AuthClient":               {Name: "AuthClient", Kind: "string", Restart: true, Security: true, MinFB: "3.0"},
+	"WireCompression":          {Name: "WireCompression", Kind: "bool", Restart: true, MinFB: "3.0"},
+	"MaxUnflushedWrites":       {Name: "MaxUnflushedWrites", Kind: "int", Restart: false},
+	"BugcheckAbort":            {Name: "BugcheckAbort", Kind: "bool", Restart: true},
 	"FileSystemCacheThreshold": {Name: "FileSystemCacheThreshold", Kind: "int", Restart: true},
 }
 

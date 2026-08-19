@@ -13,8 +13,7 @@ See [ADR-025](docs/decisions/ADR-025-release-and-disclosure.md).
 
 **Do not** open a public GitHub issue for an unreleased vulnerability.
 
-Email: **security@localhost** (replace with the operator mailbox before the
-v1.0 tag — this placeholder is intentional until a public address exists).
+Email: **support@ib-aid.com**
 
 Include: affected version / commit, impact, reproduction **without** a
 weaponized exploit if possible, and whether you are requesting embargo.

@@ -51,9 +51,9 @@ func main() {
 	}
 	ic := call("fb_confirm", map[string]any{"request_id": m[1], "token": "forged"})
 	fmt.Println("T2 in-band:", first(ic))
-	// 3) out-of-band: run fbmcp-approve CLI writing the marker
+	// 3) out-of-band: run fbmcpctl approve writing the marker
 	fmt.Println("OOB approve...")
-	ac := exec.Command(filepath.Join(wd, "fbmcp-approve.exe"), `C:/HQbirdData/output/fbmcp-spike/state`, m[1])
+	ac := exec.Command(filepath.Join(wd, "fbmcpctl.exe"), `C:/HQbirdData/output/fbmcp-spike/state`, m[1])
 	out, err := ac.CombinedOutput()
 	fmt.Printf("approve-cli: %v %s\n", err, first(string(out)))
 	// 4) watcher confirms + dispatches; poll job

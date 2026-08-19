@@ -1,0 +1,77 @@
+# P6.1 T1 / ADR-026 — the security lane. Moved into the repo (it previously
+# lived at the non-git AIDBA parent with subdirectory path assumptions and
+# never ran).
+# C1 without Firebird: tests Skip with a log (not a silent fail).
+# Set FBMCP_REQUIRE_FIREBIRD=1 on the Windows HQbird host so those skips fail.
+name: fbmcp-security
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: go mod verify
+        run: go mod verify
+      - name: gofmt gate
+        run: |
+          out=$(gofmt -l . | grep -v '^spikes/' || true)
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./...
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  dist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: three-arch trimpath binaries + SBOM + checksums
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/fbmcp-windows-amd64.exe ./cmd/fbmcp
+          GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/fbmcp-linux-amd64 ./cmd/fbmcp
+          GOOS=linux   GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/fbmcp-linux-arm64 ./cmd/fbmcp
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/fbmcp-tray-windows-amd64.exe ./cmd/fbmcp-tray
+          go build -trimpath -ldflags="-s -w" -o dist/fbmcpctl ./cmd/fbmcpctl
+          go version -m dist/fbmcp-linux-amd64 > dist/sbom-fbmcp-linux-amd64.txt
+          go version -m dist/fbmcp-linux-arm64 > dist/sbom-fbmcp-linux-arm64.txt
+          go version -m dist/fbmcp-windows-amd64.exe > dist/sbom-fbmcp-windows-amd64.txt
+          sha256sum dist/* > dist/SHA256SUMS
+          cat dist/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fbmcp-dist
+          path: dist/
+
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: fuzz (time-capped)
+        run: |
+          go test -fuzz=FuzzParse -fuzztime=20s ./internal/fbparse
+          go test -fuzz=FuzzMatches -fuzztime=10s ./internal/schedule
+          go test -fuzz=FuzzPlan -fuzztime=10s ./internal/retention
+          go test -fuzz=FuzzScript -fuzztime=10s ./internal/classify
+          go test -fuzz=FuzzBearer -fuzztime=10s ./internal/transport
