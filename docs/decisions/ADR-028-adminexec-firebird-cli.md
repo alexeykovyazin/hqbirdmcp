@@ -42,6 +42,25 @@ instead. Multi-thread sweep was explicitly scoped out of Phase 7 rather than
 adding a second `adminexec`-shelled tool for it (`gfix -sweep -par/-parallel
 N`) — see phase7_plan.md's "Scope explicitly excluded".
 
+## Findings from live verification (WS3.2, 2026-08-20)
+
+- **Service target must be the instance's TCP address** —
+  `host/port:service_mgr`. A bare `service_mgr` goes over XNET to whichever
+  single engine owns the local protocol: on the multi-instance dev host that
+  is usually the wrong instance, and cross-session XNET also fails with
+  *"Shared memory area is probably already created by another engine
+  instance in another Windows session"* (observed on fb3). `lwmonitoring.Query`
+  therefore always builds `host/port:service_mgr` from `inst.Addr`.
+- Query levels 2–4 return only the `idQuery` header when the plugin's ring
+  buffer holds no activity for the requested scope — the buffer tracks
+  recent attachment activity, not the static database registry. Not a bug;
+  an empty level-2/3/4 body with a healthy level 1 means "no recorded
+  activity for that database since the buffer last wrapped".
+- The engine reports a missing `MonitoringPlugin` firebird.conf setting as
+  plain text (*"Lightweight monitoring plugin name is not set"*, observed on
+  fb4) — the tool passes that through; `fb_config_get`/`fb_config_set` are
+  the fix path.
+
 ## Consequences
 - `fb_lwmonitoring` is Tier 0 (read-only monitoring, no gate) — same
   registration pattern as `fb_sessions`/`fb_activity_sample` in

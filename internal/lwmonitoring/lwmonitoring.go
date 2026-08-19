@@ -38,10 +38,12 @@ func Query(ctx context.Context, inst config.FBInstance, user, pass string, level
 	if _, err := os.Stat(bin); err != nil {
 		bin = filepath.Join(inst.BinDir, "fbsvcmgr") // non-Windows layout
 	}
-	target := "service_mgr"
-	if host := hostOf(inst.Addr); host != "" {
-		target = host + ":service_mgr"
-	}
+	// Always target the instance's TCP address (host/port:service_mgr) —
+	// a bare "service_mgr" goes over the local protocol (XNET) to whichever
+	// single engine owns it, which on a multi-instance host is usually the
+	// WRONG instance, and cross-session XNET also fails with a shared-memory
+	// error (both observed live on the fb3/fb4/fb5 dev host, WS3.2).
+	target := targetFor(inst.Addr)
 	args := []string{target, "-user", user, "-action_lwmonitoring", "-lwm_query", strconv.Itoa(level)}
 	if dbPath != "" {
 		args = append(args, "-dbname", dbPath)
@@ -53,14 +55,20 @@ func Query(ctx context.Context, inst config.FBInstance, user, pass string, level
 	return strings.TrimSpace(res.Output), nil
 }
 
-// hostOf returns the host part of an "addr:port" instance address, or ""
-// for local connections (fbsvcmgr's plain "service_mgr" target).
-func hostOf(addr string) string {
+// targetFor converts an "host:port" instance address into fbsvcmgr's
+// "host/port:service_mgr" service target. A portless or empty addr falls
+// back to "localhost:service_mgr" (TCP default port — never bare
+// "service_mgr", see Query).
+func targetFor(addr string) string {
+	host, port := addr, ""
 	if i := strings.LastIndex(addr, ":"); i >= 0 {
-		host := addr[:i]
-		if host != "" && host != "localhost" && host != "127.0.0.1" {
-			return host
-		}
+		host, port = addr[:i], addr[i+1:]
 	}
-	return ""
+	if host == "" {
+		host = "localhost"
+	}
+	if port == "" {
+		return host + ":service_mgr"
+	}
+	return host + "/" + port + ":service_mgr"
 }

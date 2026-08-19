@@ -88,16 +88,18 @@ separate command to drop MV, use regular DROP VIEW"*).
   auto-refresh. Documented as a known gap, not implemented (would need
   either a driver fork or falling back to `gbak` CLI shell-out for restore,
   neither justified by current demand).
-- **Known operational caveat found live**: a non-`CONCURRENTLY` `REFRESH`
-  against `spike5` failed with *"Can not REFRESH MATERIALIZED VIEW ... that
-  is in use by concurrent transaction"* even with no other client attached —
-  most likely `internal/dbpool`'s pooled connections (RO/admin pools kept
-  open across calls) hold a snapshot transaction that the engine's exclusive-
-  refresh check sees as concurrent access. Not investigated further this
-  phase (out of scope — the gate/classify/dispatch pipeline is what P7.4
-  verifies); a `CONCURRENTLY` refresh needs a unique index on the MV first
-  (confirmed live too: `Unique index not found`, exactly per the doc's own
-  precondition) and doesn't hit the same exclusivity check.
+- **Exclusive-refresh vs. pooled connections (found live, fixed in WS3.1)**:
+  a non-`CONCURRENTLY` `REFRESH` initially failed with *"Can not REFRESH
+  MATERIALIZED VIEW ... that is in use by concurrent transaction"* even with
+  no other client attached — `internal/dbpool`'s pooled connections hold
+  snapshot transactions the engine's exclusive-reservation check counts as
+  concurrent use. Fixed: `executor.Prepared.NeedsExclusive` marks scripts
+  containing a non-concurrent `VerbRefresh`, and the `fb_write` executor
+  drains that DB's pools (`dbpool.CloseDB`, the same primitive
+  `restore_replace` uses) before executing; verified live on `spike5`.
+  A `CONCURRENTLY` refresh needs a unique index on the MV first (confirmed
+  live: `Unique index not found`, exactly per the doc's precondition) and
+  doesn't hit the exclusivity check, so it skips the drain.
 - Materialized-view test coverage lives in
   `internal/fbparse/canonical_test.go:TestCanonicalMaterializedView` and
   `internal/classify/matrix_test.go`'s `canonical` table (drift-gated the

@@ -40,6 +40,13 @@ type Prepared struct {
 	// script outright on an engine that doesn't support the construct,
 	// instead of letting the SQL reach the engine and fail there.
 	MinFB string
+	// NeedsExclusive is true when a statement requires exclusive table
+	// reservation the pooled connections' open snapshot transactions would
+	// deny (WS3.1): a non-CONCURRENTLY REFRESH MATERIALIZED VIEW (exclusive
+	// reload and DROP DATA modes — README.materialized_view.md). The caller
+	// drains the target DB's pools (dbpool.CloseDB) before Exec, the same
+	// primitive restore_replace uses.
+	NeedsExclusive bool
 }
 
 // Prepare classifies and applies ADR-019 guard rails. It does not execute.
@@ -55,12 +62,16 @@ func Prepare(sqlText string) (Prepared, error) {
 		return Prepared{}, fmt.Errorf("script contains Tier-3 content (disabled by default)")
 	}
 	minFB := ""
+	needsExclusive := false
 	for _, r := range results {
 		if versionGreater(r.Statement.MinVersion, minFB) {
 			minFB = r.Statement.MinVersion
 		}
+		if r.Statement.Verb == fbparse.VerbRefresh && r.Statement.Flags.Extras["refresh_mode"] != "concurrently" {
+			needsExclusive = true
+		}
 	}
-	return Prepared{SQL: sqlText, Results: results, MaxTier: maxTier, HasDDL: classify.HasDDL(results), MinFB: minFB}, nil
+	return Prepared{SQL: sqlText, Results: results, MaxTier: maxTier, HasDDL: classify.HasDDL(results), MinFB: minFB, NeedsExclusive: needsExclusive}, nil
 }
 
 // versionGreater compares "MAJOR.MINOR" version strings numerically ("" is

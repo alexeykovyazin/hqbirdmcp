@@ -7,16 +7,17 @@ import (
 	"github.com/aleks/fbmcp/internal/config"
 )
 
-func TestHostOf(t *testing.T) {
+func TestTargetFor(t *testing.T) {
 	cases := map[string]string{
-		"localhost:3055": "",
-		"127.0.0.1:3055": "",
-		"":               "",
-		"dbserver:3055":  "dbserver",
+		"localhost:3055": "localhost/3055:service_mgr",
+		"127.0.0.1:3050": "127.0.0.1/3050:service_mgr",
+		"dbserver:3055":  "dbserver/3055:service_mgr",
+		"dbserver":       "dbserver:service_mgr",
+		"":               "localhost:service_mgr",
 	}
 	for addr, want := range cases {
-		if got := hostOf(addr); got != want {
-			t.Errorf("hostOf(%q) = %q, want %q", addr, got, want)
+		if got := targetFor(addr); got != want {
+			t.Errorf("targetFor(%q) = %q, want %q", addr, got, want)
 		}
 	}
 }

@@ -105,6 +105,15 @@ func registerFBWrite(server *mcp.Server, gt *gatedTools) {
 		if err != nil {
 			return "", err
 		}
+		if prep.NeedsExclusive {
+			// WS3.1: our own pooled connections hold snapshot transactions
+			// the engine counts as concurrent use — an exclusive-mode
+			// REFRESH MATERIALIZED VIEW then fails with "in use by
+			// concurrent transaction". Drain this DB's pools first (same
+			// primitive restore_replace uses); Exec reopens fresh.
+			prog(0.05, "draining connection pools (exclusive reservation required)")
+			gt.pools.CloseDB(dbID)
+		}
 		return gt.execSvc.Exec(ctx, dbID, prep, prog)
 	}
 }
