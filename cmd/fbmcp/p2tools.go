@@ -142,38 +142,67 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 	})
 
 	// P2.6 — fb_schema_list + fb_describe.
-	mcp.AddTool(server, &mcp.Tool{Name: "fb_schema_list", Description: "Tier 0: list user tables/views/procedures/triggers"}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_schema_list", Description: "Tier 0: list user tables/views/procedures/triggers/functions/packages"}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
 		tx, err := pools.ReadOnly(ctx, a.Db)
 		if err != nil {
 			return text("error: " + err.Error()), nil, nil
 		}
 		defer tx.Rollback()
-		rows, err := tx.QueryContext(ctx, `
-			SELECT RDB$RELATION_NAME, RDB$VIEW_SOURCE IS NOT NULL AS IS_VIEW
-			FROM RDB$RELATIONS WHERE RDB$SYSTEM_FLAG = 0 ORDER BY 1`)
-		if err != nil {
-			return text("error: " + err.Error()), nil, nil
-		}
-		defer rows.Close()
 		var b strings.Builder
 		n := 0
-		for rows.Next() {
-			var name string
-			var isView bool
-			if err := rows.Scan(&name, &isView); err != nil {
-				break
+		capped := false
+		// listNames runs one catalog query appending "- NAME (KIND)" lines.
+		// A query error is non-fatal for optional catalogs (RDB$PACKAGES is
+		// FB3+); required=true surfaces it instead.
+		listNames := func(q, kind string, required bool) error {
+			if capped {
+				return nil
 			}
-			kind := "TABLE"
-			if isView {
-				kind = "VIEW"
+			rows, err := tx.QueryContext(ctx, q)
+			if err != nil {
+				if required {
+					return err
+				}
+				return nil
 			}
-			fmt.Fprintf(&b, "- %s (%s)\n", name, kind)
-			n++
-			if n >= rowCap {
-				b.WriteString("... (capped)\n")
-				break
+			defer rows.Close()
+			for rows.Next() {
+				var name string
+				var isView bool
+				cols, _ := rows.Columns()
+				if len(cols) == 2 {
+					if err := rows.Scan(&name, &isView); err != nil {
+						break
+					}
+				} else if err := rows.Scan(&name); err != nil {
+					break
+				}
+				k := kind
+				if kind == "" { // relations query: table vs view flag
+					k = "TABLE"
+					if isView {
+						k = "VIEW"
+					}
+				}
+				fmt.Fprintf(&b, "- %s (%s)\n", strings.TrimSpace(name), k)
+				n++
+				if n >= rowCap {
+					capped = true
+					b.WriteString("... (capped)\n")
+					return nil
+				}
 			}
+			return nil
 		}
+		if err := listNames(`
+			SELECT RDB$RELATION_NAME, RDB$VIEW_SOURCE IS NOT NULL AS IS_VIEW
+			FROM RDB$RELATIONS WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 ORDER BY 1`, "", true); err != nil {
+			return text("error: " + err.Error()), nil, nil
+		}
+		_ = listNames(`SELECT RDB$PROCEDURE_NAME FROM RDB$PROCEDURES WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 ORDER BY 1`, "PROCEDURE", false)
+		_ = listNames(`SELECT RDB$TRIGGER_NAME FROM RDB$TRIGGERS WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 ORDER BY 1`, "TRIGGER", false)
+		_ = listNames(`SELECT RDB$FUNCTION_NAME FROM RDB$FUNCTIONS WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 ORDER BY 1`, "FUNCTION", false)
+		_ = listNames(`SELECT RDB$PACKAGE_NAME FROM RDB$PACKAGES WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 ORDER BY 1`, "PACKAGE", false)
 		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_schema_list", Tier: 0, Decision: "allow"})
 		return text(b.String()), nil, nil
 	})

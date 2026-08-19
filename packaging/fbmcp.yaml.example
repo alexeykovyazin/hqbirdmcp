@@ -10,6 +10,10 @@ state:
 #   - name: operator
 #     key_env: FBMCP_API_KEY
 #     max_tier: 2
+# allowed_origins:          # browser-CSRF Origin allowlist for /mcp + /sse.
+#   - https://ops.example   # Empty/omitted = any Origin. Requests WITHOUT an
+#                           # Origin header always pass (non-browser clients).
+# local_max_tier: 2         # ceiling of the stdio-local identity (0-2)
 notify:
   webhook_url: ""
   webhook_secret_env: ""

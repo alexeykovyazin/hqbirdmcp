@@ -24,9 +24,9 @@ const (
 // the same out-of-band marker files the fbmcpctl approve CLI already
 // writes; the running server's approval/denial watchers
 // (cmd/fbmcp/p3tools.go) pick them up within 2s.
-func dialogWorker(stateDir string, queue <-chan state.PendingAction) {
+func dialogWorker(stateDir string, tr *tracker, queue <-chan state.PendingAction) {
 	for p := range queue {
-		showOneDialog(stateDir, p)
+		showOneDialog(stateDir, tr, p)
 	}
 }
 
@@ -35,7 +35,7 @@ func dialogWorker(stateDir string, queue <-chan state.PendingAction) {
 // process (it did exactly that once — an unrecovered panic in this
 // goroutine is fatal to the entire program — silently leaving every later
 // pending action with no operator-visible confirmation at all).
-func showOneDialog(stateDir string, p state.PendingAction) {
+func showOneDialog(stateDir string, tr *tracker, p state.PendingAction) {
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintln(os.Stderr, "fbmcp-tray: dialog panic (action left pending):", r)
@@ -49,6 +49,7 @@ func showOneDialog(stateDir string, p state.PendingAction) {
 	pressed, err := approveDenyDialog(title, main, content)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "fbmcp-tray: dialog:", err)
+		tr.Snooze(p.ID) // retry after the cool-down rather than never
 		return
 	}
 	switch pressed {
@@ -57,10 +58,10 @@ func showOneDialog(stateDir string, p state.PendingAction) {
 	case denyButtonID:
 		writeMarker(stateDir, "denials", p.ID, "denied-by-operator\n")
 	default:
-		// Esc/close (idCancel) — leave the action pending; it will be
-		// re-queued only if it's still pending on a later poll tick
-		// is not attempted here to avoid nagging. Operator can act via
-		// the CLI, or it expires on its own 15-minute TTL.
+		// Esc/close (idCancel): no marker written — the action stays
+		// pending, and after escSnooze the poll loop re-prompts (WS2.6e;
+		// previously one Esc silenced the action for its whole TTL).
+		tr.Snooze(p.ID)
 	}
 }
 

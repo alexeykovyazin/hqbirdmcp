@@ -20,8 +20,17 @@ type Config struct {
 	Listen     string        `yaml:"listen"` // empty = stdio only (P5.1)
 	TLS        TLS           `yaml:"tls"`
 	Identities []APIIdentity `yaml:"identities"`
-	Retention  Retention     `yaml:"retention"`
-	SourcePath string        `yaml:"-"`
+	// AllowedOrigins is the browser-CSRF Origin allowlist for /mcp and /sse
+	// (WS2.2, closes part of the C11 residual). Empty = any Origin accepted.
+	// Non-empty: requests carrying an Origin header not in the list get 403;
+	// requests with NO Origin header are still allowed (non-browser clients
+	// send none — the threat is a browser being used as a confused deputy).
+	AllowedOrigins []string `yaml:"allowed_origins"`
+	// LocalMaxTier caps the stdio-local fallback identity (WS2.3). 0 in
+	// YAML means "not set" — use LocalMaxTierOrDefault (default 2).
+	LocalMaxTier int       `yaml:"local_max_tier"`
+	Retention    Retention `yaml:"retention"`
+	SourcePath   string    `yaml:"-"`
 }
 
 // Notify is K7 delivery (ADR-024). Empty webhook = local event log only.
@@ -101,6 +110,15 @@ func Load(path string) (*Config, error) {
 	}
 	c.SourcePath = path
 	return &c, nil
+}
+
+// LocalMaxTierOrDefault returns the local-identity ceiling (default 2;
+// YAML zero-value means unset, and values are clamped by identity.SetLocalMaxTier).
+func (c *Config) LocalMaxTierOrDefault() int {
+	if c.LocalMaxTier <= 0 {
+		return 2
+	}
+	return c.LocalMaxTier
 }
 
 // Validate enforces structural rules; every violation is an error (fail-closed).

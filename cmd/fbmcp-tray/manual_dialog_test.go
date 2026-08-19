@@ -2,14 +2,25 @@
 
 package main
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 // TestManualDialogSmoke is not part of CI — it pops a real, visible
 // TaskDialog and blocks until a human clicks a button, to verify end-to-end
 // that the popup a real Tier-2 pending action would trigger actually
 // renders (the earlier bug crashed before ever reaching this point).
-// Run explicitly: go test ./cmd/fbmcp-tray/... -run TestManualDialogSmoke -v
+// Run explicitly:
+//
+//	FBMCP_MANUAL_UI=1 go test ./cmd/fbmcp-tray/... -run TestManualDialogSmoke -v
+//
+// Skipped without the env var — an automated `go test ./...` must never
+// block on a dialog no human is watching (it hung a full-suite run once).
 func TestManualDialogSmoke(t *testing.T) {
+	if os.Getenv("FBMCP_MANUAL_UI") == "" {
+		t.Skip("manual UI test; set FBMCP_MANUAL_UI=1 to run")
+	}
 	pressed, err := approveDenyDialog(
 		"fbmcp-tray — manual smoke test",
 		"This is a live test popup, not a real database action",

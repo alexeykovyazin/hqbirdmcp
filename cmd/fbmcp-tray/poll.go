@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/getlantern/systray"
@@ -11,42 +12,94 @@ import (
 	"github.com/aleks/fbmcp/internal/state"
 )
 
-const pollInterval = 3 * time.Second
+const (
+	pollInterval = 3 * time.Second
+	// escSnooze is how long a dialog dismissed without a button (Esc/close)
+	// stays quiet before re-prompting (WS2.6e). Previously an Escaped action
+	// was never shown again for its whole 15-minute TTL.
+	escSnooze = 60 * time.Second
+)
+
+// tracker is the shared shown/snoozed bookkeeping between the poll loop and
+// the dialog worker.
+type tracker struct {
+	mu     sync.Mutex
+	shown  map[string]bool
+	snooze map[string]time.Time
+}
+
+func newTracker() *tracker {
+	return &tracker{shown: map[string]bool{}, snooze: map[string]time.Time{}}
+}
+
+// Snooze marks an id dismissed-without-answer: it becomes eligible for
+// re-queueing after escSnooze.
+func (t *tracker) Snooze(id string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.shown, id)
+	t.snooze[id] = time.Now().Add(escSnooze)
+}
 
 // pollLoop re-opens the state store every tick — state.Open reads
 // state.json once per call (it is not a live handle), so this is the only
 // way a second process notices pending actions the running fbmcp server
-// added after this process started. New Tier >= 2 ids are pushed to queue
-// once each; the shown-set is pruned once an id leaves Pending() (consumed
-// by approval/denial/expiry) so it never grows unbounded and, if the
-// operator dismissed the dialog without a button, the id can be re-shown
-// after a config reload cycle recreates it under a fresh id (ids are never
-// reused — gate.newID is 12 random bytes).
-func pollLoop(stateDir string, queue chan<- state.PendingAction) {
-	shown := map[string]bool{}
+// added after this process started. New Tier >= 2 ids are queued once each;
+// ids leave the shown/snooze sets when they leave Pending() (consumed by
+// approval/denial/expiry). Ids are never reused (gate.newID is 12 random
+// bytes), so pruning is only about bounding memory.
+func pollLoop(stateDir string, tr *tracker, queue chan<- state.PendingAction) {
 	for {
 		st, err := state.Open(stateDir)
-		if err == nil {
-			live := map[string]bool{}
-			count := 0
-			for _, p := range st.Pending() {
-				if p.Tier < 2 {
-					continue
-				}
-				live[p.ID] = true
-				count++
-				if !shown[p.ID] {
-					shown[p.ID] = true
-					queue <- p
-				}
-			}
-			for id := range shown {
-				if !live[id] {
-					delete(shown, id)
-				}
-			}
-			updateTooltip(count)
+		if err != nil {
+			// WS2.6c: previously swallowed — pending approvals would just
+			// stop appearing with no operator-visible signal.
+			systray.SetTooltip("fbmcp — state unreadable: " + err.Error())
+			time.Sleep(pollInterval)
+			continue
 		}
+		now := time.Now()
+		live := map[string]bool{}
+		count := 0
+		for _, p := range st.Pending() {
+			if p.Tier < 2 {
+				continue
+			}
+			live[p.ID] = true
+			count++
+			tr.mu.Lock()
+			until, snoozed := tr.snooze[p.ID]
+			if snoozed && now.After(until) {
+				delete(tr.snooze, p.ID)
+				snoozed = false
+			}
+			eligible := !tr.shown[p.ID] && !snoozed
+			if eligible {
+				// WS2.6d: non-blocking send. A full queue no longer wedges
+				// the poll goroutine (which also froze tooltip updates and
+				// pruning); the id simply stays unshown and is retried on
+				// the next tick.
+				select {
+				case queue <- p:
+					tr.shown[p.ID] = true
+				default:
+				}
+			}
+			tr.mu.Unlock()
+		}
+		tr.mu.Lock()
+		for id := range tr.shown {
+			if !live[id] {
+				delete(tr.shown, id)
+			}
+		}
+		for id := range tr.snooze {
+			if !live[id] {
+				delete(tr.snooze, id)
+			}
+		}
+		tr.mu.Unlock()
+		updateTooltip(count)
 		time.Sleep(pollInterval)
 	}
 }

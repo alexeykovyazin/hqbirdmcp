@@ -29,3 +29,22 @@ host and run `fbmcpctl approve`. If a page is added later, localhost-only.
 Threat model A7/A8 updated. Fuse-style auth battery covers no-key / wrong
 key / valid key × every entry. Token relay from a remote session still
 cannot confirm Tier ≥ 2 (fuse #7).
+
+## Addendum (WS2, 2026-08-20)
+**Origin allowlist.** `allowed_origins` in fbmcp.yaml (reloadable) feeds the
+transport's Origin check, which previously existed but was unreachable
+(hardcoded nil at both call sites, no config key). Semantics: empty list =
+any Origin; non-empty = an Origin header not in the list gets 403, and a
+request with **no** Origin header is always allowed — the threat is a
+browser being used as a confused deputy, and non-browser clients send no
+Origin. Bearer auth remains the actual authentication either way.
+
+**Local identity ceiling.** `local_max_tier` (default 2, clamped to 0–2)
+caps the stdio-local fallback identity; `identity.FallbackCount()` exposes
+how often handlers fell back to it (a non-zero delta in remote mode means a
+handler lost its request context).
+
+**fb_write identity.** fb_write previously hardcoded the local identity —
+remote API-key calls were audited as "local", bypassed their configured
+`max_tier`, and could not in-band-confirm their own requests. It now uses
+`identity.Caller(ctx)` like every other gated tool.

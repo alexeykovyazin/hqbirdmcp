@@ -6,6 +6,7 @@ import (
 
 	"github.com/aleks/fbmcp/internal/audit"
 	"github.com/aleks/fbmcp/internal/config"
+	"github.com/aleks/fbmcp/internal/identity"
 	"github.com/aleks/fbmcp/internal/reload"
 )
 
@@ -115,6 +116,7 @@ func (gt *gatedTools) reloadHooks() reload.Hooks {
 			return nil
 		},
 		ApplyAuth: func(cfg *config.Config) error {
+			identity.SetLocalMaxTier(cfg.LocalMaxTierOrDefault())
 			if gt.httpLn == nil {
 				return nil
 			}

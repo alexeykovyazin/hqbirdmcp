@@ -21,7 +21,7 @@ Fuse map: #1→C1 · #2→C2 · #3→C7a · #4→C22 · #5→C15 · #6→C4 · #
 | C8 | No orphan subprocess; Backup/Trace drain goroutines bounded | [`drain_test.go`](../../internal/backupsvc/drain_test.go) | extend | verified-green |
 | C9 | File I/O confined to registry ids + backup/work dirs (incl. `CleanOrphans`) | [`confine_test.go`](../../internal/confine/confine_test.go); [`housekeep_test.go`](../../internal/housekeep/housekeep_test.go); [`config_test.go`](../../internal/config/config_test.go) | extend | verified-green |
 | C10 | Secrets never in argv, logs, audit, job output, `events.jsonl`, `fbmcpctl` stdout | [`audit_test.go`](../../internal/audit/audit_test.go); [`c10_secrets_test.go`](../../internal/notify/c10_secrets_test.go); [`adminexec_test.go`](../../internal/adminexec/adminexec_test.go) | seed+extend | verified-green |
-| C11 | `/mcp` and `/sse` unauthenticated ⇒ 401; `/healthz` = `ok` only | [`transport_test.go`](../../internal/transport/transport_test.go); [`c11_residuals_test.go`](../../internal/transport/c11_residuals_test.go) | seed+extend | accepted-residual (no rate-limit; empty Origin) |
+| C11 | `/mcp` and `/sse` unauthenticated ⇒ 401; `/healthz` = `ok` only | [`transport_test.go`](../../internal/transport/transport_test.go); [`c11_residuals_test.go`](../../internal/transport/c11_residuals_test.go) | seed+extend | accepted-residual (no rate-limit; Origin allowlist opt-in via `allowed_origins`) |
 | C12 | Tier-3 disabled and not schedulable; **dual-control = accepted-residual** | [`policy_test.go`](../../internal/policy/policy_test.go); [`schedule_test.go`](../../internal/schedule/schedule_test.go) | seed | accepted-residual (dual-control) |
 | C13 | Retention never touches uncataloged or unverified files | [`retention_test.go`](../../internal/retention/retention_test.go) | seed | verified-green |
 | C14 | Grants minted only via gated create; lineage audited; hash drift skips. **`state.json` rewrite = accepted-residual (T-11)** | [`schedule_test.go`](../../internal/schedule/schedule_test.go) | seed | accepted-residual (state-dir write) |
@@ -37,7 +37,7 @@ Fuse map: #1→C1 · #2→C2 · #3→C7a · #4→C22 · #5→C15 · #6→C4 · #
 
 ## Known residuals (named; not silent)
 
-- C11: no rate-limit, no session cap, empty Origin allowlist (any Origin). Documented in `c11_residuals_test.go`.
+- C11: no rate-limit, no session cap. Origin allowlist is now configurable (`allowed_origins`, WS2.2) but empty by default; requests without an Origin header always pass (non-browser clients send none — browser CSRF is the threat). Documented in `c11_residuals_test.go`.
 - C12: dual-control for Tier-3 (`fb_db_drop` stub).
 - C14: host with `state.dir` write can rewrite `ArgHash` (T-11).
 - D5: secrets from env, not OS keyring.

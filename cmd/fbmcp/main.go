@@ -124,7 +124,8 @@ func runForeground() {
 		fmt.Fprintf(os.Stderr, "fbmcp: %v\n", err)
 		os.Exit(1)
 	}
-	instLock, err := instlock.Acquire(cfg.State.Dir) // D8: one kernel; extra stdio clients attach
+	identity.SetLocalMaxTier(cfg.LocalMaxTierOrDefault()) // WS2.3; re-applied on reload via ApplyAuth
+	instLock, err := instlock.Acquire(cfg.State.Dir)      // D8: one kernel; extra stdio clients attach
 	if err != nil {
 		if attach.PipedStdin() {
 			fmt.Fprintf(os.Stderr, "fbmcp: attaching to existing instance (pid %d)\n", instlock.OwnerPID(cfg.State.Dir))

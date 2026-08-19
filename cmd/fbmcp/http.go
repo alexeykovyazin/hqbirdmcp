@@ -47,7 +47,7 @@ func (l *httpListener) ReplaceAuth(cfg *config.Config) error {
 	if l.auth == nil {
 		return nil // stdio-only; auth applies when HTTP starts
 	}
-	l.auth.Replace(cfg.Identities, secrets, nil)
+	l.auth.Replace(cfg.Identities, secrets, cfg.AllowedOrigins)
 	return nil
 }
 
@@ -76,7 +76,7 @@ func (l *httpListener) Start(cfg *config.Config) error {
 		cancel()
 		l.mu.Lock()
 	}
-	auth := transport.NewAuthenticator(cfg.Identities, secrets, nil)
+	auth := transport.NewAuthenticator(cfg.Identities, secrets, cfg.AllowedOrigins)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", transport.Healthz)
 	stream := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return l.mcp }, nil)
@@ -87,7 +87,13 @@ func (l *httpListener) Start(cfg *config.Config) error {
 		Addr:              cfg.Listen,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
-		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12},
+		// No ReadTimeout/WriteTimeout: /sse holds a long-lived streaming
+		// response and the streamable handler long-polls; a whole-request
+		// deadline would sever healthy sessions. IdleTimeout only reaps
+		// keep-alive connections BETWEEN requests, so it is stream-safe.
+		IdleTimeout:    2 * time.Minute,
+		MaxHeaderBytes: 64 << 10,
+		TLSConfig:      &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 	l.hs = s
 	l.auth = auth

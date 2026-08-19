@@ -19,6 +19,7 @@ import (
 	"github.com/aleks/fbmcp/internal/configedit"
 	execpkg "github.com/aleks/fbmcp/internal/executor"
 	"github.com/aleks/fbmcp/internal/gate"
+	"github.com/aleks/fbmcp/internal/identity"
 	"github.com/aleks/fbmcp/internal/lockout"
 	"github.com/aleks/fbmcp/internal/policy"
 	"github.com/aleks/fbmcp/internal/privs"
@@ -27,8 +28,7 @@ import (
 )
 
 func registerP4Tools(server *mcp.Server, gt *gatedTools) {
-	localID := policy.Identity{Name: "local", MaxTier: 2}
-	registerFBWrite(server, gt, localID)
+	registerFBWrite(server, gt)
 	registerIndexTools(server, gt)
 	registerSecurityTools(server, gt)
 	registerEffectiveAccess(server, gt)
@@ -40,19 +40,24 @@ func registerP4Tools(server *mcp.Server, gt *gatedTools) {
 	registerWindowOpen(server, gt)
 }
 
-func registerFBWrite(server *mcp.Server, gt *gatedTools, localID policy.Identity) {
+func registerFBWrite(server *mcp.Server, gt *gatedTools) {
 	type writeArg struct {
 		Db   string `json:"db"`
 		SQL  string `json:"sql" jsonschema:"one or more DML/DDL/DCL statements"`
 		Mode string `json:"mode,omitempty" jsonschema:"preview or execute (default execute)"`
 	}
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_write", Description: "Tier 1+ (dynamic) gated: classified statement script; mode=preview|execute; executed on the admin pool"}, func(ctx context.Context, req *mcp.CallToolRequest, a writeArg) (*mcp.CallToolResult, any, error) {
+		// WS2.1 fix: this handler previously hardcoded a "local"/MaxTier-2
+		// identity, so remote API-key calls were audited as "local", their
+		// configured max_tier ceiling was bypassed, and the pending action's
+		// identity mismatch made fb_confirm reject their own confirmations.
+		id := identity.Caller(ctx)
 		if _, err := gt.cfg.DB(a.Db); err != nil {
 			return text("DENIED: " + err.Error()), nil, nil
 		}
 		prep, err := execpkg.Prepare(a.SQL)
 		if err != nil {
-			gt.aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_write", Tier: -1, Decision: "denied", Detail: map[string]interface{}{"reason": err.Error()}})
+			gt.aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_write", Tier: -1, Decision: "denied", Detail: map[string]interface{}{"reason": err.Error()}})
 			return text("DENIED: " + err.Error()), nil, nil
 		}
 		impact := "fb_write on " + a.Db + "\n" + gt.execSvc.Impact(ctx, a.Db, prep)
@@ -66,14 +71,14 @@ func registerFBWrite(server *mcp.Server, gt *gatedTools, localID policy.Identity
 				{Name: "backup_freshness", Op: "lt", Value: 24.0, Why: "newest verified backup must be < 24h"},
 			}
 		}
-		d := gt.eng.EvaluateMeta(localID, a.Db, meta)
+		d := gt.eng.EvaluateMeta(id, a.Db, meta)
 		if d.Outcome == "deny" || len(d.FailedPreconditions) > 0 {
 			why := d.Reason
-			gt.aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_write", Tier: prep.MaxTier, Decision: "denied", Detail: map[string]interface{}{"reason": why, "templates": classify.Template(a.SQL)}})
+			gt.aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_write", Tier: prep.MaxTier, Decision: "denied", Detail: map[string]interface{}{"reason": why, "templates": classify.Template(a.SQL)}})
 			return text("DENIED: " + why), nil, nil
 		}
 		argHash := hashOf(a.Db + a.SQL)
-		p, err := gt.g.Request(localID, a.Db, meta, impact, argHash, nil)
+		p, err := gt.g.Request(id, a.Db, meta, impact, argHash, nil)
 		if err != nil {
 			return text("gate error: " + err.Error()), nil, nil
 		}
@@ -87,7 +92,7 @@ func registerFBWrite(server *mcp.Server, gt *gatedTools, localID policy.Identity
 		} else {
 			b.WriteString("Confirmation: out-of-band only (fbmcp-tray popup or fbmcpctl approve)\n")
 		}
-		gt.aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_write", Tier: prep.MaxTier, Decision: "pending", Detail: map[string]interface{}{"templates": classify.Template(a.SQL)}})
+		gt.aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_write", Tier: prep.MaxTier, Decision: "pending", Detail: map[string]interface{}{"templates": classify.Template(a.SQL)}})
 		return text(b.String()), nil, nil
 	})
 
