@@ -1,0 +1,2 @@
+go test fuzz v1
+string("*/yyyyy5 0-12 1,15 * 0")

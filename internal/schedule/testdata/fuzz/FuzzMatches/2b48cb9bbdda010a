@@ -1,0 +1,2 @@
+go test fuzz v1
+string("0000\xc20\xc20\xd8\xc2\xc20\xd8\xc2\xc20")

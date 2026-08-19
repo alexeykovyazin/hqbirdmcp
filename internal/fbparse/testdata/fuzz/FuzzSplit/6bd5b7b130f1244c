@@ -1,0 +1,2 @@
+go test fuzz v1
+string("REVOKE A A A SELECT ON FROM")

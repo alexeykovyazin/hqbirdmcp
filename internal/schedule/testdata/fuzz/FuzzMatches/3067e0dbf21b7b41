@@ -1,0 +1,2 @@
+go test fuzz v1
+string("Ƶݹ\xe8\xa2\xe7\x860")

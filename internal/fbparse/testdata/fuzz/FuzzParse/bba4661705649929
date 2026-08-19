@@ -1,0 +1,2 @@
+go test fuzz v1
+string("WITH 00A!0!0 0A 00A 0!SELECT!00A")

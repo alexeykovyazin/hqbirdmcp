@@ -1,0 +1,2 @@
+go test fuzz v1
+string("a!a!aaa!A!A!a A!A!A!a!A!A!A!A!A!aaa!A!A\"0\"A A!a!a!A!A!a!a!a!A!a!a!A!A!a!a!a aaaa!A a!A a!A!A!A!A!aaaa!A!A!aa A}aaa}\xc9 aa!\xaf!\xf4!aaa!a!\xa7!A!a!\xc4!\xd2!a\x7f\xc1!\x82!\xca!\xd3!\xfd!\x8e!#!\x9e!#A")

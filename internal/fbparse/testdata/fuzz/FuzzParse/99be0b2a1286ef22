@@ -1,0 +1,2 @@
+go test fuzz v1
+string("SELECT''00A!0!0''--00000000")

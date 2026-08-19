@@ -24,8 +24,13 @@ gap-closure audit remain).
 ## Still open
 
 - K1 shared/exclusive lock modes
-- Service start/stop (waits on §4.8 / P5.2 posture)
-- Localhost approval page (CLI marker-file OOB is the trust channel)
+- Localhost approval page (marker-file OOB is the trust channel; since
+  Phase 7 the fbmcp-tray popup is the primary operator surface for it)
 - Role-hierarchy expansion in effective-access (capped, documented)
 - Dogfooding week + Appendix A gap-closure audit
 - Linux container matrix
+
+Refreshed 2026-08-20 (phase6_plan_v2 §8 T5): service start/stop/restart
+landed in P5 as Tier-2 tools behind `posture.verified`
+(`fb_service_start/stop/restart`, cmd/fbmcp/p5tools.go) — removed from the
+open list above.

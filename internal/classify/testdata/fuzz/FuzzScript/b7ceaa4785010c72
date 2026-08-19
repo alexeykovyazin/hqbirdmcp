@@ -1,0 +1,2 @@
+go test fuzz v1
+string("DELETE!0!0A!0A")

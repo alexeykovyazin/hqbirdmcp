@@ -1,0 +1,2 @@
+go test fuzz v1
+string("a!A0000000000000000!A00a00000!A!0A!Aa0!#A000a!Aa!A00000!#\xe3[\xfc!#a000000000\x7fA00a!\xdca0000!\xd200!\xdd")

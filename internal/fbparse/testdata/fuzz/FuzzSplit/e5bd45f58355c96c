@@ -1,0 +1,2 @@
+go test fuzz v1
+string("\x9ea!#\x80!Ӌ\xbe\xa0a!\xaf!a!\x8f")

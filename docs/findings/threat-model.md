@@ -108,3 +108,21 @@ pre-authorized jobs; F12 notification delivery.
 `fb_confirm` now uses `identity.Caller` (P5.1 routed fix) so a remote API-key
 cannot confirm a pending action bound to a different identity.
 
+## 9. WS2/WS3 addendum (2026-08-20) — final pass toward the M6 sign-off
+
+Changes since §8 that alter the residual list:
+
+- **Closed**: `fb_write` hardcoded-local-identity defect (audit
+  misattribution + `max_tier` ceiling bypass for API keys) — fixed, uses
+  `identity.Caller` like every other gated tool (ADR-022 addendum).
+- **Narrowed**: Origin allowlist is now reachable (`allowed_origins`,
+  reloadable); empty-Origin requests intentionally pass (browser CSRF is
+  the threat). Rate-limit / session cap remain open (C11).
+- **New knob**: `local_max_tier` caps the stdio-local fallback identity;
+  `identity.FallbackCount()` makes context-loss observable in remote mode.
+- **Still open, named**: K1 shared/exclusive job lock modes (per-DB
+  single-flight in `jobs.Runner` remains the overlap primitive); Windows
+  service Stop does not cancel `runForeground` (P6.2 T6 will exercise it).
+
+Sign-off: _pending — to be signed at M6 closure after P6.2/P6.3 complete._
+

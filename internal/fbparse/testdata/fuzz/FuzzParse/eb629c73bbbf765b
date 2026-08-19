@@ -1,0 +1,2 @@
+go test fuzz v1
+string("SET ;EXECUTE BLOCK BEGIN INSERT INTO 0")

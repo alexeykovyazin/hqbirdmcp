@@ -1,0 +1,2 @@
+go test fuzz v1
+string("BeArer \xf0\xb9\x88\xd0")

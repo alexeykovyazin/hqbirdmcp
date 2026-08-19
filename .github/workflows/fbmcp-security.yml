@@ -9,6 +9,8 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "17 2 * * *" # nightly lane: longer fuzz budget (M6 gate)
 
 jobs:
   test:
@@ -62,16 +64,24 @@ jobs:
 
   fuzz:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: fuzz (time-capped)
+      - name: fuzz (short on push/PR, long on the nightly schedule)
         run: |
-          go test -fuzz=FuzzParse -fuzztime=20s ./internal/fbparse
-          go test -fuzz=FuzzMatches -fuzztime=10s ./internal/schedule
-          go test -fuzz=FuzzPlan -fuzztime=10s ./internal/retention
-          go test -fuzz=FuzzScript -fuzztime=10s ./internal/classify
-          go test -fuzz=FuzzBearer -fuzztime=10s ./internal/transport
+          # Committed seed corpora live in */testdata/fuzz and replay in
+          # plain `go test`; this lane searches BEYOND them.
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            PARSE=10m; EACH=5m
+          else
+            PARSE=20s; EACH=10s
+          fi
+          go test -fuzz=FuzzParse -fuzztime=$PARSE ./internal/fbparse
+          go test -fuzz=FuzzSplit -fuzztime=$EACH ./internal/fbparse
+          go test -fuzz=FuzzMatches -fuzztime=$EACH ./internal/schedule
+          go test -fuzz=FuzzPlan -fuzztime=$EACH ./internal/retention
+          go test -fuzz=FuzzScript -fuzztime=$EACH ./internal/classify
+          go test -fuzz=FuzzBearer -fuzztime=$EACH ./internal/transport
