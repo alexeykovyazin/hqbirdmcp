@@ -195,7 +195,9 @@ const (
 	VerbDeclare       Verb = "DECLARE"
 	VerbExecuteProc   Verb = "EXECUTE PROCEDURE"
 	VerbExecuteBlock  Verb = "EXECUTE BLOCK"
-	VerbUnknown       Verb = "UNKNOWN"
+	// VerbRefresh: REFRESH MATERIALIZED VIEW (HQBird/FB5, P7.4 phase7_plan.md).
+	VerbRefresh Verb = "REFRESH"
+	VerbUnknown Verb = "UNKNOWN"
 )
 
 // ObjectType is the kind of object a statement targets. "" means no object
@@ -208,22 +210,27 @@ const (
 	ObjGlobalTempTable ObjectType = "GLOBAL TEMPORARY TABLE"
 	ObjExternalTable   ObjectType = "EXTERNAL TABLE"
 	ObjView            ObjectType = "VIEW"
-	ObjIndex           ObjectType = "INDEX"
-	ObjSequence        ObjectType = "SEQUENCE"
-	ObjProcedure       ObjectType = "PROCEDURE"
-	ObjFunction        ObjectType = "FUNCTION"
-	ObjPackage         ObjectType = "PACKAGE"
-	ObjTrigger         ObjectType = "TRIGGER"
-	ObjDomain          ObjectType = "DOMAIN"
-	ObjUser            ObjectType = "USER"
-	ObjRole            ObjectType = "ROLE"
-	ObjMapping         ObjectType = "MAPPING"
-	ObjDatabase        ObjectType = "DATABASE"
-	ObjConstraint      ObjectType = "CONSTRAINT"
-	ObjException       ObjectType = "EXCEPTION"
-	ObjFilter          ObjectType = "FILTER"
-	ObjShadow          ObjectType = "SHADOW"
-	ObjUnknown         ObjectType = "UNKNOWN"
+	// ObjMaterializedView is distinct from ObjView (HQBird/FB5, P7.4) — kept
+	// separate rather than an ObjView variant flag because DROP VIEW
+	// legitimately drops either kind (README.materialized_view.md: "There is
+	// no separate command to drop MV, use regular DROP VIEW").
+	ObjMaterializedView ObjectType = "MATERIALIZED VIEW"
+	ObjIndex            ObjectType = "INDEX"
+	ObjSequence         ObjectType = "SEQUENCE"
+	ObjProcedure        ObjectType = "PROCEDURE"
+	ObjFunction         ObjectType = "FUNCTION"
+	ObjPackage          ObjectType = "PACKAGE"
+	ObjTrigger          ObjectType = "TRIGGER"
+	ObjDomain           ObjectType = "DOMAIN"
+	ObjUser             ObjectType = "USER"
+	ObjRole             ObjectType = "ROLE"
+	ObjMapping          ObjectType = "MAPPING"
+	ObjDatabase         ObjectType = "DATABASE"
+	ObjConstraint       ObjectType = "CONSTRAINT"
+	ObjException        ObjectType = "EXCEPTION"
+	ObjFilter           ObjectType = "FILTER"
+	ObjShadow           ObjectType = "SHADOW"
+	ObjUnknown          ObjectType = "UNKNOWN"
 )
 
 // ObjectRef references a named object. Name is normalized (unquoted, case
@@ -250,6 +257,11 @@ type Flags struct {
 	// IndexUnique, IndexDescending, IndexExpression: CREATE INDEX attributes.
 	IndexUnique, IndexDescending bool
 	IndexExpression              bool
+	// IndexConcurrently: CREATE INDEX ... CONCURRENTLY / ALTER INDEX ...
+	// ACTIVE CONCURRENTLY (HQBird/FB5, P7.3 phase7_plan.md). Orthogonal to
+	// the flags above — not folded into `variant` since tiering doesn't
+	// depend on it.
+	IndexConcurrently bool
 	// IndexActivation: "ACTIVE", "INACTIVE" (ALTER INDEX), "" otherwise.
 	IndexActivation string
 	// TriggerKind: "DML", "DDL", "DATABASE_EVENT" (best-effort).

@@ -248,6 +248,101 @@ func TestCanonicalCreate(t *testing.T) {
 			in: "CREATE INDEX I ON T (A) WHERE A > 0", verb: VerbCreate, ot: ObjIndex, name: "I", variant: "INDEX_PARTIAL",
 			mutating: true, rev: ReversibilityReverseDDL, conf: ConfidenceMedium, minVer: "5.0", secondary: []string{"T"},
 		},
+		{
+			// P7.3 (phase7_plan.md): CONCURRENTLY is orthogonal to shape —
+			// plain CREATE INDEX stays ConfidenceHigh, just version-gated.
+			in: "CREATE INDEX I ON T (A) CONCURRENTLY", verb: VerbCreate, ot: ObjIndex, name: "I",
+			mutating: true, rev: ReversibilityReverseDDL, conf: ConfidenceMedium, minVer: "5.0", secondary: []string{"T"},
+			flags: func(t *testing.T, s Statement) {
+				if !s.Flags.IndexConcurrently {
+					t.Error("IndexConcurrently=false, want true")
+				}
+			},
+		},
+	})
+}
+
+func TestCanonicalMaterializedView(t *testing.T) {
+	canonRun(t, []canonCase{
+		{
+			in: "CREATE MATERIALIZED VIEW MV AS SELECT A FROM T", verb: VerbCreate, ot: ObjMaterializedView, name: "MV",
+			mutating: true, rev: ReversibilityReverseDDL, conf: ConfidenceMedium, minVer: "5.0",
+		},
+		{
+			in: "CREATE MATERIALIZED VIEW MV AS SELECT A FROM T WITH DATA", verb: VerbCreate, ot: ObjMaterializedView, name: "MV",
+			mutating: true, rev: ReversibilityReverseDDL, conf: ConfidenceMedium, minVer: "5.0",
+			flags: func(t *testing.T, s Statement) {
+				if s.Flags.Extras["with_data"] != "1" {
+					t.Errorf("with_data=%q, want 1", s.Flags.Extras["with_data"])
+				}
+			},
+		},
+		{
+			in: "CREATE MATERIALIZED VIEW MV AS SELECT A FROM T WITH NO DATA", verb: VerbCreate, ot: ObjMaterializedView, name: "MV",
+			mutating: true, rev: ReversibilityReverseDDL, conf: ConfidenceMedium, minVer: "5.0",
+			flags: func(t *testing.T, s Statement) {
+				if s.Flags.Extras["with_data"] != "" {
+					t.Errorf("with_data=%q, want unset", s.Flags.Extras["with_data"])
+				}
+			},
+		},
+		{
+			in: "RECREATE MATERIALIZED VIEW MV AS SELECT A FROM T", verb: VerbRecreate, ot: ObjMaterializedView, name: "MV",
+			mutating: true, rev: ReversibilityReverseDDL, conf: ConfidenceMedium, minVer: "5.0",
+		},
+		{
+			in: "ALTER MATERIALIZED VIEW MV AS SELECT A FROM T TO NOT MATERIALIZED", verb: VerbAlter, ot: ObjMaterializedView,
+			name: "MV", variant: "TO_NOT_MATERIALIZED", mutating: true, rev: ReversibilityReverseDDL, conf: ConfidenceMedium, minVer: "5.0",
+		},
+		{
+			in: "ALTER VIEW MV AS SELECT A FROM T TO MATERIALIZED", verb: VerbAlter, ot: ObjView,
+			name: "MV", variant: "TO_MATERIALIZED", mutating: true, rev: ReversibilityReverseDDL, conf: ConfidenceMedium, minVer: "5.0",
+		},
+		{
+			in: "REFRESH MATERIALIZED VIEW MV", verb: VerbRefresh, ot: ObjMaterializedView, name: "MV",
+			mutating: true, rev: ReversibilityNone, conf: ConfidenceMedium, minVer: "5.0",
+			flags: func(t *testing.T, s Statement) {
+				if s.Flags.Extras["refresh_mode"] != "exclusive" {
+					t.Errorf("refresh_mode=%q, want exclusive", s.Flags.Extras["refresh_mode"])
+				}
+			},
+		},
+		{
+			in: "REFRESH MATERIALIZED VIEW MV CONCURRENTLY", verb: VerbRefresh, ot: ObjMaterializedView, name: "MV",
+			mutating: true, rev: ReversibilityNone, conf: ConfidenceMedium, minVer: "5.0",
+			flags: func(t *testing.T, s Statement) {
+				if s.Flags.Extras["refresh_mode"] != "concurrently" {
+					t.Errorf("refresh_mode=%q, want concurrently", s.Flags.Extras["refresh_mode"])
+				}
+			},
+		},
+		{
+			in: "REFRESH MATERIALIZED VIEW MV DROP DATA", verb: VerbRefresh, ot: ObjMaterializedView, name: "MV",
+			mutating: true, rev: ReversibilityNone, conf: ConfidenceMedium, minVer: "5.0",
+			flags: func(t *testing.T, s Statement) {
+				if s.Flags.Extras["refresh_mode"] != "drop_data" {
+					t.Errorf("refresh_mode=%q, want drop_data", s.Flags.Extras["refresh_mode"])
+				}
+			},
+		},
+		{
+			in: "REFRESH MATERIALIZED VIEW MV CASCADE", verb: VerbRefresh, ot: ObjMaterializedView, name: "MV",
+			mutating: true, rev: ReversibilityNone, conf: ConfidenceMedium, minVer: "5.0",
+			flags: func(t *testing.T, s Statement) {
+				if s.Flags.Extras["cascade"] != "1" {
+					t.Errorf("cascade=%q, want 1", s.Flags.Extras["cascade"])
+				}
+			},
+		},
+		{
+			in: "REFRESH MATERIALIZED VIEW MV CONCURRENTLY CASCADE", verb: VerbRefresh, ot: ObjMaterializedView, name: "MV",
+			mutating: true, rev: ReversibilityNone, conf: ConfidenceMedium, minVer: "5.0",
+			flags: func(t *testing.T, s Statement) {
+				if s.Flags.Extras["refresh_mode"] != "concurrently" || s.Flags.Extras["cascade"] != "1" {
+					t.Errorf("refresh_mode=%q cascade=%q", s.Flags.Extras["refresh_mode"], s.Flags.Extras["cascade"])
+				}
+			},
+		},
 	})
 }
 
@@ -331,6 +426,22 @@ func TestCanonicalAlter(t *testing.T) {
 					t.Errorf("activation=%q", s.Flags.IndexActivation)
 				}
 			},
+		},
+		{
+			// P7.3: CONCURRENTLY attaches to ACTIVE only (doc).
+			in: "ALTER INDEX I ACTIVE CONCURRENTLY", verb: VerbAlter, ot: ObjIndex, name: "I", variant: "INDEX_ACTIVE",
+			mutating: true, rev: ReversibilityReverseDDL, conf: ConfidenceMedium, minVer: "5.0",
+			flags: func(t *testing.T, s Statement) {
+				if s.Flags.IndexActivation != "ACTIVE" || !s.Flags.IndexConcurrently {
+					t.Errorf("activation=%q concurrently=%v", s.Flags.IndexActivation, s.Flags.IndexConcurrently)
+				}
+			},
+		},
+		{
+			// P7.3: new FB5 form, previously unrecognized (degraded to Low
+			// confidence + escalated tier); now classified cleanly.
+			in: "ALTER INDEX I VALIDATE UNIQUE", verb: VerbAlter, ot: ObjIndex, name: "I", variant: "INDEX_VALIDATE_UNIQUE",
+			mutating: true, rev: ReversibilityReverseDDL, conf: ConfidenceMedium, minVer: "5.0",
 		},
 		{in: "ALTER DATABASE SET LINGER TO 5", verb: VerbAlter, ot: ObjDatabase, mutating: true, rev: ReversibilityRestorePoint, conf: ConfidenceMedium, minVer: "4.0"},
 		{in: "ALTER SEQUENCE S RESTART WITH 10", verb: VerbAlter, ot: ObjSequence, name: "S", mutating: true, rev: ReversibilityRestorePoint, conf: ConfidenceHigh},

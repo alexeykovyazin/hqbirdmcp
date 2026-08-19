@@ -57,12 +57,21 @@ func v3OpFor(k fbparse.OpKey) int {
 	case fbparse.ObjMapping:
 		return 33
 	case fbparse.ObjIndex:
-		if v == fbparse.VerbAlter && (variant == "INDEX_ACTIVE" || variant == "INDEX_INACTIVE") {
+		if v == fbparse.VerbAlter && (variant == "INDEX_ACTIVE" || variant == "INDEX_INACTIVE" || variant == "INDEX_VALIDATE_UNIQUE") {
 			return 20
 		}
 		return 19
 	case fbparse.ObjView:
 		return 22
+	case fbparse.ObjMaterializedView:
+		// P7.4 (phase7_plan.md): the view<->MV conversion forms are the same
+		// risk class as a plain ALTER VIEW (dependent objects unaffected per
+		// README.materialized_view.md); create/redefine map to row 23
+		// ("Create/drop/refresh materialized view").
+		if variant == "TO_NOT_MATERIALIZED" {
+			return 22
+		}
+		return 23
 	case fbparse.ObjSequence:
 		return 24
 	case fbparse.ObjProcedure, fbparse.ObjFunction:
@@ -164,6 +173,14 @@ func mapStatement(s fbparse.Statement) Result {
 	case s.OpKey().Variant == "COLUMN_TYPE" && tier < 2:
 		tier = 2
 		reason += " (column type change — restore point required)"
+	case s.Verb == fbparse.VerbRefresh && s.Flags.Extras["cascade"] == "1":
+		// P7.4: CASCADE fans out to every MV the target depends on — a
+		// multi-object blast radius unknown until the engine reports it,
+		// mirrors the DROP-escalation precedent above.
+		if tier < 2 {
+			tier = 2
+		}
+		reason = "REFRESH MATERIALIZED VIEW ... CASCADE — multi-object blast radius"
 	}
 
 	if strings.EqualFold(string(s.ObjectType), "database") && s.Verb != fbparse.VerbCreate && s.Verb != fbparse.VerbDrop && s.Verb != fbparse.VerbComment {

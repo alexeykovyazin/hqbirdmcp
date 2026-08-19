@@ -19,13 +19,18 @@ const (
 	varWithLock  = "WITH_LOCK" // SELECT/UPDATE ... WITH LOCK
 	varMergeSubQ = "USING_SUBQUERY"
 
-	varIndexUnique     = "INDEX_UNIQUE"
-	varIndexDesc       = "INDEX_DESC"
-	varIndexUniqueDesc = "INDEX_UNIQUE_DESC"
-	varIndexExpression = "INDEX_EXPRESSION"
-	varIndexActive     = "INDEX_ACTIVE"
-	varIndexInactive   = "INDEX_INACTIVE"
-	varIndexPartial    = "INDEX_PARTIAL"
+	varIndexUnique         = "INDEX_UNIQUE"
+	varIndexDesc           = "INDEX_DESC"
+	varIndexUniqueDesc     = "INDEX_UNIQUE_DESC"
+	varIndexExpression     = "INDEX_EXPRESSION"
+	varIndexActive         = "INDEX_ACTIVE"
+	varIndexInactive       = "INDEX_INACTIVE"
+	varIndexPartial        = "INDEX_PARTIAL"
+	varIndexValidateUnique = "INDEX_VALIDATE_UNIQUE" // P7.3: ALTER INDEX ... VALIDATE UNIQUE (FB5)
+
+	// P7.4 materialized views (HQBird/FB5): view<->MV conversion forms.
+	varViewToMaterialized    = "TO_MATERIALIZED"
+	varViewToNotMaterialized = "TO_NOT_MATERIALIZED"
 
 	varPackageBody      = "BODY"
 	varFunctionAggr     = "AGGREGATE"
@@ -117,6 +122,15 @@ func KnownOpKeys() []OpKey {
 		OpKey{VerbCreate, ObjIndex, varIndexPartial},
 		OpKey{VerbAlter, ObjIndex, varIndexActive},
 		OpKey{VerbAlter, ObjIndex, varIndexInactive},
+		OpKey{VerbAlter, ObjIndex, varIndexValidateUnique},
+		// P7.4 materialized views (HQBird/FB5). No CREATE OR ALTER form
+		// (not documented) and no DROP form (DROP VIEW covers both kinds).
+		OpKey{VerbCreate, ObjMaterializedView, ""},
+		OpKey{VerbRecreate, ObjMaterializedView, ""},
+		OpKey{VerbAlter, ObjMaterializedView, ""},
+		OpKey{VerbAlter, ObjMaterializedView, varViewToNotMaterialized},
+		OpKey{VerbAlter, ObjView, varViewToMaterialized},
+		OpKey{VerbRefresh, ObjMaterializedView, ""},
 		OpKey{VerbCreate, ObjPackage, varPackageBody},
 		OpKey{VerbCreateOrAlter, ObjPackage, varPackageBody},
 		OpKey{VerbRecreate, ObjPackage, varPackageBody},

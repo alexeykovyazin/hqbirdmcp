@@ -12,10 +12,10 @@ import (
 // Drift-tested: the mapped v3 op's TierForRisk plus ADR-019 escalations
 // must match the expected tier. CI-blocking (phase4_plan.md P4.1 T7).
 var canonical = []struct {
-	sql    string
-	v3     int
-	tier   int
-	note   string
+	sql  string
+	v3   int
+	tier int
+	note string
 }{
 	{"CREATE TABLE T (A INT)", 11, 1, "create table"},
 	{"DROP TABLE T", 11, 2, "drop escalated"},
@@ -47,6 +47,13 @@ var canonical = []struct {
 	{"COMMENT ON TABLE T IS 'n'", 109, 1, "comment"},
 	{"SET TRANSACTION LOCK TIMEOUT 5", 43, 1, "lock timeout"},
 	{"DROP DATABASE", 8, 3, "drop database"},
+	// P7.4 (phase7_plan.md): materialized views.
+	{"CREATE MATERIALIZED VIEW MV AS SELECT A FROM T", 23, 1, "create materialized view"},
+	{"ALTER MATERIALIZED VIEW MV AS SELECT A FROM T TO NOT MATERIALIZED", 22, 1, "MV -> view conversion, same class as ALTER VIEW"},
+	{"ALTER VIEW MV AS SELECT A FROM T TO MATERIALIZED", 22, 1, "view -> MV conversion, same class as ALTER VIEW"},
+	{"REFRESH MATERIALIZED VIEW MV", 23, 1, "refresh, exclusive mode"},
+	{"REFRESH MATERIALIZED VIEW MV CONCURRENTLY", 23, 1, "refresh, concurrent mode"},
+	{"REFRESH MATERIALIZED VIEW MV CASCADE", 23, 2, "refresh CASCADE escalates to tier 2"},
 }
 
 func TestCanonicalV3Matrix(t *testing.T) {

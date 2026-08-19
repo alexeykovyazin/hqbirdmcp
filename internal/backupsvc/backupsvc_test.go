@@ -25,13 +25,13 @@ func TestBackupRestoreValidateLive(t *testing.T) {
 	os.Remove(fbk)
 	os.Remove(restored)
 
-	if err := c.Backup(src, fbk, func(m string) {}); err != nil {
+	if err := c.Backup(src, fbk, 0, func(m string) {}); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
 	if _, err := os.Stat(fbk); err != nil {
 		t.Fatalf("backup file missing: %v", err)
 	}
-	if err := c.Restore(fbk, restored, false, func(m string) {}); err != nil {
+	if err := c.Restore(fbk, restored, false, 0, func(m string) {}); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
 	if _, err := os.Stat(restored); err != nil {
@@ -42,6 +42,34 @@ func TestBackupRestoreValidateLive(t *testing.T) {
 	}
 	os.Remove(fbk)
 	os.Remove(restored)
+}
+
+// TestBackupRestoreParallelLive is P7.2 (phase7_plan.md): confirms a
+// non-zero ParallelWorkers round-trips through the driver without error.
+// Real speedup validation needs a much larger database than the spike DBs;
+// this only proves the option is wired correctly end to end.
+func TestBackupRestoreParallelLive(t *testing.T) {
+	c := liveClient(t)
+	src := `C:/HQbirdData/output/fbmcp-spike/spike_FB5.0.fdb`
+	fbk := `C:/HQbirdData/output/fbmcp-spike/test_p7_2_parallel.fbk`
+	restored := `C:/HQbirdData/output/fbmcp-spike/test_p7_2_parallel_restored.fdb`
+	os.Remove(fbk)
+	os.Remove(restored)
+	defer os.Remove(fbk)
+	defer os.Remove(restored)
+
+	if err := c.Backup(src, fbk, 4, func(m string) {}); err != nil {
+		t.Fatalf("parallel backup: %v", err)
+	}
+	if _, err := os.Stat(fbk); err != nil {
+		t.Fatalf("backup file missing: %v", err)
+	}
+	if err := c.Restore(fbk, restored, false, 4, func(m string) {}); err != nil {
+		t.Fatalf("parallel restore: %v", err)
+	}
+	if _, err := os.Stat(restored); err != nil {
+		t.Fatalf("restored file missing: %v", err)
+	}
 }
 
 func TestCatalogFacts(t *testing.T) {

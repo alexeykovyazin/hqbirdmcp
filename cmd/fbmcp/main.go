@@ -61,6 +61,7 @@ var toolMeta = []policy.ToolMeta{
 	{Name: "fb_schema_list", Tier: 0, Scope: "database", MinFB: "2.5"},
 	{Name: "fb_describe", Tier: 0, Scope: "database", MinFB: "2.5"},
 	{Name: "fb_activity_sample", Tier: 0, Scope: "database", MinFB: "2.5"},
+	{Name: "fb_lwmonitoring", Tier: 0, Scope: "instance"},
 	{Name: "fb_backup_start", Tier: 1, Scope: "database"},
 	{Name: "fb_restore_test", Tier: 1, Scope: "database"},
 	{Name: "fb_validate", Tier: 1, Scope: "database"},

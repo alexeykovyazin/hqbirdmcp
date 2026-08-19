@@ -103,6 +103,18 @@ func Preview(results []Result) string {
 		if r.Statement.Where != "" {
 			fmt.Fprintf(&b, "   WHERE: %s\n", r.Statement.Where)
 		}
+		if r.Statement.Flags.IndexConcurrently {
+			fmt.Fprintf(&b, "   CONCURRENTLY: reduced-lock index build (FB5) — takes longer, blocks writers for less time\n")
+		}
+		if mode := r.Statement.Flags.Extras["refresh_mode"]; mode != "" {
+			fmt.Fprintf(&b, "   refresh mode: %s\n", mode)
+		}
+		if r.Statement.Flags.Extras["cascade"] == "1" {
+			fmt.Fprintf(&b, "   CASCADE: also refreshes every materialized view this one depends on\n")
+		}
+		if r.Statement.Flags.Extras["with_data"] == "1" {
+			fmt.Fprintf(&b, "   WITH DATA: populated immediately on commit\n")
+		}
 		fmt.Fprintf(&b, "   compensation: %s\n", Compensation(r.Statement))
 	}
 	return b.String()
@@ -110,6 +122,14 @@ func Preview(results []Result) string {
 
 // Compensation is the reverse-DDL hint or restore-point requirement.
 func Compensation(s fbparse.Statement) string {
+	if s.Verb == fbparse.VerbRefresh {
+		// P7.4: Reversibility is None here for the same reason a read is —
+		// "nothing to undo" — but this is NOT a read (it replaces MV data).
+		// Say so plainly rather than reusing the read wording (ADR-021: never
+		// say "safe"); MV data isn't in gbak backups either (same as views),
+		// so a prior REFRESH can't be restored from a normal backup.
+		return "none — re-running REFRESH does not restore prior MV contents (materialized view data is not backed up by gbak, same as regular views); only a database-level restore point predating this REFRESH recovers the old data"
+	}
 	switch s.Reversibility {
 	case fbparse.ReversibilityNone:
 		return "none (read)"
@@ -119,6 +139,13 @@ func Compensation(s fbparse.Statement) string {
 		case fbparse.VerbDrop:
 			return fmt.Sprintf("recreate %s %s from a metadata extract / fb_describe (or restore point if extract is stale)", s.ObjectType, name)
 		case fbparse.VerbCreate, fbparse.VerbRecreate, fbparse.VerbCreateOrAlter:
+			if s.ObjectType == fbparse.ObjMaterializedView {
+				// P7.4: there is no "DROP MATERIALIZED VIEW" statement —
+				// README.materialized_view.md: use regular DROP VIEW for
+				// either kind. Saying "DROP MATERIALIZED VIEW" here would be
+				// a compensation instruction that fails if followed literally.
+				return fmt.Sprintf("DROP VIEW %s", name)
+			}
 			return fmt.Sprintf("DROP %s %s", s.ObjectType, name)
 		case fbparse.VerbGrant:
 			return "matching REVOKE of the same privilege"

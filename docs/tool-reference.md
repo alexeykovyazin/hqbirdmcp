@@ -69,6 +69,7 @@ Refused: `state.dir` change; ADR-022 (loopback bind, missing cert/key, zero iden
 | `fb_config_get` | `instance`, optional `param` | Read `firebird.conf` registry keys |
 | `fb_config_diff` | `instance` | Diff vs registry defaults; flags restart-required |
 | `fb_schedule_list` | `db` | Durable schedule grants |
+| `fb_lwmonitoring` | `instance`, optional `query` (1-4, default 1), `db` (required for levels 2-4) | HQBird lightweight monitoring (`isc_action_svc_lwmonitoring` via `fbsvcmgr`, ADR-028) — DB/attachment/transaction counts without MON$ table overhead; all Firebird versions |
 
 Min Firebird 2.5 for the MON$-backed reads (`fb_info` … `fb_activity_sample`).
 
@@ -88,9 +89,9 @@ Typical path: `fb_connected_dbs` → `fb_db_register` (`mode=preview` then `exec
 
 | Tool | Tier | Args | What it does |
 |---|---|---|---|
-| `fb_backup_start` | 1 | `db` | Full gbak into `backup_dir`; catalog **unverified** |
-| `fb_backup_nbackup` | 1 | `db`, `args.level` 0\|1\|2 | Incremental nbackup; level N needs catalog level N−1 |
-| `fb_restore_test` | 1 | `db` | Restore newest backup into **work dir**; never touches the source DB; marks catalog verified |
+| `fb_backup_start` | 1 | `db`, optional `args.parallel_workers` (1-64) | Full gbak into `backup_dir`; catalog **unverified**. `parallel_workers` is HQBird/FB5 multi-thread backup (native driver support, all versions) |
+| `fb_backup_nbackup` | 1 | `db`, `args.level` 0\|1\|2 | Incremental nbackup; level N needs catalog level N−1. No parallel-workers support (page-copy based) |
+| `fb_restore_test` | 1 | `db`, optional `args.parallel_workers` (1-64) | Restore newest backup into **work dir**; never touches the source DB; marks catalog verified. `parallel_workers` speeds up index creation during restore |
 | `fb_restore_replace` | 2 | `db` | In-place replace from newest backup (`.pre-restore` + `CloseDB`). Needs open window + verified backup &lt; 24h. **OOB only.** Cannot be scheduled |
 | `fb_retention_run` | 1 | `db`, `args.keep_days`, `args.dry_run` (default **true**) | Delete only catalog-verified artifacts past keep days. `keep_days=0` = keep everything. Uncataloged files are never touched |
 | `fb_validate` | 1 | `db` | Online validation (findings only, no repair) |
@@ -114,7 +115,7 @@ Typical path: `fb_connected_dbs` → `fb_db_register` (`mode=preview` then `exec
 
 | Tool | Tier | Args | What it does |
 |---|---|---|---|
-| `fb_write` | 1+ (classified) | `db`, `sql`, `mode` | Generic script on the **admin** pool. Mixed tiers denied. Irreversible / Tier 2 needs verified backup &lt; 24h |
+| `fb_write` | 1+ (classified) | `db`, `sql`, `mode` | Generic script on the **admin** pool. Mixed tiers denied. Irreversible / Tier 2 needs verified backup &lt; 24h. Includes HQBird/FB5-only extensions: `CREATE/ALTER INDEX ... CONCURRENTLY`, `ALTER INDEX ... VALIDATE UNIQUE`, `CREATE/ALTER/RECREATE MATERIALIZED VIEW`, `REFRESH MATERIALIZED VIEW [CONCURRENTLY\|DROP DATA] [CASCADE]`, `ALTER VIEW ... TO [NOT] MATERIALIZED` (ADR-027; denied on engines below 5.0 by the `MinFB` gate) |
 | `fb_index_rebuild` | 1 | `args.index`, `args.action` rebuild\|statistics, optional `args.advisory_id` | INACTIVE+ACTIVE or SET STATISTICS |
 | `fb_index_drop` | 1 | `args.index` or `args.advisory_id` | DROP INDEX; **refused if the index backs a constraint** |
 | `fb_comment_set` | 1 | `args.on` TABLE\|COLUMN, `args.name`, `args.column`, `args.text` | COMMENT ON |

@@ -59,7 +59,7 @@ func registerFBWrite(server *mcp.Server, gt *gatedTools, localID policy.Identity
 		if strings.EqualFold(a.Mode, "preview") {
 			return text(impact + "\nmode=preview (informational — confirmation still required to execute)\n"), nil, nil
 		}
-		meta := policy.ToolMeta{Name: "fb_write", Tier: prep.MaxTier, Scope: "database"}
+		meta := policy.ToolMeta{Name: "fb_write", Tier: prep.MaxTier, Scope: "database", MinFB: prep.MinFB}
 		if prep.MaxTier >= 2 {
 			meta.Preconditions = []policy.Precondition{
 				{Name: "verified_backup_exists", Op: "true", Why: "Tier-2 / irreversible content requires a verified backup"},

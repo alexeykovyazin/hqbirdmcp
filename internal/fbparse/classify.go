@@ -264,6 +264,8 @@ func (c *classifier) run() {
 		c.declareStmt()
 	case "SET":
 		c.setStmt()
+	case "REFRESH":
+		c.refreshStmt()
 	case "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE":
 		c.unknown("fbparse: transaction-control statement is outside the classification vocabulary")
 	case "CONNECT", "DISCONNECT":
@@ -657,6 +659,13 @@ func (c *classifier) createStmt(verb Verb) {
 	case c.at(0, "TRIGGER"):
 		c.i++
 		c.triggerRest()
+	case c.at(0, "MATERIALIZED") && c.at(1, "VIEW"):
+		// P7.4 (phase7_plan.md, HQBird/FB5): also reached via RECREATE
+		// (createStmt is shared — verb was set to VerbRecreate by the caller).
+		c.i += 2
+		c.finishNamed(ObjMaterializedView)
+		c.raiseVersion("5.0", c.toks[0].start)
+		c.materializedViewDataClause()
 	case c.at(0, "VIEW"):
 		c.i++
 		c.finishNamed(ObjView)
@@ -824,6 +833,18 @@ func (c *classifier) indexStmt() {
 			break
 		}
 	}
+	// Concurrent index build (HQBird/FB5 CONCURRENTLY, P7.3 phase7_plan.md):
+	// a trailing keyword anywhere at depth 0, orthogonal to UNIQUE/DESC/
+	// expression/partial — hence a Flag, not a variant (a variant per
+	// combination would explode combinatorially and isn't needed: OpKey
+	// tiering doesn't depend on concurrency).
+	for k := c.i; k < len(c.toks); k++ {
+		if c.depth[k] == 0 && c.toks[k].isWord("CONCURRENTLY") {
+			c.s.Flags.IndexConcurrently = true
+			c.raiseVersion("5.0", c.toks[k].start)
+			break
+		}
+	}
 	switch {
 	case expr:
 		c.s.Flags.IndexExpression = true
@@ -888,6 +909,83 @@ func (c *classifier) triggerRest() {
 		// ALTER TRIGGER without type info: sub-kind stays "" (open q4).
 	}
 	c.scanBody(1)
+}
+
+// ---------------------------------------------------------------------------
+// MATERIALIZED VIEW (P7.4, phase7_plan.md; HQBird/FB5 grammar extension,
+// README.materialized_view.md)
+
+// materializedViewDataClause scans the depth-0 tail for a trailing
+// WITH [NO] DATA clause (CREATE/ALTER/RECREATE MATERIALIZED VIEW). WITH DATA
+// changes the operation's blast radius (immediate data load vs. an empty
+// shell) so it's recorded; WITH NO DATA is the grammar default and needs no
+// marker.
+func (c *classifier) materializedViewDataClause() {
+	for k := c.i; k+1 < len(c.toks); k++ {
+		if c.depth[k] != 0 || !c.toks[k].isWord("WITH") {
+			continue
+		}
+		if c.toks[k+1].isWord("DATA") {
+			c.s.Flags.setExtra("with_data", "1")
+			return
+		}
+		if k+2 < len(c.toks) && c.toks[k+1].isWord("NO") && c.toks[k+2].isWord("DATA") {
+			return
+		}
+	}
+}
+
+// materializedViewConversion scans the depth-0 tail for a trailing
+// "TO [NOT] MATERIALIZED" clause — the view<->MV conversion forms
+// (ALTER VIEW ... TO MATERIALIZED / ALTER MATERIALIZED VIEW ... TO NOT
+// MATERIALIZED). Scanning rather than anchoring right after the name because
+// the AS <query> in between can be arbitrarily complex.
+func (c *classifier) materializedViewConversion() string {
+	for k := c.i; k+1 < len(c.toks); k++ {
+		if c.depth[k] != 0 || !c.toks[k].isWord("TO") {
+			continue
+		}
+		if c.toks[k+1].isWord("MATERIALIZED") {
+			return "TO_MATERIALIZED"
+		}
+		if k+2 < len(c.toks) && c.toks[k+1].isWord("NOT") && c.toks[k+2].isWord("MATERIALIZED") {
+			return "TO_NOT_MATERIALIZED"
+		}
+	}
+	return ""
+}
+
+// refreshStmt classifies REFRESH MATERIALIZED VIEW <name>
+// [CONCURRENTLY|DROP DATA] [CASCADE]. A refresh has no meaningful "reverse"
+// — re-refreshing is idempotent, not a rollback target — so Reversibility
+// stays None even though the statement mutates.
+func (c *classifier) refreshStmt() {
+	c.i = 1
+	if !(c.at(0, "MATERIALIZED") && c.at(1, "VIEW")) {
+		c.unknown("fbparse: expected MATERIALIZED VIEW after REFRESH")
+		return
+	}
+	c.i += 2
+	c.s.Verb = VerbRefresh
+	c.s.Mutating = true
+	c.s.Reversibility = ReversibilityNone
+	c.raiseVersion("5.0", c.toks[0].start)
+	c.finishNamed(ObjMaterializedView)
+
+	mode := "exclusive"
+	switch {
+	case c.at(0, "CONCURRENTLY"):
+		c.i++
+		mode = "concurrently"
+	case c.at(0, "DROP") && c.at(1, "DATA"):
+		c.i += 2
+		mode = "drop_data"
+	}
+	c.s.Flags.setExtra("refresh_mode", mode)
+	if c.at(0, "CASCADE") {
+		c.i++
+		c.s.Flags.setExtra("cascade", "1")
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -997,21 +1095,50 @@ func (c *classifier) alterStmt() {
 		c.i++
 		c.finishNamed(ObjTable)
 		c.alterTableOps()
+	case c.at(0, "MATERIALIZED") && c.at(1, "VIEW"):
+		// P7.4: redefinition (AS <query> [WITH [NO] DATA]) or the
+		// conversion form (AS <query> TO NOT MATERIALIZED).
+		c.i += 2
+		c.finishNamed(ObjMaterializedView)
+		c.raiseVersion("5.0", c.toks[0].start)
+		if c.materializedViewConversion() == "TO_NOT_MATERIALIZED" {
+			c.s.variant = varViewToNotMaterialized
+		} else {
+			c.materializedViewDataClause()
+		}
 	case c.at(0, "VIEW"):
 		c.i++
 		c.finishNamed(ObjView)
+		// P7.4: ALTER VIEW ... TO MATERIALIZED conversion.
+		if c.materializedViewConversion() == "TO_MATERIALIZED" {
+			c.s.variant = varViewToMaterialized
+			c.raiseVersion("5.0", c.toks[0].start)
+		}
 	case c.at(0, "INDEX"):
 		c.i++
 		c.finishNamed(ObjIndex)
 		switch {
 		case c.at(0, "ACTIVE"):
+			c.i++
 			c.s.Flags.IndexActivation = "ACTIVE"
 			c.s.variant = varIndexActive
+			// Concurrent activation (P7.3): ACTIVE is the only common button
+			// CONCURRENTLY attaches to (doc: "CONCURRENTLY can be used with
+			// ACTIVE only").
+			if c.at(0, "CONCURRENTLY") {
+				c.s.Flags.IndexConcurrently = true
+				c.raiseVersion("5.0", c.toks[c.i].start)
+			}
 		case c.at(0, "INACTIVE"):
 			c.s.Flags.IndexActivation = "INACTIVE"
 			c.s.variant = varIndexInactive
+		case c.at(0, "VALIDATE") && c.at(1, "UNIQUE"):
+			// New FB5 form (P7.3): re-validates a NOT VALIDATED unique index
+			// built CONCURRENTLY (README.index_concurrently.md).
+			c.s.variant = varIndexValidateUnique
+			c.raiseVersion("5.0", c.toks[0].start)
 		default:
-			c.s.addIssue(IssueUnsupportedConstruct, "fbparse: expected ACTIVE or INACTIVE", c.i)
+			c.s.addIssue(IssueUnsupportedConstruct, "fbparse: expected ACTIVE, INACTIVE, or VALIDATE UNIQUE", c.i)
 		}
 	case c.at(0, "DATABASE"):
 		c.i++

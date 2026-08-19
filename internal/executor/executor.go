@@ -32,6 +32,14 @@ type Prepared struct {
 	Results []classify.Result
 	MaxTier int
 	HasDDL  bool
+	// MinFB is the highest fbparse.Statement.MinVersion across the script
+	// (P7.3/P7.4, phase7_plan.md), e.g. "5.0" for a CONCURRENTLY index build
+	// or a materialized view. "" means no statement raised a version floor.
+	// The caller wires this into policy.ToolMeta.MinFB so the existing
+	// fail-closed engine_version check (policy.EvaluateMeta) denies the
+	// script outright on an engine that doesn't support the construct,
+	// instead of letting the SQL reach the engine and fail there.
+	MinFB string
 }
 
 // Prepare classifies and applies ADR-019 guard rails. It does not execute.
@@ -46,7 +54,32 @@ func Prepare(sqlText string) (Prepared, error) {
 	if maxTier >= 3 {
 		return Prepared{}, fmt.Errorf("script contains Tier-3 content (disabled by default)")
 	}
-	return Prepared{SQL: sqlText, Results: results, MaxTier: maxTier, HasDDL: classify.HasDDL(results)}, nil
+	minFB := ""
+	for _, r := range results {
+		if versionGreater(r.Statement.MinVersion, minFB) {
+			minFB = r.Statement.MinVersion
+		}
+	}
+	return Prepared{SQL: sqlText, Results: results, MaxTier: maxTier, HasDDL: classify.HasDDL(results), MinFB: minFB}, nil
+}
+
+// versionGreater compares "MAJOR.MINOR" version strings numerically ("" is
+// the lowest). Malformed input can't occur here — raiseVersion only ever
+// sets fbparse.Statement.MinVersion to a literal it wrote itself.
+func versionGreater(a, b string) bool {
+	if a == "" {
+		return false
+	}
+	if b == "" {
+		return true
+	}
+	var am, an, bm, bn int
+	fmt.Sscanf(a, "%d.%d", &am, &an)
+	fmt.Sscanf(b, "%d.%d", &bm, &bn)
+	if am != bm {
+		return am > bm
+	}
+	return an > bn
 }
 
 // Impact renders the ADR-021 preview text. It never uses the word "safe".

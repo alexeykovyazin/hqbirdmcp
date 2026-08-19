@@ -15,6 +15,7 @@ import (
 	"github.com/aleks/fbmcp/internal/config"
 	"github.com/aleks/fbmcp/internal/dbpool"
 	"github.com/aleks/fbmcp/internal/facts"
+	"github.com/aleks/fbmcp/internal/lwmonitoring"
 	"github.com/aleks/fbmcp/internal/queryplan"
 	"github.com/aleks/fbmcp/internal/state"
 )
@@ -271,6 +272,51 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 		}
 		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_activity_sample", Tier: 0, Decision: "allow"})
 		return text(b.String()), nil, nil
+	})
+
+	// P7.1 — fb_lwmonitoring: HQBird isc_action_svc_lwmonitoring via fbsvcmgr
+	// (ADR-028; internal/lwmonitoring). Db is required for query levels 2-4
+	// (scopes the query to one database's isc_spb_dbname); ignored at level 1.
+	type lwmArg struct {
+		Instance string `json:"instance" jsonschema:"registry id of the Firebird instance"`
+		Query    int    `json:"query,omitempty" jsonschema:"lwm_query level 1-4 (default 1): 1=db/attachment counts, 2=per-database, 3=+transaction/request stats, 4=per-attachment"`
+		Db       string `json:"db,omitempty" jsonschema:"registry id of the database (required for query levels 2-4)"`
+	}
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_lwmonitoring", Description: "Tier 0: HQBird lightweight monitoring (isc_action_svc_lwmonitoring via fbsvcmgr) — DB/attachment/transaction counts without MON$ table overhead"}, func(ctx context.Context, req *mcp.CallToolRequest, a lwmArg) (*mcp.CallToolResult, any, error) {
+		level := a.Query
+		if level == 0 {
+			level = lwmonitoring.MinQuery
+		}
+		inst, err := cfg.Instance(a.Instance)
+		if err != nil {
+			return text("error: " + err.Error()), nil, nil
+		}
+		var dbPath, user, pass string
+		if a.Db != "" {
+			dbCfg, err := cfg.DB(a.Db)
+			if err != nil {
+				return text("error: " + err.Error()), nil, nil
+			}
+			dbPath, user = dbCfg.Path, dbCfg.ROUser
+			pass, err = config.SecretFromEnv(dbCfg.ROSecretEnv)
+			if err != nil {
+				return text("error: " + err.Error()), nil, nil
+			}
+		} else {
+			user, pass = inst.ServiceUser, ""
+			if inst.ServiceSecretEnv != "" {
+				pass, err = config.SecretFromEnv(inst.ServiceSecretEnv)
+				if err != nil {
+					return text("error: " + err.Error()), nil, nil
+				}
+			}
+		}
+		out, err := lwmonitoring.Query(ctx, inst, user, pass, level, dbPath)
+		if err != nil {
+			return text("error: " + err.Error()), nil, nil
+		}
+		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_lwmonitoring", Tier: 0, Decision: "allow"})
+		return text(out), nil, nil
 	})
 }
 

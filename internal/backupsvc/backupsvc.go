@@ -26,30 +26,37 @@ func NewClient(inst config.FBInstance, user, pass string) *Client {
 }
 
 // Backup runs a full gbak backup (blocking; call from a job). Progress lines
-// are delivered while running.
-func (c *Client) Backup(dbFile, backupFile string, progress func(string)) error {
+// are delivered while running. parallelWorkers is HQBird/FB5's -par / -parallel
+// thread count (P7.2, phase7_plan.md); 0 means the driver default (no
+// parallelism) — mirrors the driver's own WithoutBackupParallelWorkers().
+func (c *Client) Backup(dbFile, backupFile string, parallelWorkers int32, progress func(string)) error {
 	bm, err := fb.NewBackupManager(c.Addr, c.User, c.Pass, c.opts)
 	if err != nil {
 		return err
 	}
+	opts := fb.GetDefaultBackupOptions()
+	opts.ParallelWorkers = parallelWorkers
 	ch := make(chan string, 256)
 	done := make(chan error, 1)
 	dctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go drainUntil(dctx, ch, progress)
-	go func() { done <- bm.Backup(dbFile, backupFile, fb.GetDefaultBackupOptions(), ch) }()
+	go func() { done <- bm.Backup(dbFile, backupFile, opts, ch) }()
 	return <-done
 }
 
 // Restore restores a backup file into dbFile (blocking). replace allows
 // overwriting an existing database file (gbak -REP equivalent).
-func (c *Client) Restore(backupFile, dbFile string, replace bool, progress func(string)) error {
+// parallelWorkers is HQBird/FB5's -par / -parallel thread count for index
+// creation during restore (P7.2); 0 means no parallelism.
+func (c *Client) Restore(backupFile, dbFile string, replace bool, parallelWorkers int32, progress func(string)) error {
 	bm, err := fb.NewBackupManager(c.Addr, c.User, c.Pass, c.opts)
 	if err != nil {
 		return err
 	}
 	opts := fb.GetDefaultRestoreOptions()
 	opts.Replace = replace
+	opts.ParallelWorkers = parallelWorkers
 	ch := make(chan string, 256)
 	done := make(chan error, 1)
 	dctx, cancel := context.WithCancel(context.Background())

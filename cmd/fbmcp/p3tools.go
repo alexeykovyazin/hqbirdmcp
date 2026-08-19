@@ -163,12 +163,13 @@ func registerP3Tools(server *mcp.Server, gt *gatedTools) {
 	// P3.1 — fb_backup_start (Tier 1): full backup into the DB's backup dir,
 	// registered in the catalog (unverified until a test-restore).
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_backup_start", Tier: 1, Scope: "database"},
-		"Full gbak backup of %s to its configured backup dir (async job).",
+		"Full gbak backup of %s to its configured backup dir (async job; args: {\"parallel_workers\": N} for HQBird/FB5 multi-thread backup, 1-64).",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			c, db, err := gt.client(dbID)
 			if err != nil {
 				return "", err
 			}
+			parallel, _ := toInt(args["parallel_workers"])
 			backupDir := db.BackupDir
 			if backupDir == "" {
 				backupDir = filepath.Dir(db.Path)
@@ -177,8 +178,12 @@ func registerP3Tools(server *mcp.Server, gt *gatedTools) {
 				return "", err
 			}
 			fbk := filepath.Join(backupDir, fmt.Sprintf("%s_%s.fbk", dbID, time.Now().Format("20060102_150405")))
-			prog(0.1, "backup started")
-			if err := c.Backup(db.Path, fbk, func(m string) { prog(0.5, m) }); err != nil {
+			if parallel > 0 {
+				prog(0.1, fmt.Sprintf("backup started (parallel_workers=%d)", parallel))
+			} else {
+				prog(0.1, "backup started")
+			}
+			if err := c.Backup(db.Path, fbk, int32(parallel), func(m string) { prog(0.5, m) }); err != nil {
 				return "", fmt.Errorf("backup failed: %w", err)
 			}
 			if err := backupsvc.NewCatalog(gt.st).Register(dbID, fbk, false); err != nil {
@@ -229,12 +234,13 @@ func registerP3Tools(server *mcp.Server, gt *gatedTools) {
 	// work dir, validate, mark verified (verification = successful
 	// test-restore per the P0.2 finding that gbak has no standalone verify).
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_restore_test", Tier: 1, Scope: "database"},
-		"Test-restore of the newest backup of %s into the work dir (never touches the source DB).",
+		"Test-restore of the newest backup of %s into the work dir (never touches the source DB; args: {\"parallel_workers\": N} for HQBird/FB5 multi-thread index creation during restore, 1-64).",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			c, db, err := gt.client(dbID)
 			if err != nil {
 				return "", err
 			}
+			parallel, _ := toInt(args["parallel_workers"])
 			backupDir := db.BackupDir
 			if backupDir == "" {
 				backupDir = filepath.Dir(db.Path)
@@ -257,8 +263,12 @@ func registerP3Tools(server *mcp.Server, gt *gatedTools) {
 			}
 			restored := filepath.Join(workDir, "verify_"+dbID+".fdb")
 			os.Remove(restored)
-			prog(0.2, "restoring "+fbk)
-			if err := c.Restore(fbk, restored, false, func(m string) { prog(0.6, m) }); err != nil {
+			if parallel > 0 {
+				prog(0.2, fmt.Sprintf("restoring %s (parallel_workers=%d)", fbk, parallel))
+			} else {
+				prog(0.2, "restoring "+fbk)
+			}
+			if err := c.Restore(fbk, restored, false, int32(parallel), func(m string) { prog(0.6, m) }); err != nil {
 				return "", fmt.Errorf("restore failed: %w", err)
 			}
 			prog(0.8, "validating restored copy")
@@ -566,7 +576,7 @@ func restoreReplaceSteps(gt *gatedTools) []workflows.StepDef {
 				return fmt.Errorf("cannot remove current database file (attached?): %w", err)
 			}
 			prog(0.4, "restoring "+wf.Detail["fbk"])
-			return c.Restore(wf.Detail["fbk"], db.Path, false, func(m string) { prog(0.7, m) })
+			return c.Restore(wf.Detail["fbk"], db.Path, false, 0, func(m string) { prog(0.7, m) })
 		}, Compensate: putBack},
 		{Name: "validate", Do: func(ctx context.Context, wf *state.Workflow, prog func(float64, string)) error {
 			c, db, err := gt.client(wf.Database)
