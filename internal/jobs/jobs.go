@@ -19,6 +19,9 @@ import (
 // interrupted instead of auto-resuming destructive work).
 type Func func(ctx context.Context, progress func(frac float64, msg string)) (string, error)
 
+// Hook is called when a job reaches a terminal state (K7).
+type Hook func(j state.Job)
+
 // Runner executes jobs with per-DB serialization.
 type Runner struct {
 	st *state.Store
@@ -26,8 +29,10 @@ type Runner struct {
 	mu     sync.Mutex
 	dbChan map[string]chan task
 	cancel map[string]context.CancelFunc
+	drain  map[string]struct{}
 	closed bool
 	wg     sync.WaitGroup
+	onDone Hook
 }
 
 type task struct {
@@ -36,10 +41,12 @@ type task struct {
 }
 
 func NewRunner(st *state.Store) *Runner {
-	r := &Runner{st: st, dbChan: map[string]chan task{}, cancel: map[string]context.CancelFunc{}}
+	r := &Runner{st: st, dbChan: map[string]chan task{}, cancel: map[string]context.CancelFunc{}, drain: map[string]struct{}{}}
 	r.reconcile()
 	return r
 }
+
+func (r *Runner) SetHook(h Hook) { r.mu.Lock(); r.onDone = h; r.mu.Unlock() }
 
 // reconcile marks running jobs from a previous process as interrupted.
 func (r *Runner) reconcile() {
@@ -60,6 +67,10 @@ func (r *Runner) Submit(jobType, db, identity, requestID string, fn Func) (strin
 	if r.closed {
 		r.mu.Unlock()
 		return "", fmt.Errorf("runner is closed")
+	}
+	if _, ok := r.drain[db]; ok {
+		r.mu.Unlock()
+		return "", fmt.Errorf("database %q is draining for config reload", db)
 	}
 	ch, ok := r.dbChan[db]
 	if !ok {
@@ -130,6 +141,12 @@ func (r *Runner) worker(ch chan task) {
 			j.Progress = 1
 		}
 		r.st.PutJob(j)
+		r.mu.Lock()
+		h := r.onDone
+		r.mu.Unlock()
+		if h != nil {
+			h(j)
+		}
 	}
 }
 
@@ -153,6 +170,52 @@ func (r *Runner) Cancel(id string) error {
 
 // Status reports a job.
 func (r *Runner) Status(id string) (state.Job, bool) { return r.st.Job(id) }
+
+// SetDraining marks database (or instance) ids so Submit refuses new work.
+func (r *Runner) SetDraining(ids []string, on bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.drain == nil {
+		r.drain = map[string]struct{}{}
+	}
+	for _, id := range ids {
+		if on {
+			r.drain[id] = struct{}{}
+		} else {
+			delete(r.drain, id)
+		}
+	}
+}
+
+// HasLive reports queued/running jobs for db, ignoring exceptJobID.
+func (r *Runner) HasLive(db, exceptJobID string) bool {
+	for _, j := range r.st.Jobs() {
+		if j.Database != db {
+			continue
+		}
+		if j.ID == exceptJobID {
+			continue
+		}
+		if j.State == "queued" || j.State == "running" {
+			return true
+		}
+	}
+	return false
+}
+
+// WaitIdle waits until HasLive is false or ctx is done.
+func (r *Runner) WaitIdle(ctx context.Context, db, exceptJobID string) error {
+	for {
+		if !r.HasLive(db, exceptJobID) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
 
 // Close stops accepting jobs and waits (bounded) for workers.
 func (r *Runner) Close() {

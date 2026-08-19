@@ -9,8 +9,7 @@ os/exec output-loss pitfall).
 A1 DB data · A2 DB credentials (SYSDBA/per-DB users) · A3 backups ·
 A4 firebird.conf/databases.conf · A5 audit log + kernel state (pending
 actions, tokens, job store) · A6 host service control (Firebird service) ·
-A7 MCP transport (stdio local / HTTP remote) · A8 confirmation surface
-(localhost approval page + CLI) · A9 server binary + config/registry files.
+A7 MCP transport (stdio local / HTTP remote) · A8 confirmation surface (CLI marker-file; approval page not in v1) · A9 server binary + config/registry files.
 
 ## 2. Actors & trust boundaries
 
@@ -83,3 +82,29 @@ pre-authorized jobs; F12 notification delivery.
 5. Single-instance lock file is advisory-locked only against same-path
    configs; misconfigured second data dir could still dual-write (documented
    operator responsibility).
+
+## 7. Phase 5 surface (2026-08-17)
+
+- **Remote (A7):** `listen` is opt-in. Start requires non-localhost bind + TLS
+  + ≥1 identity (ADR-022). `/healthz` is liveness only. `/mcp` and `/sse` are
+  authenticated. X-Forwarded-For untrusted. No remote approval page; humans
+  use `fbmcpctl approve` on the host (SSH).
+- **Scheduler (F11 / T-14):** durable `state.Schedule` grant, not a 15-minute
+  pending action. Fire path does not call the gate. Arg-hash drift skips the
+  run. Tier-3 and `fb_restore_replace` cannot be scheduled (ADR-023).
+- **K7 (F12):** local event log + optional HMAC webhook (ADR-024). POST_EVENT
+  deferred.
+
+## 8. Phase 6 residuals (P6.1, 2026-08-17)
+
+- Empty Origin allowlist (any Origin) and no HTTP rate-limit / session cap (C11).
+- Dual-control for Tier-3 not implemented (`fb_db_drop` stub) (C12).
+- Host write to `state.dir` can rewrite schedule `ArgHash` (C14 / T-11).
+- D5 env secrets (no OS keyring).
+- Non-bitwise-identical builds (ADR-026).
+- Windows service Stop does not cancel `runForeground`.
+- Linux container matrix and unattended soak: P6.2.
+
+`fb_confirm` now uses `identity.Caller` (P5.1 routed fix) so a remote API-key
+cannot confirm a pending action bound to a different identity.
+

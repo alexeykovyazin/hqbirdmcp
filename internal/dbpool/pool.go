@@ -19,13 +19,18 @@ import (
 
 // Manager owns the pools for every registered database.
 type Manager struct {
-	cfg   *config.Config
+	cfg   registry
 	mu    sync.Mutex
 	read  map[string]*sql.DB // db id -> read pool
 	admin map[string]*sql.DB // db id -> admin pool
 }
 
-func NewManager(cfg *config.Config) *Manager {
+type registry interface {
+	DB(id string) (config.Database, error)
+	Instance(id string) (config.FBInstance, error)
+}
+
+func NewManager(cfg registry) *Manager {
 	return &Manager{
 		cfg:   cfg,
 		read:  map[string]*sql.DB{},

@@ -12,14 +12,23 @@ shared-state facility. Two live processes would interleave audit-chain writes
 and pending-action mutations.
 
 ## Decision
-**Single active instance enforced by a lock file** (kernel state dir). A
-second process fails fast with "another client is attached — use fbmcp status
-or stop the other session". Daemon + thin-client is the documented fallback
-if multi-client concurrency becomes a requirement.
+**Single kernel per state dir**, enforced by the lock file. A second process
+must never open the store, audit chain, or job runner.
+
+Claude Desktop (and some other MCP hosts) spawn **two** stdio children for
+one configured server. The first child is the kernel; a later piped stdio
+process **attaches** as a thin client (`internal/attach`: localhost TCP +
+token files under `state.dir`) instead of exiting. An interactive console
+that hits the lock still fails fast.
+
+This is the daemon+thin-client fallback named when the ADR was accepted.
 
 ## Consequences
-- Safety fuse #6 (CI): second instance must fail fast, never dual-write.
+- Safety fuse #6 (CI): second *kernel* acquire must fail; attach clients
+  share the lock-holder's MCP server and do not dual-write.
 - The approval surface (A8) serves the *state dir*, not a process — P1.6
   design must read the pending-action store under the same lock discipline.
 - P5.3 scheduler runs inside the single server process; a separate cron
   spawning a second process must instead call the server (documented).
+- Attach is loopback-only and token-gated; same-account `state.dir` read
+  remains T-11 (already accepted).

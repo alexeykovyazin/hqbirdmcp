@@ -16,11 +16,12 @@ import (
 	"github.com/aleks/fbmcp/internal/dbpool"
 	"github.com/aleks/fbmcp/internal/facts"
 	"github.com/aleks/fbmcp/internal/queryplan"
+	"github.com/aleks/fbmcp/internal/state"
 )
 
 const rowCap = 100
 
-func registerP2Tools(server *mcp.Server, cfg *config.Config, pools *dbpool.Manager, engFacts *facts.EngineFacts, aud *audit.Logger) {
+func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manager, engFacts *facts.EngineFacts, aud *audit.Logger, st *state.Store) {
 	type dbArg struct {
 		Db string `json:"db" jsonschema:"registry id of the database"`
 	}
@@ -72,8 +73,6 @@ func registerP2Tools(server *mcp.Server, cfg *config.Config, pools *dbpool.Manag
 		}
 		defer rows.Close()
 		var b strings.Builder
-		type key struct{ rel, cols string }
-		seen := map[key][]string{}
 		n := 0
 		for rows.Next() {
 			var rel, idx string
@@ -90,27 +89,43 @@ func registerP2Tools(server *mcp.Server, cfg *config.Config, pools *dbpool.Manag
 				break
 			}
 		}
-		// duplicate-index advisory on leading column sets
+		// duplicate-index advisory on column sets — emit ids for P4.2.
 		rows2, err := tx.QueryContext(ctx, `
-			SELECT i.RDB$RELATION_NAME, LIST(s.RDB$FIELD_NAME) AS cols, COUNT(*) AS seg_cnt
+			SELECT i.RDB$RELATION_NAME, i.RDB$INDEX_NAME, LIST(s.RDB$FIELD_NAME)
 			FROM RDB$INDICES i
 			JOIN RDB$INDEX_SEGMENTS s ON s.RDB$INDEX_NAME = i.RDB$INDEX_NAME
 			WHERE i.RDB$SYSTEM_FLAG = 0
 			GROUP BY i.RDB$RELATION_NAME, i.RDB$INDEX_NAME`)
 		if err == nil {
 			defer rows2.Close()
+			type dupKey struct{ rel, cols string }
+			by := map[dupKey][]string{}
 			for rows2.Next() {
-				var rel, cols string
-				var cnt int
-				if rows2.Scan(&rel, &cols, &cnt); err == nil {
-					k := key{rel, cols}
-					seen[k] = append(seen[k], cols)
+				var rel, idx, cols string
+				if rows2.Scan(&rel, &idx, &cols) != nil {
+					continue
 				}
+				rel, idx, cols = strings.TrimSpace(rel), strings.TrimSpace(idx), strings.TrimSpace(cols)
+				k := dupKey{rel, cols}
+				by[k] = append(by[k], idx)
 			}
 			dups := 0
-			for k, v := range seen {
-				if len(v) > 1 {
-					fmt.Fprintf(&b, "ADVISORY: %s has %d indexes on the same columns (%s) — consider dropping duplicates\n", k.rel, len(v), k.cols)
+			for k, names := range by {
+				if len(names) < 2 {
+					continue
+				}
+				keep := names[0]
+				for _, drop := range names[1:] {
+					id := fmt.Sprintf("adv%d", time.Now().UnixNano())
+					if st != nil {
+						_ = st.PutAdvisory(state.Advisory{
+							ID: id, Database: a.Db, Tool: "fb_index_drop", Object: drop,
+							Reason:    fmt.Sprintf("duplicate of %s on %s(%s)", keep, k.rel, k.cols),
+							CreatedAt: time.Now().UTC(),
+						})
+					}
+					fmt.Fprintf(&b, "ADVISORY id=%s tool=fb_index_drop index=%s reason=duplicate of %s on %s(%s)\n",
+						id, drop, keep, k.rel, k.cols)
 					dups++
 					if dups >= 10 {
 						break

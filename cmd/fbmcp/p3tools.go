@@ -19,28 +19,43 @@ import (
 	"github.com/aleks/fbmcp/internal/backupsvc"
 	"github.com/aleks/fbmcp/internal/config"
 	"github.com/aleks/fbmcp/internal/dbpool"
+	execpkg "github.com/aleks/fbmcp/internal/executor"
+	"github.com/aleks/fbmcp/internal/facts"
 	"github.com/aleks/fbmcp/internal/gate"
+	"github.com/aleks/fbmcp/internal/identity"
 	"github.com/aleks/fbmcp/internal/jobs"
+	"github.com/aleks/fbmcp/internal/notify"
 	"github.com/aleks/fbmcp/internal/policy"
+	"github.com/aleks/fbmcp/internal/reload"
 	"github.com/aleks/fbmcp/internal/state"
+	"github.com/aleks/fbmcp/internal/workflows"
 )
 
 // executor runs the confirmed body of a gated tool as a job.
 type executor func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error)
 
 type gatedTools struct {
-	cfg    *config.Config
-	pools  *dbpool.Manager
-	eng    *policy.Engine
-	g      *gate.Gate
-	runner *jobs.Runner
-	aud    *audit.Logger
-	st     *state.Store
-	execs  map[string]executor
+	cfg      *config.Handle
+	pools    *dbpool.Manager
+	eng      *policy.Engine
+	g        *gate.Gate
+	runner   *jobs.Runner
+	aud      *audit.Logger
+	st       *state.Store
+	execSvc  *execpkg.Service
+	wf       *workflows.Engine
+	execs    map[string]executor
+	traces   map[string]*backupsvc.LiveTrace
+	bus      *notify.Bus
+	reloader *reload.Controller
+	httpLn   *httpListener
+	facts    *facts.EngineFacts
 
 	mu   sync.Mutex
 	args map[string]map[string]any // requestID -> tool args (in-memory; single instance per D8)
 }
+
+func (gt *gatedTools) live() *config.Config { return gt.cfg.Current() }
 
 func (gt *gatedTools) client(dbID string) (*backupsvc.Client, config.Database, error) {
 	db, err := gt.cfg.DB(dbID)
@@ -60,34 +75,67 @@ func (gt *gatedTools) client(dbID string) (*backupsvc.Client, config.Database, e
 
 // registerTool wires one gated tool: policy → pending action → (confirm) → job.
 func (gt *gatedTools) registerTool(server *mcp.Server, meta policy.ToolMeta, impactFmt string, exec executor) {
+	gt.registerToolEx(server, meta, impactFmt, exec, nil)
+}
+
+func (gt *gatedTools) registerToolEx(server *mcp.Server, meta policy.ToolMeta, impactFmt string, exec executor, preview func(context.Context, string, map[string]any) string) {
 	gt.execs[meta.Name] = exec
 	type dbArg struct {
 		Db   string         `json:"db"`
+		Mode string         `json:"mode,omitempty" jsonschema:"preview or execute (default execute)"`
 		Args map[string]any `json:"args,omitempty"`
 	}
-	localID := policy.Identity{Name: "local", MaxTier: 2}
 	mcp.AddTool(server, &mcp.Tool{Name: meta.Name, Description: fmt.Sprintf("Tier %d (gated): %s", meta.Tier, meta.Name)}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
-		d := gt.eng.Evaluate(localID, a.Db, meta.Name)
-		if d.Outcome == "deny" {
-			gt.aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: meta.Name, Tier: meta.Tier, Decision: "denied", Detail: map[string]interface{}{"reason": d.Reason}})
-			return text("DENIED: " + d.Reason), nil, nil
-		}
-		argsJSON, _ := json.Marshal(a.Args)
-		argHash := hashOf(a.Db + string(argsJSON))
-		p, err := gt.g.Request(localID, a.Db, meta, fmt.Sprintf(impactFmt, a.Db), argHash, d.FailedPreconditions)
-		if err != nil {
-			return text("gate error: " + err.Error()), nil, nil
-		}
-		gt.mu.Lock()
-		gt.args[p.ID] = a.Args
-		gt.mu.Unlock()
-		var b strings.Builder
-		b.WriteString(gate.ImpactStatement(p))
-		if meta.Tier <= 1 {
-			fmt.Fprintf(&b, "In-band token (Tier 1 only): %s\n", gate.IssueToken(p.ID, argHash))
-		}
-		return text(b.String()), nil, nil
+		return text(gt.requestGated(ctx, meta, impactFmt, a.Db, a.Args, a.Mode, preview)), nil, nil
 	})
+}
+
+// requestGated is the real tool path (C2/C22): policy + audit, then gate.Request.
+// The executor is never called from here.
+func (gt *gatedTools) requestGated(ctx context.Context, meta policy.ToolMeta, impactFmt, dbID string, args map[string]any, mode string, preview func(context.Context, string, map[string]any) string) string {
+	if _, err := gt.cfg.DB(dbID); err != nil && meta.Scope == "database" {
+		return "DENIED: " + err.Error()
+	}
+	id := identity.Caller(ctx)
+	d := gt.eng.Evaluate(id, dbID, meta.Name)
+	if d.Outcome == "deny" {
+		gt.aud.Log(audit.Entry{Identity: id.Name, Database: dbID, Tool: meta.Name, Tier: meta.Tier, Decision: "denied", Detail: map[string]interface{}{"reason": d.Reason}})
+		return "DENIED: " + d.Reason
+	}
+	impact := fmt.Sprintf(impactFmt, dbID)
+	if preview != nil {
+		if extra := preview(ctx, dbID, args); extra != "" {
+			impact += "\n" + extra
+		}
+	}
+	if strings.EqualFold(mode, "preview") {
+		var b strings.Builder
+		b.WriteString(impact)
+		fmt.Fprintf(&b, "\n\nmode=preview (informational — confirmation still required to execute)\nTier: %d | Database: %s\nAccepted confirmation channels: %s\n",
+			meta.Tier, dbID, strings.Join(gate.AllowedChannels(meta.Tier), ", "))
+		if len(d.FailedPreconditions) > 0 {
+			fmt.Fprintf(&b, "preconditions currently failing: %s\n", strings.Join(d.FailedPreconditions, "; "))
+		}
+		return b.String()
+	}
+	if len(d.FailedPreconditions) > 0 {
+		return "DENIED: " + d.Reason
+	}
+	argsJSON, _ := json.Marshal(args)
+	argHash := hashOf(dbID + string(argsJSON))
+	p, err := gt.g.Request(id, dbID, meta, impact, argHash, d.FailedPreconditions)
+	if err != nil {
+		return "gate error: " + err.Error()
+	}
+	gt.mu.Lock()
+	gt.args[p.ID] = args
+	gt.mu.Unlock()
+	var b strings.Builder
+	b.WriteString(gate.ImpactStatement(p))
+	if meta.Tier <= 1 {
+		fmt.Fprintf(&b, "In-band token (Tier 1 only): %s\n", gate.IssueToken(p.ID, argHash))
+	}
+	return b.String()
 }
 
 // dispatch is called by fb_confirm after a successful confirmation.
@@ -100,6 +148,12 @@ func (gt *gatedTools) dispatch(p state.PendingAction) (string, error) {
 	args := gt.args[p.ID]
 	delete(gt.args, p.ID)
 	gt.mu.Unlock()
+	if args == nil {
+		args = map[string]any{}
+	}
+	args["_grant_identity"] = p.Identity
+	args["_grant_channel"] = p.ConfirmedChannel
+	args["_grant_request_id"] = p.ID
 	return gt.runner.Submit(p.Tool, p.Database, p.Identity, p.ID, func(ctx context.Context, prog func(float64, string)) (string, error) {
 		return exec(ctx, p.Database, args, prog)
 	})
@@ -131,6 +185,44 @@ func registerP3Tools(server *mcp.Server, gt *gatedTools) {
 				return "", err
 			}
 			return fmt.Sprintf("backup written: %s (unverified — run fb_restore_test to verify)", fbk), nil
+		})
+
+	// P3.1 leftover — nbackup levels 0–2.
+	gt.registerTool(server, policy.ToolMeta{Name: "fb_backup_nbackup", Tier: 1, Scope: "database"},
+		"nbackup of %s (args: {\"level\": 0|1|2}). Level >0 requires a prior nbackup of level-1 in the catalog.",
+		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
+			level, ok := toInt(args["level"])
+			if !ok {
+				level = 0
+			}
+			if level < 0 || level > 2 {
+				return "", fmt.Errorf("level must be 0, 1, or 2")
+			}
+			if level > 0 {
+				if _, ok := gt.st.LatestNBackup(dbID, int(level-1)); !ok {
+					return "", fmt.Errorf("no nbackup level %d in catalog — take a level %d first", level-1, level-1)
+				}
+			}
+			c, db, err := gt.client(dbID)
+			if err != nil {
+				return "", err
+			}
+			backupDir := db.BackupDir
+			if backupDir == "" {
+				backupDir = filepath.Dir(db.Path)
+			}
+			if err := os.MkdirAll(backupDir, 0o755); err != nil {
+				return "", err
+			}
+			nbk := filepath.Join(backupDir, fmt.Sprintf("%s_%s_l%d.nbk", dbID, time.Now().Format("20060102_150405"), level))
+			prog(0.1, fmt.Sprintf("nbackup level %d", level))
+			if err := c.NBackup(db.Path, nbk, int(level), func(m string) { prog(0.5, m) }); err != nil {
+				return "", fmt.Errorf("nbackup failed: %w", err)
+			}
+			if err := backupsvc.NewCatalog(gt.st).RegisterKind(dbID, nbk, false, "nbackup", int(level)); err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("nbackup level %d written: %s (unverified)", level, nbk), nil
 		})
 
 	// P3.2 — fb_restore_test (Tier 1): restore the newest artifact into the
@@ -238,6 +330,35 @@ func registerP3Tools(server *mcp.Server, gt *gatedTools) {
 			return fmt.Sprintf("access mode %s", map[bool]string{true: "READ ONLY", false: "READ WRITE"}[ro]), nil
 		})
 
+	// P3.5 leftover — fb_set_page_buffers (Tier 1); args: {"buffers": N}.
+	gt.registerTool(server, policy.ToolMeta{Name: "fb_set_page_buffers", Tier: 1, Scope: "database"},
+		"Set page buffers on %s (args: {\"buffers\": N}).",
+		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
+			n, ok := toInt(args["buffers"])
+			if !ok || n <= 0 || n > 100000 {
+				return "", fmt.Errorf("buffers (positive int) required")
+			}
+			c, db, err := gt.client(dbID)
+			if err != nil {
+				return "", err
+			}
+			inst, err := gt.cfg.Instance(db.Instance)
+			if err != nil {
+				return "", err
+			}
+			pass, err := config.SecretFromEnv(db.AdminSecretEnv)
+			if err != nil {
+				return "", err
+			}
+			if err := workflows.GfixBuffers(ctx, inst, db.Path, db.AdminUser, pass, int(n)); err != nil {
+				return "", err
+			}
+			_ = c
+			return fmt.Sprintf("page buffers set to %d", n), nil
+		})
+
+	registerTraceTools(server, gt)
+
 	// P3.7 — fb_service_status (Tier 0 read-only probe).
 	type svcArg struct {
 		Instance string `json:"instance"`
@@ -279,50 +400,97 @@ func firstErrStr(err error) string {
 	return err.Error()
 }
 
-// startApprovalWatcher polls the OOB approvals dir and confirms matching
-// pending actions through the out-of-band channel (the LLM cannot reach it).
+// windowOpen reports whether db is inside a maintenance window now.
+func (gt *gatedTools) windowOpen(db string) bool { return gt.st.InWindow(db, time.Now()) }
+
+// startApprovalWatcher polls the OOB approvals/denials dirs and resolves
+// matching pending actions through the out-of-band channel (the LLM cannot
+// reach either).
 func (gt *gatedTools) startApprovalWatcher(ctx context.Context) {
 	go func() {
-		dir := filepath.Join(gt.cfg.State.Dir, "approvals")
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-time.After(2 * time.Second):
 			}
-			ents, _ := os.ReadDir(dir)
-			for _, e := range ents {
-				id := e.Name()
-				// confirm as the identity that opened the request; the trust
-				// comes from the CHANNEL (operator-run CLI wrote the marker)
-				var as string
-				for _, p := range gt.st.Pending() {
-					if p.ID == id {
-						as = p.Identity
-					}
-				}
-				if as == "" {
-					os.Remove(filepath.Join(dir, id)) // unknown — drop marker
-					continue
-				}
-				p, err := gt.g.Confirm(id, as, gate.ChannelOutOfBand, "")
-				if err != nil {
-					continue // expired/unknown — marker retried next tick
-				}
-				gt.aud.Log(audit.Entry{Identity: "operator", Database: p.Database, Tool: p.Tool, Tier: p.Tier, Decision: "approved", Channel: gate.ChannelOutOfBand,
-					Detail: map[string]interface{}{"request_id": id, "on_behalf_of": as}})
-				os.Remove(filepath.Join(dir, id))
-				if _, err := gt.dispatch(p); err != nil {
-					gt.aud.Log(audit.Entry{Identity: "operator", Database: p.Database, Tool: p.Tool, Tier: p.Tier, Decision: "error",
-						Detail: map[string]interface{}{"error": err.Error()}})
-				}
-			}
+			gt.consumeApprovalMarkers()
+			gt.consumeDenialMarkers()
 		}
 	}()
 }
 
-// registerRestore adds the Tier-2 guarded restore tool.
+// consumeApprovalMarkers is the OOB marker path (C19). Unknown ids are dropped.
+// A consumed pending action cannot dispatch twice.
+func (gt *gatedTools) consumeApprovalMarkers() int {
+	dir := filepath.Join(gt.live().State.Dir, "approvals")
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range ents {
+		id := e.Name()
+		var as string
+		for _, p := range gt.st.Pending() {
+			if p.ID == id {
+				as = p.Identity
+			}
+		}
+		if as == "" {
+			os.Remove(filepath.Join(dir, id)) // unknown — drop marker
+			continue
+		}
+		p, err := gt.g.Confirm(id, as, gate.ChannelOutOfBand, "")
+		if err != nil {
+			continue // expired/unknown — marker retried next tick
+		}
+		gt.aud.Log(audit.Entry{Identity: "operator", Database: p.Database, Tool: p.Tool, Tier: p.Tier, Decision: "approved", Channel: gate.ChannelOutOfBand,
+			Detail: map[string]interface{}{"request_id": id, "on_behalf_of": as}})
+		os.Remove(filepath.Join(dir, id))
+		if _, err := gt.dispatch(p); err != nil {
+			gt.aud.Log(audit.Entry{Identity: "operator", Database: p.Database, Tool: p.Tool, Tier: p.Tier, Decision: "error",
+				Detail: map[string]interface{}{"error": err.Error()}})
+		}
+		n++
+	}
+	return n
+}
+
+// consumeDenialMarkers is the OOB reject path, symmetric with
+// consumeApprovalMarkers: an operator's Deny takes effect immediately
+// instead of waiting out the 15-minute TTL (gate.SweepExpired). Unlike
+// approval this never dispatches — it just removes the pending action.
+func (gt *gatedTools) consumeDenialMarkers() int {
+	dir := filepath.Join(gt.live().State.Dir, "denials")
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range ents {
+		id := e.Name()
+		p, ok, _ := gt.st.TakePending(id)
+		os.Remove(filepath.Join(dir, id))
+		if !ok {
+			continue // unknown/already-resolved — marker dropped
+		}
+		gt.aud.Log(audit.Entry{Identity: "operator", Database: p.Database, Tool: p.Tool, Tier: p.Tier, Decision: "denied", Channel: gate.ChannelOutOfBand,
+			Detail: map[string]interface{}{"request_id": id, "reason": "operator denied"}})
+		if gt.bus != nil {
+			_ = gt.bus.Emit(notify.Event{Type: "gate.denied", Database: p.Database, Tool: p.Tool, Message: "pending action denied by operator",
+				Detail: map[string]string{"request_id": id}})
+		}
+		n++
+	}
+	return n
+}
+
+// registerRestore adds the Tier-2 guarded restore tool (K5 workflow).
 func (gt *gatedTools) registerRestore(server *mcp.Server) {
+	if gt.wf != nil {
+		gt.wf.Register("restore_replace", restoreReplaceSteps(gt))
+	}
 	gt.registerTool(server,
 		policy.ToolMeta{Name: "fb_restore_replace", Tier: 2, Scope: "database", Preconditions: []policy.Precondition{
 			{Name: "verified_backup_exists", Op: "true", Why: "a verified backup must exist in the catalog"},
@@ -330,7 +498,10 @@ func (gt *gatedTools) registerRestore(server *mcp.Server) {
 		}},
 		"Replace database %s from its newest backup (downtime; Tier 2 — out-of-band approval required).",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
-			c, db, err := gt.client(dbID)
+			if gt.wf == nil {
+				return "", fmt.Errorf("workflow engine not initialised")
+			}
+			_, db, err := gt.client(dbID)
 			if err != nil {
 				return "", err
 			}
@@ -350,34 +521,163 @@ func (gt *gatedTools) registerRestore(server *mcp.Server) {
 			if !found {
 				return "", fmt.Errorf("no backup artifact found")
 			}
-			// safety net: keep a .pre-restore copy of the current file
-			pre := db.Path + ".pre-restore"
-			if _, err := os.Stat(db.Path); err == nil {
-				data, err := os.ReadFile(db.Path)
-				if err != nil {
-					return "", err
-				}
-				if err := os.WriteFile(pre, data, 0o640); err != nil {
-					return "", err
-				}
-			}
-			// drop our own read-pool connections before replacing the file
-			gt.pools.CloseDB(dbID)
-			if err := os.Remove(db.Path); err != nil && !os.IsNotExist(err) {
-				return "", fmt.Errorf("cannot remove current database file (attached?): %w", err)
-			}
-			prog(0.3, "restoring "+fbk)
-			if err := c.Restore(fbk, db.Path, false, func(m string) { prog(0.7, m) }); err != nil {
-				// failure leaves the system safer: try to put the old file back
-				if preData, rerr := os.ReadFile(pre); rerr == nil {
-					os.WriteFile(db.Path, preData, 0o640)
-				}
-				return "", fmt.Errorf("restore failed (previous file restored if possible): %w", err)
-			}
-			prog(0.9, "validating")
-			if err := c.Validate(db.Path, 0); err != nil {
-				return "", fmt.Errorf("restored database failed validation: %w", err)
-			}
-			return fmt.Sprintf("database restored from %s (previous copy kept at %s)", fbk, pre), nil
+			id := fmt.Sprintf("wf%d", time.Now().UnixNano())
+			return gt.wf.Run(ctx, id, "restore_replace", dbID, true, map[string]string{
+				"fbk": fbk, "pre": db.Path + ".pre-restore", "path": db.Path,
+			}, prog)
 		})
+}
+
+func restoreReplaceSteps(gt *gatedTools) []workflows.StepDef {
+	putBack := func(ctx context.Context, wf *state.Workflow) error {
+		pre, path := wf.Detail["pre"], wf.Detail["path"]
+		if pre == "" || path == "" {
+			return nil
+		}
+		if _, err := os.Stat(pre); err != nil {
+			return err
+		}
+		gt.pools.CloseDB(wf.Database)
+		_ = os.Remove(path)
+		return copyFile(pre, path)
+	}
+	return []workflows.StepDef{
+		{Name: "snapshot_pre", Do: func(ctx context.Context, wf *state.Workflow, prog func(float64, string)) error {
+			path, pre := wf.Detail["path"], wf.Detail["pre"]
+			if _, err := os.Stat(path); err != nil {
+				if os.IsNotExist(err) {
+					return nil
+				}
+				return err
+			}
+			return copyFile(path, pre)
+		}},
+		{Name: "close_pools", Do: func(ctx context.Context, wf *state.Workflow, prog func(float64, string)) error {
+			gt.pools.CloseDB(wf.Database)
+			return nil
+		}},
+		{Name: "replace", Do: func(ctx context.Context, wf *state.Workflow, prog func(float64, string)) error {
+			c, db, err := gt.client(wf.Database)
+			if err != nil {
+				return err
+			}
+			gt.pools.CloseDB(wf.Database)
+			if err := os.Remove(db.Path); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("cannot remove current database file (attached?): %w", err)
+			}
+			prog(0.4, "restoring "+wf.Detail["fbk"])
+			return c.Restore(wf.Detail["fbk"], db.Path, false, func(m string) { prog(0.7, m) })
+		}, Compensate: putBack},
+		{Name: "validate", Do: func(ctx context.Context, wf *state.Workflow, prog func(float64, string)) error {
+			c, db, err := gt.client(wf.Database)
+			if err != nil {
+				return err
+			}
+			return c.Validate(db.Path, 0)
+		}, Compensate: putBack},
+		{Name: "verify_online", AlwaysRun: true, Do: func(ctx context.Context, wf *state.Workflow, prog func(float64, string)) error {
+			return gt.pools.Health(ctx, wf.Database)
+		}},
+	}
+}
+
+func registerTraceTools(server *mcp.Server, gt *gatedTools) {
+	gt.registerTool(server, policy.ToolMeta{Name: "fb_trace_start", Tier: 1, Scope: "database"},
+		"Start a template-only trace on %s (args: {\"template\":\"audit-lite|performance|errors\"}).",
+		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
+			tmpl, _ := args["template"].(string)
+			if _, ok := backupsvc.TraceTemplates[tmpl]; !ok {
+				return "", fmt.Errorf("unknown trace template %q (allowed: audit-lite, performance, errors)", tmpl)
+			}
+			c, db, err := gt.client(dbID)
+			if err != nil {
+				return "", err
+			}
+			work := db.WorkDir
+			if work == "" {
+				work = db.BackupDir
+			}
+			if work == "" {
+				work = filepath.Dir(db.Path)
+			}
+			if err := os.MkdirAll(work, 0o755); err != nil {
+				return "", err
+			}
+			id := fmt.Sprintf("t%d", time.Now().UnixNano())
+			name := "fbmcp-" + dbID + "-" + tmpl + "-" + id
+			path := filepath.Join(work, "trace_"+id+".log")
+			f, err := os.Create(path)
+			if err != nil {
+				return "", err
+			}
+			lt, err := c.StartTrace(context.Background(), name, tmpl, f)
+			if err != nil {
+				f.Close()
+				os.Remove(path)
+				return "", err
+			}
+			gt.mu.Lock()
+			if gt.traces == nil {
+				gt.traces = map[string]*backupsvc.LiveTrace{}
+			}
+			gt.traces[id] = lt
+			gt.mu.Unlock()
+			_ = gt.st.PutTrace(state.TraceRec{ID: id, Database: dbID, Template: tmpl, Path: path, StartedAt: time.Now().UTC()})
+			return fmt.Sprintf("trace started id=%s template=%s log=%s (stop with fb_trace_stop)", id, tmpl, path), nil
+		})
+
+	gt.registerTool(server, policy.ToolMeta{Name: "fb_trace_stop", Tier: 1, Scope: "database"},
+		"Stop a trace started by this server on %s (args: {\"session_id\":\"t…\"}).",
+		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
+			id, _ := args["session_id"].(string)
+			if id == "" {
+				return "", fmt.Errorf("session_id required")
+			}
+			gt.mu.Lock()
+			lt := gt.traces[id]
+			delete(gt.traces, id)
+			gt.mu.Unlock()
+			if err := lt.Stop(); err != nil {
+				return "", err
+			}
+			_ = gt.st.RemoveTrace(id)
+			return "trace stopped " + id, nil
+		})
+
+	type dbArg struct {
+		Db string `json:"db"`
+	}
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_trace_list", Description: "Tier 0: list engine trace sessions and this server's tracked traces"}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
+		c, _, err := gt.client(a.Db)
+		if err != nil {
+			return text("error: " + err.Error()), nil, nil
+		}
+		engine, err := c.ListTrace()
+		if err != nil {
+			engine = "(engine list unavailable: " + err.Error() + ")"
+		}
+		var b strings.Builder
+		b.WriteString("engine:\n")
+		b.WriteString(engine)
+		b.WriteString("\ntracked by fbmcp:\n")
+		for _, tr := range gt.st.Traces() {
+			if tr.Database == a.Db {
+				fmt.Fprintf(&b, "- id=%s template=%s log=%s started=%s\n", tr.ID, tr.Template, tr.Path, tr.StartedAt.Format(time.RFC3339))
+			}
+		}
+		orphans := 0
+		gt.mu.Lock()
+		tracked := len(gt.traces)
+		gt.mu.Unlock()
+		for _, tr := range gt.st.Traces() {
+			gt.mu.Lock()
+			_, live := gt.traces[tr.ID]
+			gt.mu.Unlock()
+			if !live {
+				orphans++
+			}
+		}
+		fmt.Fprintf(&b, "in-process=%d persisted-orphans-this-process=%d (restart: orphans are reported, not auto-killed)\n", tracked, orphans)
+		return text(b.String()), nil, nil
+	})
 }

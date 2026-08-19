@@ -1,0 +1,33 @@
+# Skeleton — localhost-only, empty schedules, notifications = local log, remote off.
+# Secrets stay in the environment (ADR-009). SYSDBA-as-RO is dev-only.
+state:
+  dir: /var/lib/fbmcp
+# listen: 10.0.0.5:8443   # remote: requires TLS + identities (ADR-022)
+# tls:
+#   cert: /etc/fbmcp/tls.crt
+#   key: /etc/fbmcp/tls.key
+# identities:
+#   - name: operator
+#     key_env: FBMCP_API_KEY
+#     max_tier: 2
+notify:
+  webhook_url: ""
+  webhook_secret_env: ""
+retention:
+  keep_days: 0   # ADR-016 keep-everything
+instances:
+  - id: fb5
+    addr: localhost:3050
+    bin_dir: /opt/firebird
+    version: "5.0"
+    service: firebird
+databases:
+  - id: example
+    instance: fb5
+    path: /var/lib/firebird/example.fdb
+    backup_dir: /var/backups/firebird
+    work_dir: /var/tmp/fbmcp-work
+    ro_user: FBMCP_RO
+    ro_secret_env: FBMCP_EXAMPLE_RO_PW
+    admin_user: SYSDBA
+    admin_secret_env: FBMCP_EXAMPLE_ADMIN_PW

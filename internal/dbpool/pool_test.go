@@ -19,6 +19,9 @@ func TestFuse1ReadPoolRefusesWrites(t *testing.T) {
 		dbFile = `C:/HQbirdData/output/fbmcp-spike/spike_FB5.0.fdb`
 	}
 	if _, err := os.Stat(dbFile); err != nil {
+		if os.Getenv("FBMCP_REQUIRE_FIREBIRD") != "" {
+			t.Fatalf("FBMCP_REQUIRE_FIREBIRD set but spike DB missing: %v", err)
+		}
 		t.Skipf("spike DB not present (%v) — fuse test needs a Firebird instance", err)
 	}
 
@@ -39,6 +42,9 @@ func TestFuse1ReadPoolRefusesWrites(t *testing.T) {
 
 	ctx := context.Background()
 	if err := m.Health(ctx, "fuse"); err != nil {
+		if os.Getenv("FBMCP_REQUIRE_FIREBIRD") != "" {
+			t.Fatalf("FBMCP_REQUIRE_FIREBIRD set but Firebird not reachable: %v", err)
+		}
 		t.Skipf("Firebird not reachable: %v", err)
 	}
 
@@ -52,6 +58,11 @@ func TestFuse1ReadPoolRefusesWrites(t *testing.T) {
 		t.Fatal("FUSE FAILURE: write succeeded on read-only transaction")
 	} else {
 		t.Logf("engine refused DML as expected: %v", err)
+	}
+	if _, err := tx.Exec("EXECUTE BLOCK AS BEGIN INSERT INTO RDB$DATABASE (RDB$DESCRIPTION) VALUES ('fuse'); END"); err == nil {
+		t.Fatal("FUSE FAILURE: EXECUTE BLOCK write succeeded on read-only transaction")
+	} else {
+		t.Logf("engine refused EXECUTE BLOCK as expected: %v", err)
 	}
 	if _, err := tx.Exec("CREATE TABLE FUSE_SHOULD_NOT_EXIST (ID INT)"); err == nil {
 		t.Fatal("FUSE FAILURE: DDL succeeded on read-only transaction")

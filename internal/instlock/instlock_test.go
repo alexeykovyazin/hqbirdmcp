@@ -5,8 +5,9 @@ import (
 	"testing"
 )
 
-// Safety fuse #6 (main plan §8): a second concurrent instance must fail fast
-// on the state lock — no dual writers.
+// Safety fuse #6 (main plan §8): a second concurrent *kernel* must fail fast
+// on the state lock — no dual writers. Piped stdio clients attach (see
+// internal/attach) and must not pass Acquire.
 func TestFuse6SecondInstanceFails(t *testing.T) {
 	dir := t.TempDir()
 	first, err := Acquire(dir)

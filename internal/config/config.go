@@ -13,9 +13,39 @@ import (
 
 // Config is the root of fbmcp.yaml.
 type Config struct {
-	State     State        `yaml:"state"`
-	Instances []FBInstance `yaml:"instances"`
-	Databases []Database   `yaml:"databases"`
+	State      State         `yaml:"state"`
+	Instances  []FBInstance  `yaml:"instances"`
+	Databases  []Database    `yaml:"databases"`
+	Notify     Notify        `yaml:"notify"`
+	Listen     string        `yaml:"listen"` // empty = stdio only (P5.1)
+	TLS        TLS           `yaml:"tls"`
+	Identities []APIIdentity `yaml:"identities"`
+	Retention  Retention     `yaml:"retention"`
+	SourcePath string        `yaml:"-"`
+}
+
+// Notify is K7 delivery (ADR-024). Empty webhook = local event log only.
+type Notify struct {
+	WebhookURL       string `yaml:"webhook_url"`
+	WebhookSecretEnv string `yaml:"webhook_secret_env"`
+}
+
+// TLS files for remote mode (ADR-022).
+type TLS struct {
+	Cert string `yaml:"cert"`
+	Key  string `yaml:"key"`
+}
+
+// APIIdentity is a remote API-key identity (P5.1).
+type APIIdentity struct {
+	Name    string `yaml:"name"`
+	KeyEnv  string `yaml:"key_env"`
+	MaxTier int    `yaml:"max_tier"`
+}
+
+// Retention is ADR-016 keep_days (0 = keep-everything).
+type Retention struct {
+	KeepDays int `yaml:"keep_days"`
 }
 
 // State locates kernel state (audit log, job store, pending actions).
@@ -25,11 +55,19 @@ type State struct {
 
 // FBInstance is one local Firebird server (service install) we can reach.
 type FBInstance struct {
-	ID      string `yaml:"id"`
-	Addr    string `yaml:"addr"` // host:port
-	BinDir  string `yaml:"bin_dir"`
-	Service string `yaml:"service"` // OS service name (P3.7); derived fallback if empty
-	Version string `yaml:"version"` // informational, e.g. "5.0"
+	ID                    string `yaml:"id"`
+	Addr                  string `yaml:"addr"` // host:port
+	BinDir                string `yaml:"bin_dir"`
+	Service               string `yaml:"service"` // OS service name (P3.7); derived fallback if empty
+	Version               string `yaml:"version"` // informational, e.g. "5.0"
+	ServiceUser           string `yaml:"service_user"`
+	ServiceSecretEnv      string `yaml:"service_secret_env"`
+	DefaultROUser         string `yaml:"default_ro_user"`
+	DefaultROSecretEnv    string `yaml:"default_ro_secret_env"`
+	DefaultAdminUser      string `yaml:"default_admin_user"`
+	DefaultAdminSecretEnv string `yaml:"default_admin_secret_env"`
+	DefaultBackupDir      string `yaml:"default_backup_dir"`
+	DefaultWorkDir        string `yaml:"default_work_dir"`
 }
 
 // Database is one managed database. Tool args reference it by ID only —
@@ -61,6 +99,7 @@ func Load(path string) (*Config, error) {
 	if err := c.Validate(); err != nil {
 		return nil, fmt.Errorf("config: invalid %s: %w", path, err)
 	}
+	c.SourcePath = path
 	return &c, nil
 }
 
@@ -88,9 +127,6 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("instance %q: bin_dir is required (fixed absolute utility paths, §4.1)", in.ID)
 		}
 	}
-	if len(c.Databases) == 0 {
-		return fmt.Errorf("at least one database is required")
-	}
 	seenDB := map[string]bool{}
 	for _, db := range c.Databases {
 		if !idRe.MatchString(db.ID) {
@@ -115,6 +151,34 @@ func (c *Config) Validate() error {
 		if strings.ContainsAny(db.Path, "$`") {
 			return fmt.Errorf("database %q: suspicious characters in path", db.ID)
 		}
+		for _, p := range []string{db.Path, db.BackupDir, db.WorkDir} {
+			if p == "" {
+				continue
+			}
+			if strings.Contains(p, "..") {
+				return fmt.Errorf("database %q: path must not contain ..", db.ID)
+			}
+			if strings.HasPrefix(p, `\\`) || strings.HasPrefix(p, "//") {
+				return fmt.Errorf("database %q: UNC paths are refused", db.ID)
+			}
+		}
+	}
+	return nil
+}
+
+func (in FBInstance) ValidateDiscoveryDefaults() error {
+	if in.ServiceUser == "" || in.ServiceSecretEnv == "" {
+		return fmt.Errorf("instance %q: service_user and service_secret_env are required for instance-scoped discovery", in.ID)
+	}
+	return nil
+}
+
+func (in FBInstance) ValidateRegistrationDefaults() error {
+	if in.DefaultROUser == "" || in.DefaultROSecretEnv == "" {
+		return fmt.Errorf("instance %q: default_ro_user and default_ro_secret_env are required for registration defaults", in.ID)
+	}
+	if in.DefaultAdminUser == "" || in.DefaultAdminSecretEnv == "" {
+		return fmt.Errorf("instance %q: default_admin_user and default_admin_secret_env are required for registration defaults", in.ID)
 	}
 	return nil
 }

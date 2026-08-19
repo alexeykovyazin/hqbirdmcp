@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "fbmcp": {
+      "command": "E:\\Projects_2026\\AIDBA\\fbmcp\\dist\\fbmcp.exe",
+      "args": [
+        "-config",
+        "E:\\Projects_2026\\AIDBA\\fbmcp\\fbmcp.dev.yaml"
+      ],
+      "env": {
+        "FBMCP_DEV_PW": "masterkey"
+      }
+    }
+  }
+}

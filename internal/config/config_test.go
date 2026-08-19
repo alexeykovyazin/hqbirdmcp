@@ -14,6 +14,14 @@ instances:
     addr: localhost:3055
     bin_dir: C:/HQbird/Firebird50
     version: "5.0"
+    service_user: SYSDBA
+    service_secret_env: FBMCP_FB5_SERVICE_PW
+    default_ro_user: FBMCP_RO
+    default_ro_secret_env: FBMCP_SPIKE5_RO_PW
+    default_admin_user: SYSDBA
+    default_admin_secret_env: FBMCP_SPIKE5_ADMIN_PW
+    default_backup_dir: C:/HQbirdData/output/fbmcp-spike
+    default_work_dir: C:/HQbirdData/output/fbmcp-spike
 databases:
   - id: spike5
     instance: fb5
@@ -39,6 +47,9 @@ func TestLoadValid(t *testing.T) {
 	c, err := Load(writeCfg(t, validYAML))
 	if err != nil {
 		t.Fatalf("valid config rejected: %v", err)
+	}
+	if c.SourcePath == "" {
+		t.Fatal("SourcePath not set")
 	}
 	if _, err := c.DB("spike5"); err != nil {
 		t.Fatalf("known id rejected: %v", err)
@@ -105,5 +116,78 @@ databases:
 				t.Fatalf("invalid config accepted: %s", name)
 			}
 		})
+	}
+}
+
+func TestLoadAllowsInstanceOnlyBootstrap(t *testing.T) {
+	y := `
+state: {dir: /tmp}
+instances:
+  - id: fb5
+    addr: localhost:3055
+    bin_dir: /opt/fb
+    service_user: SYSDBA
+    service_secret_env: FBMCP_FB5_SERVICE_PW
+`
+	if _, err := Load(writeCfg(t, y)); err != nil {
+		t.Fatalf("instance-only bootstrap rejected: %v", err)
+	}
+}
+
+func TestInstanceDiscoveryAndRegistrationDefaultsValidation(t *testing.T) {
+	in := FBInstance{ID: "fb5"}
+	if err := in.ValidateDiscoveryDefaults(); err == nil {
+		t.Fatal("missing discovery defaults accepted")
+	}
+	if err := in.ValidateRegistrationDefaults(); err == nil {
+		t.Fatal("missing registration defaults accepted")
+	}
+	in.ServiceUser, in.ServiceSecretEnv = "SYSDBA", "FBMCP_SERVICE_PW"
+	if err := in.ValidateDiscoveryDefaults(); err != nil {
+		t.Fatalf("discovery defaults rejected: %v", err)
+	}
+	in.DefaultROUser, in.DefaultROSecretEnv = "ro", "RO_PW"
+	in.DefaultAdminUser, in.DefaultAdminSecretEnv = "SYSDBA", "ADM_PW"
+	if err := in.ValidateRegistrationDefaults(); err != nil {
+		t.Fatalf("registration defaults rejected: %v", err)
+	}
+}
+
+func TestRejectDotDotAndUNC(t *testing.T) {
+	y := `
+state: {dir: /tmp/fbmcp}
+instances:
+  - id: i1
+    addr: localhost:3050
+    bin_dir: /opt/fb
+databases:
+  - id: d1
+    instance: i1
+    path: /opt/fb/../../../etc/passwd
+    ro_user: u
+    ro_secret_env: E
+    admin_user: a
+    admin_secret_env: F
+`
+	if _, err := Load(writeCfg(t, y)); err == nil {
+		t.Fatal(".. in path accepted")
+	}
+	y2 := `
+state: {dir: /tmp/fbmcp}
+instances:
+  - id: i1
+    addr: localhost:3050
+    bin_dir: /opt/fb
+databases:
+  - id: d1
+    instance: i1
+    path: "//evil/share/db.fdb"
+    ro_user: u
+    ro_secret_env: E
+    admin_user: a
+    admin_secret_env: F
+`
+	if _, err := Load(writeCfg(t, y2)); err == nil {
+		t.Fatal("UNC path accepted")
 	}
 }

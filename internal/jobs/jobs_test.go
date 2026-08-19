@@ -125,3 +125,32 @@ func waitFor(t *testing.T, cond func() bool) {
 	}
 	t.Fatal("condition not reached in time")
 }
+
+func TestSubmitRefusesDraining(t *testing.T) {
+	r, _ := newRunner(t)
+	r.SetDraining([]string{"spike5"}, true)
+	_, err := r.Submit("backup", "spike5", "local", "", okFunc)
+	if err == nil {
+		t.Fatal("submit during drain")
+	}
+}
+
+func TestWaitIdleExceptSelf(t *testing.T) {
+	r, _ := newRunner(t)
+	release := make(chan struct{})
+	id, err := r.Submit("fb_db_register", "fb5", "local", "", func(ctx context.Context, p func(float64, string)) (string, error) {
+		<-release
+		return "ok", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { j, _ := r.Status(id); return j.State == "running" })
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := r.WaitIdle(ctx, "fb5", id); err != nil {
+		t.Fatalf("self job must be excluded: %v", err)
+	}
+	close(release)
+	waitFor(t, func() bool { j, _ := r.Status(id); return j.State == "succeeded" })
+}

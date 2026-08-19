@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -104,12 +105,50 @@ func TestTier2PreconditionFailsClosedAndPends(t *testing.T) {
 	}
 }
 
-func TestTier2HappyPathPending(t *testing.T) {
-	now := time.Now()
-	e, _ := newEngine(t, state.StubFacts{"backup_freshness": 1.0},
-		state.Window{Database: "spike5", From: now.Add(-time.Hour), To: now.Add(time.Hour)})
-	d := e.Evaluate(localAll, "spike5", "fb_demo_drop")
+func TestEvaluateMetaDynamicTier(t *testing.T) {
+	e, _ := newEngine(t, state.StubFacts{})
+	meta := ToolMeta{Name: "fb_write", Tier: 2, Scope: "database"}
+	d := e.EvaluateMeta(localAll, "spike5", meta)
+	if d.Outcome != "deny" {
+		t.Fatalf("dynamic tier 2 without window must deny: %+v", d)
+	}
+	meta1 := ToolMeta{Name: "fb_write", Tier: 1, Scope: "database"}
+	d = e.EvaluateMeta(localAll, "spike5", meta1)
 	if d.Outcome != "pending" {
-		t.Fatalf("healthy tier2 must pend for confirmation: %+v", d)
+		t.Fatalf("dynamic tier 1 must pend: %+v", d)
+	}
+	d = e.EvaluateMeta(Identity{Name: "ro", MaxTier: 0}, "spike5", meta1)
+	if d.Outcome != "deny" {
+		t.Fatalf("ceiling must apply to EvaluateMeta: %+v", d)
+	}
+}
+
+func TestMinFBFailClosed(t *testing.T) {
+	e, _ := newEngine(t, state.StubFacts{})
+	meta := ToolMeta{Name: "fb_trace_start", Tier: 1, MinFB: "3.0"}
+	d := e.EvaluateMeta(localAll, "spike5", meta)
+	if d.Outcome != "deny" || !strings.Contains(d.Reason, "fail-closed") {
+		t.Fatalf("missing engine_version must deny: %+v", d)
+	}
+	e2, _ := newEngine(t, state.StubFacts{"engine_version": "2.5"})
+	d = e2.EvaluateMeta(localAll, "spike5", meta)
+	if d.Outcome != "deny" {
+		t.Fatalf("2.5 must miss MinFB 3.0: %+v", d)
+	}
+	e3, _ := newEngine(t, state.StubFacts{"engine_version": "5.0"})
+	d = e3.EvaluateMeta(localAll, "spike5", meta)
+	if d.Outcome != "pending" {
+		t.Fatalf("5.0 should pass MinFB 3.0: %+v", d)
+	}
+}
+
+func TestVersionAtLeast(t *testing.T) {
+	ok, err := versionAtLeast("5.0", "2.5")
+	if err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	ok, _ = versionAtLeast("2.5", "3.0")
+	if ok {
+		t.Fatal("2.5 >= 3.0")
 	}
 }

@@ -5,6 +5,7 @@
 package backupsvc
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -33,15 +34,10 @@ func (c *Client) Backup(dbFile, backupFile string, progress func(string)) error 
 	}
 	ch := make(chan string, 256)
 	done := make(chan error, 1)
+	dctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go drainUntil(dctx, ch, progress)
 	go func() { done <- bm.Backup(dbFile, backupFile, fb.GetDefaultBackupOptions(), ch) }()
-	// NOTE: the driver never closes the verbose channel — drain in background
-	go func() {
-		for msg := range ch {
-			if progress != nil {
-				progress(msg)
-			}
-		}
-	}()
 	return <-done
 }
 
@@ -56,14 +52,10 @@ func (c *Client) Restore(backupFile, dbFile string, replace bool, progress func(
 	opts.Replace = replace
 	ch := make(chan string, 256)
 	done := make(chan error, 1)
+	dctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go drainUntil(dctx, ch, progress)
 	go func() { done <- bm.Restore(backupFile, dbFile, opts, ch) }()
-	go func() {
-		for msg := range ch {
-			if progress != nil {
-				progress(msg)
-			}
-		}
-	}()
 	return <-done
 }
 
@@ -109,6 +101,55 @@ func (c *Client) SetReadOnly(dbFile string, ro bool) error {
 	return mm.SetAccessModeReadWrite(dbFile)
 }
 
+// NBackup runs an incremental nbackup at the given level (0–2).
+func (c *Client) NBackup(dbFile, backupFile string, level int, progress func(string)) error {
+	nm, err := fb.NewNBackupManager(c.Addr, c.User, c.Pass, c.opts)
+	if err != nil {
+		return err
+	}
+	opts := fb.GetDefaultNBackupOptions()
+	opts.Level = int32(level)
+	ch := make(chan string, 256)
+	done := make(chan error, 1)
+	dctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go drainUntil(dctx, ch, progress)
+	go func() { done <- nm.Backup(dbFile, backupFile, opts, ch) }()
+	return <-done
+}
+
+// drainUntil reads the Services-API verbose channel until ctx is done or
+// the channel closes. After cancel it non-blockingly drains the buffer so
+// a late send cannot fill the channel, then returns (C8: goroutine bounded;
+// the driver never closes the channel).
+func drainUntil(ctx context.Context, ch <-chan string, progress func(string)) {
+	for {
+		select {
+		case <-ctx.Done():
+			for {
+				select {
+				case msg, ok := <-ch:
+					if !ok {
+						return
+					}
+					if progress != nil {
+						progress(msg)
+					}
+				default:
+					return
+				}
+			}
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			if progress != nil {
+				progress(msg)
+			}
+		}
+	}
+}
+
 // Catalog implements the K2 facts: backup_freshness (hours since newest
 // verified backup) and verified_backup_exists, fail-closed on empty catalog.
 type Catalog struct {
@@ -120,9 +161,13 @@ func NewCatalog(st *state.Store) *Catalog { return &Catalog{st: st} }
 // Register records a completed backup artifact (verified=true after a
 // successful test-restore).
 func (c *Catalog) Register(dbID, path string, verified bool) error {
+	return c.RegisterKind(dbID, path, verified, "gbak", 0)
+}
+
+func (c *Catalog) RegisterKind(dbID, path string, verified bool, kind string, level int) error {
 	return c.st.AddCatalogEntry(state.CatalogEntry{
 		ID: fmt.Sprintf("b%d", time.Now().UnixNano()), Database: dbID, Path: path,
-		CreatedAt: time.Now().UTC(), Verified: verified,
+		CreatedAt: time.Now().UTC(), Verified: verified, Kind: kind, Level: level,
 	})
 }
 

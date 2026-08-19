@@ -1,0 +1,17 @@
+[Unit]
+Description=Firebird DBA MCP server
+After=network.target
+
+[Service]
+Type=simple
+User=fbmcp
+ExecStart=/usr/local/bin/fbmcp -config /etc/fbmcp/fbmcp.yaml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true
+ReadWritePaths=/var/lib/fbmcp /var/backups/firebird /var/tmp/fbmcp-work
+
+[Install]
+WantedBy=multi-user.target

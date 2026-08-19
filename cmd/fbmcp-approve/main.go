@@ -1,4 +1,5 @@
 // fbmcp-approve — the out-of-band confirmation CLI (§5.5c, Tier ≥ 2).
+// Prefer `fbmcpctl approve` (P5.6). This binary remains as a thin alias.
 // Lists pending actions and/or writes an approval marker that the running
 // fbmcp server picks up. The MCP client cannot invoke this surface.
 package main

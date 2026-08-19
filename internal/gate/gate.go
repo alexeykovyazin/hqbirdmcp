@@ -37,10 +37,13 @@ const (
 
 // Gate issues and consumes confirmations.
 type Gate struct {
-	st  *state.Store
-	aud *audit.Logger
-	ttl time.Duration
-	now func() time.Time
+	st        *state.Store
+	aud       *audit.Logger
+	ttl       time.Duration
+	now       func() time.Time
+	onPending func(state.PendingAction)
+	onConfirm func(state.PendingAction, string)
+	onExpire  func(state.PendingAction)
 }
 
 func New(st *state.Store, aud *audit.Logger) *Gate {
@@ -49,6 +52,11 @@ func New(st *state.Store, aud *audit.Logger) *Gate {
 
 func (g *Gate) WithTTL(d time.Duration) *Gate    { g.ttl = d; return g }
 func (g *Gate) WithNow(f func() time.Time) *Gate { g.now = f; return g }
+
+// SetHooks wires K7 (optional; nil-safe).
+func (g *Gate) SetHooks(onPending func(state.PendingAction), onConfirm func(state.PendingAction, string), onExpire func(state.PendingAction)) {
+	g.onPending, g.onConfirm, g.onExpire = onPending, onConfirm, onExpire
+}
 
 // Request records a pending action and returns it (with its id) for the
 // impact-statement response. The token is NOT returned here — Confirm issues it.
@@ -70,7 +78,28 @@ func (g *Gate) Request(id policy.Identity, db string, meta policy.ToolMeta, impa
 	}
 	g.aud.Log(audit.Entry{Identity: id.Name, Database: db, Tool: meta.Name, Tier: meta.Tier, Decision: "pending",
 		Detail: map[string]interface{}{"request_id": p.ID, "expires_in": g.ttl.String()}})
+	if g.onPending != nil {
+		g.onPending(p)
+	}
 	return p, nil
+}
+
+// SweepExpired removes timed-out pending actions and notifies K7.
+func (g *Gate) SweepExpired() int {
+	n := 0
+	for _, p := range g.st.Pending() {
+		if g.now().After(p.Expires) {
+			if _, ok, _ := g.st.TakePending(p.ID); ok {
+				n++
+				g.aud.Log(audit.Entry{Identity: p.Identity, Database: p.Database, Tool: p.Tool, Tier: p.Tier, Decision: "denied",
+					Detail: map[string]interface{}{"request_id": p.ID, "reason": "expired"}})
+				if g.onExpire != nil {
+					g.onExpire(p)
+				}
+			}
+		}
+	}
+	return n
 }
 
 // AllowedChannels returns the confirmation channels accepted for a tier
@@ -126,6 +155,10 @@ func (g *Gate) Confirm(requestID, identity, channel, token string) (state.Pendin
 
 	g.aud.Log(audit.Entry{Identity: identity, Database: p.Database, Tool: p.Tool, Tier: p.Tier, Decision: "approved", Channel: channel,
 		Detail: map[string]interface{}{"request_id": requestID}})
+	p.ConfirmedChannel = channel
+	if g.onConfirm != nil {
+		g.onConfirm(p, channel)
+	}
 	return p, nil
 }
 

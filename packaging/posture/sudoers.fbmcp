@@ -1,0 +1,3 @@
+# Least-privilege allowlist for Firebird service units (edit names).
+# fbmcp ALL=(root) NOPASSWD: /bin/systemctl start firebird*, /bin/systemctl stop firebird*, /bin/systemctl restart firebird*
+fbmcp ALL=(root) NOPASSWD: /bin/systemctl start firebird, /bin/systemctl stop firebird, /bin/systemctl restart firebird

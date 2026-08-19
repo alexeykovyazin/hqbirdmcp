@@ -1,7 +1,8 @@
 // Package instlock implements decision D8 / ADR-005: a single active fbmcp
 // instance per kernel state directory, enforced by a lock file holding the
-// owner PID. A second process fails fast with a clear message (never
-// dual-writes kernel state — safety fuse #6).
+// owner PID. A second *kernel* fails fast with a clear message (never
+// dual-writes kernel state — safety fuse #6). Piped MCP clients attach to
+// the lock-holder instead of opening the store (ADR-005).
 package instlock
 
 import (

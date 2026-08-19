@@ -1,0 +1,89 @@
+state:
+    dir: C:/HQbirdData/output/fbmcp-spike/state
+instances:
+    - id: fb3
+      addr: localhost:3053
+      bin_dir: C:/HQbird/Firebird30
+      service: FirebirdServerHQBirdInstanceFB3
+      version: "3.0"
+      service_user: SYSDBA
+      service_secret_env: FBMCP_DEV_PW
+      default_ro_user: SYSDBA
+      default_ro_secret_env: FBMCP_DEV_PW
+      default_admin_user: SYSDBA
+      default_admin_secret_env: FBMCP_DEV_PW
+      default_backup_dir: C:/HQbirdData/output/fbmcp-spike/backup
+      default_work_dir: C:/HQbirdData/output/fbmcp-spike/work
+    - id: fb4
+      addr: localhost:3054
+      bin_dir: C:/HQbird/Firebird40
+      service: FirebirdServerHQBirdInstanceFB4
+      version: "4.0"
+      service_user: SYSDBA
+      service_secret_env: FBMCP_DEV_PW
+      default_ro_user: SYSDBA
+      default_ro_secret_env: FBMCP_DEV_PW
+      default_admin_user: SYSDBA
+      default_admin_secret_env: FBMCP_DEV_PW
+      default_backup_dir: C:/HQbirdData/output/fbmcp-spike/backup
+      default_work_dir: C:/HQbirdData/output/fbmcp-spike/work
+    - id: fb5
+      addr: localhost:3055
+      bin_dir: C:/HQbird/Firebird50
+      service: FirebirdServerHQBirdInstanceFB5
+      version: "5.0"
+      service_user: SYSDBA
+      service_secret_env: FBMCP_DEV_PW
+      default_ro_user: SYSDBA
+      default_ro_secret_env: FBMCP_DEV_PW
+      default_admin_user: SYSDBA
+      default_admin_secret_env: FBMCP_DEV_PW
+      default_backup_dir: C:/HQbirdData/output/fbmcp-spike/backup
+      default_work_dir: C:/HQbirdData/output/fbmcp-spike/work
+databases:
+    - id: spike3
+      instance: fb3
+      path: C:/HQbirdData/output/fbmcp-spike/spike_FB3.0.fdb
+      backup_dir: C:/HQbirdData/output/fbmcp-spike/backup
+      work_dir: C:/HQbirdData/output/fbmcp-spike/work
+      ro_user: SYSDBA
+      ro_secret_env: FBMCP_DEV_PW
+      admin_user: SYSDBA
+      admin_secret_env: FBMCP_DEV_PW
+    - id: spike4
+      instance: fb4
+      path: C:/HQbirdData/output/fbmcp-spike/spike_FB4.0.fdb
+      backup_dir: C:/HQbirdData/output/fbmcp-spike/backup
+      work_dir: C:/HQbirdData/output/fbmcp-spike/work
+      ro_user: SYSDBA
+      ro_secret_env: FBMCP_DEV_PW
+      admin_user: SYSDBA
+      admin_secret_env: FBMCP_DEV_PW
+    - id: spike5
+      instance: fb5
+      path: C:/HQbirdData/output/fbmcp-spike/spike_FB5.0.fdb
+      backup_dir: C:/HQbirdData/output/fbmcp-spike/backup
+      work_dir: C:/HQbirdData/output/fbmcp-spike/work
+      ro_user: SYSDBA
+      ro_secret_env: FBMCP_DEV_PW
+      admin_user: SYSDBA
+      admin_secret_env: FBMCP_DEV_PW
+    - id: employee
+      instance: fb5
+      path: C:\HQbird\Firebird50\examples\empbuild\EMPLOYEE.FDB
+      backup_dir: C:/HQbirdData/output/fbmcp-spike/backup
+      work_dir: C:/HQbirdData/output/fbmcp-spike/work
+      ro_user: SYSDBA
+      ro_secret_env: FBMCP_DEV_PW
+      admin_user: SYSDBA
+      admin_secret_env: FBMCP_DEV_PW
+notify:
+    webhook_url: ""
+    webhook_secret_env: ""
+listen: ""
+tls:
+    cert: ""
+    key: ""
+identities: []
+retention:
+    keep_days: 0

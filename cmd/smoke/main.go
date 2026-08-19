@@ -16,7 +16,7 @@ import (
 func main() {
 	client := mcp.NewClient(&mcp.Implementation{Name: "smoke", Version: "0"}, nil)
 	wd, _ := os.Getwd()
-	cmd := exec.Command(filepath.Join(wd, "fbmcp.exe"), "-config", "fbmcp.dev.yaml")
+	cmd := exec.Command(filepath.Join(wd, "dist", "fbmcp.exe"), "-config", "fbmcp.dev.yaml")
 	sess, err := client.Connect(context.Background(), &mcp.CommandTransport{Command: cmd}, nil)
 	if err != nil {
 		fmt.Println("connect:", err)
@@ -44,6 +44,7 @@ func main() {
 	fmt.Println("describe:", firstLine(call("fb_describe", map[string]any{"db": "spike5", "table": "SPIKE_RO"})))
 	fmt.Println("sample:", strings.ReplaceAll(call("fb_activity_sample", map[string]any{"db": "spike5", "seconds": 2}), "\n", " | "))
 	fmt.Println("info5:", strings.ReplaceAll(call("fb_info", map[string]any{"db": "spike5"}), "\n", " | "))
+	fmt.Println("connected5:", strings.ReplaceAll(call("fb_connected_dbs", map[string]any{"instance": "fb5"}), "\n", " | "))
 	fmt.Println("sess5:", firstLine(call("fb_sessions", map[string]any{"db": "spike5"})))
 	fmt.Println("tx5:", strings.ReplaceAll(call("fb_transactions", map[string]any{"db": "spike5"}), "\n", " | "))
 	fmt.Println("info-ghost:", firstLine(call("fb_info", map[string]any{"db": "ghost"})))

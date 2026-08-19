@@ -19,11 +19,16 @@ import (
 // EngineFacts provides `engine_version`, `ods`, `page_size`, `read_only`,
 // `forced_writes`, `sql_dialect` per database, cached briefly.
 type EngineFacts struct {
-	cfg   *config.Config
+	cfg   registry
 	pools *dbpool.Manager
 	mu    sync.Mutex
 	cache map[string]cached
 	ttl   time.Duration
+}
+
+type registry interface {
+	DB(id string) (config.Database, error)
+	Instance(id string) (config.FBInstance, error)
 }
 
 type cached struct {
@@ -31,8 +36,21 @@ type cached struct {
 	facts map[string]any
 }
 
-func NewEngineFacts(cfg *config.Config, pools *dbpool.Manager) *EngineFacts {
+func NewEngineFacts(cfg registry, pools *dbpool.Manager) *EngineFacts {
 	return &EngineFacts{cfg: cfg, pools: pools, cache: map[string]cached{}, ttl: 30 * time.Second}
+}
+
+// Invalidate drops cached facts for the given database ids (empty = all).
+func (e *EngineFacts) Invalidate(ids ...string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(ids) == 0 {
+		e.cache = map[string]cached{}
+		return
+	}
+	for _, id := range ids {
+		delete(e.cache, id)
+	}
 }
 
 // Fact implements state.FactsProvider (fail-closed on unknown names).
@@ -102,6 +120,11 @@ func (e *EngineFacts) snapshot(ctx context.Context, dbID string) (map[string]any
 	out["read_only"] = readOnly
 	out["forced_writes"] = forcedWrites
 	out["sweep_interval"] = sweepInterval
+
+	var nAtt int64
+	if err := pool.QueryRowContext(ctx, `SELECT COUNT(*) FROM MON$ATTACHMENTS`).Scan(&nAtt); err == nil {
+		out["attachment_count"] = nAtt
+	}
 
 	e.mu.Lock()
 	e.cache[dbID] = cached{at: time.Now(), facts: out}

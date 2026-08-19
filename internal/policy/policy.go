@@ -76,25 +76,41 @@ func (e *Engine) Evaluate(id Identity, db string, tool string) Decision {
 	if !ok {
 		return Decision{Outcome: "deny", Reason: fmt.Sprintf("unknown tool %q (advertise-only-what-exists)", tool)}
 	}
+	return e.EvaluateMeta(id, db, meta)
+}
+
+// EvaluateMeta runs the same decision path against an already-resolved
+// ToolMeta (P4.1: fb_write supplies a dynamic tier from ADR-019).
+func (e *Engine) EvaluateMeta(id Identity, db string, meta ToolMeta) Decision {
 	if !id.allowsDB(db) {
-		return Decision{Outcome: "deny", Reason: fmt.Sprintf("identity %q has no permission for database %q", id.Name, db)}
+		return Decision{Outcome: "deny", Reason: fmt.Sprintf("identity %q has no permission for database %q", id.Name, db), Meta: meta}
 	}
 	if meta.Tier == 3 {
-		return Decision{Outcome: "deny", Reason: "Tier 3 operations are disabled by default (config unlock + dual control required)"}
+		return Decision{Outcome: "deny", Reason: "Tier 3 operations are disabled by default (config unlock + dual control required)", Meta: meta}
 	}
 	if meta.Tier > id.MaxTier {
-		return Decision{Outcome: "deny", Reason: fmt.Sprintf("tier %d exceeds identity ceiling %d", meta.Tier, id.MaxTier)}
+		return Decision{Outcome: "deny", Reason: fmt.Sprintf("tier %d exceeds identity ceiling %d", meta.Tier, id.MaxTier), Meta: meta}
+	}
+	if meta.MinFB != "" {
+		v, err := e.facts.Fact(state.FactContext{Database: db}, "engine_version", nil)
+		if err != nil {
+			return Decision{Outcome: "deny", Reason: fmt.Sprintf("engine_version unavailable (fail-closed MinFB %s): %v", meta.MinFB, err), Meta: meta}
+		}
+		ok, err := versionAtLeast(fmt.Sprint(v), meta.MinFB)
+		if err != nil || !ok {
+			return Decision{Outcome: "deny", Reason: fmt.Sprintf("engine %s does not meet MinFB %s", v, meta.MinFB), Meta: meta}
+		}
 	}
 	// Tier 2+ needs an open maintenance window.
 	if meta.Tier >= 2 && !e.st.InWindow(db, e.now()) {
-		return Decision{Outcome: "deny", Reason: "no open maintenance window for this database (Tier ≥ 2 requires one)"}
+		return Decision{Outcome: "deny", Reason: "no open maintenance window for this database (Tier ≥ 2 requires one)", Meta: meta}
 	}
 	// Preconditions (Tier ≥ 2 mandatory checks; evaluated whenever declared).
 	var failed []string
 	for _, p := range meta.Preconditions {
 		ok, why, err := e.check(db, p)
 		if err != nil {
-			return Decision{Outcome: "deny", Reason: fmt.Sprintf("precondition %q could not be evaluated (fail-closed): %v", p.Name, err)}
+			return Decision{Outcome: "deny", Reason: fmt.Sprintf("precondition %q could not be evaluated (fail-closed): %v", p.Name, err), Meta: meta}
 		}
 		if !ok {
 			failed = append(failed, why)
@@ -157,6 +173,30 @@ func (e *Engine) check(db string, p Precondition) (bool, string, error) {
 	default:
 		return false, "", fmt.Errorf("unknown precondition op %q", p.Op)
 	}
+}
+
+func versionAtLeast(have, need string) (bool, error) {
+	hm, hn, err := parseMajMin(have)
+	if err != nil {
+		return false, err
+	}
+	nm, nn, err := parseMajMin(need)
+	if err != nil {
+		return false, err
+	}
+	if hm != nm {
+		return hm > nm, nil
+	}
+	return hn >= nn, nil
+}
+
+func parseMajMin(s string) (maj, min int, err error) {
+	s = strings.TrimSpace(s)
+	n, err := fmt.Sscanf(s, "%d.%d", &maj, &min)
+	if n < 1 {
+		return 0, 0, fmt.Errorf("bad Firebird version %q", s)
+	}
+	return maj, min, nil
 }
 
 func toFloat(v any) (float64, bool) {
