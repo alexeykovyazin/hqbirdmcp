@@ -133,6 +133,9 @@ func (t *Ticker) due(s state.Schedule, now time.Time) (skipReason string, fire b
 		return "invalid timezone: " + s.Timezone, false
 	}
 	local := now.In(loc)
+	if !s.LastFiredAt.IsZero() && now.Before(s.LastFiredAt) {
+		return "clock behind last fire (rewound)", false
+	}
 	match, err := Matches(s.Cron, local)
 	if err != nil {
 		return "invalid cron: " + err.Error(), false

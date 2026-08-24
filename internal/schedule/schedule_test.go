@@ -227,3 +227,50 @@ func TestSkipUnknownDatabase(t *testing.T) {
 		t.Fatal("expected unknown database skip")
 	}
 }
+
+// P6.2 T1 clock-jump: a large forward jump must produce at most one action
+// (skip, for missed_run=skip) — never a fire storm — and a backward jump
+// must not re-fire an already-fired minute.
+func TestClockJumpForwardNoStorm(t *testing.T) {
+	st, _ := state.Open(t.TempDir())
+	args := CanonicalJSON(nil)
+	st.PutSchedule(state.Schedule{
+		ID: "s1", Database: "spike5", Target: "fb_backup_start", Kind: "tool",
+		ArgsJSON: args, ArgHash: HashArgs(args), Cron: "* * * * *", Timezone: "UTC",
+		Enabled: true, MissedRun: "skip", Overlap: "skip",
+		LastFiredAt: time.Date(2026, 8, 17, 5, 0, 0, 0, time.UTC),
+	})
+	now := time.Date(2026, 8, 17, 11, 30, 0, 0, time.UTC) // +6.5h, many missed minutes
+	fired := 0
+	tick := New(st, func(ctx context.Context, s state.Schedule) (string, error) {
+		fired++
+		return "x", nil
+	}).WithNow(func() time.Time { return now })
+	tick.Tick(context.Background())
+	// the current matching minute fires exactly once; the missed backlog
+	// (05:01..11:29) is never re-run — one action per tick, no storm
+	if fired != 1 || len(st.ScheduleRuns()) != 1 {
+		t.Fatalf("exactly one fire expected, got fired=%d runs=%d", fired, len(st.ScheduleRuns()))
+	}
+}
+
+func TestClockJumpBackwardNoRefire(t *testing.T) {
+	st, _ := state.Open(t.TempDir())
+	args := CanonicalJSON(nil)
+	st.PutSchedule(state.Schedule{
+		ID: "s1", Database: "spike5", Target: "fb_backup_start", Kind: "tool",
+		ArgsJSON: args, ArgHash: HashArgs(args), Cron: "* * * * *", Timezone: "UTC",
+		Enabled: true,
+		LastFiredAt: time.Date(2026, 8, 17, 5, 0, 0, 0, time.UTC),
+	})
+	now := time.Date(2026, 8, 17, 4, 59, 0, 0, time.UTC) // clock wound back before the last fire
+	fired := 0
+	tick := New(st, func(ctx context.Context, s state.Schedule) (string, error) {
+		fired++
+		return "x", nil
+	}).WithNow(func() time.Time { return now })
+	tick.Tick(context.Background())
+	if fired != 0 {
+		t.Fatal("backward clock jump re-fired an already-fired minute")
+	}
+}

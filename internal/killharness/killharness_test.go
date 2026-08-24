@@ -697,3 +697,92 @@ func fileHash(t *testing.T, path string) string {
 	}
 	return fmt.Sprintf("%x", sha256.Sum256(b))
 }
+
+// TestCorruptAuditTailRefusesStart is the P6.2 T1 audit-corruption
+// injection: with the audit chain's last line truncated, the kernel must
+// refuse to start (head-sidecar mismatch, fail-closed) — never append onto
+// a broken chain — and audit.Verify must detect the damage.
+func TestCorruptAuditTailRefusesStart(t *testing.T) {
+	requireHarness(t)
+	bin := buildServer(t)
+	stateDir := t.TempDir()
+	cfg := writeConfig(t, stateDir)
+
+	cmd, keep := startKernel(t, bin, cfg, "", "")
+	c := dialMCP(t, stateDir)
+	out, err := c.tryCallTool("fb_demo_write", map[string]any{"db": "spike5"})
+	if err != nil || !strings.Contains(out, "Request ID") {
+		t.Fatalf("demo write did not reach the gate: %v %q", err, out)
+	}
+	cmd.Process.Kill()
+	cmd.Wait()
+	keep.Close()
+
+	auditPath := filepath.Join(stateDir, "audit.jsonl")
+	b, err := os.ReadFile(auditPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) < 1 {
+		t.Fatalf("expected at least 1 audit line, got %d", len(lines))
+	}
+	lines[len(lines)-1] = lines[len(lines)-1][:len(lines[len(lines)-1])/2]
+	if err := os.WriteFile(auditPath, []byte(strings.Join(lines, "\n")+"\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := audit.Verify(auditPath); err == nil {
+		t.Fatal("audit.Verify did not detect the corrupted tail")
+	}
+
+	cmd2, keep2 := startKernel(t, bin, cfg, "", "")
+	defer keep2.Close()
+	exited := make(chan error, 1)
+	go func() { exited <- cmd2.Wait() }()
+	select {
+	case <-exited: // fail-closed: refused to start on a broken chain
+	case <-time.After(30 * time.Second):
+		cmd2.Process.Kill()
+		t.Fatal("kernel did not refuse to start on a corrupted audit tail")
+	}
+}
+
+// TestDeadWebhookIsNonFatal is the P6.2 T1 dead-webhook injection: with the
+// K7 webhook pointing at an unreachable endpoint, gated jobs must still run
+// to completion and the kernel must stay healthy.
+func TestDeadWebhookIsNonFatal(t *testing.T) {
+	requireHarness(t)
+	bin := buildServer(t)
+	stateDir := t.TempDir()
+	cfg := writeConfig(t, stateDir)
+
+	src, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dead := string(src)
+	if strings.Contains(dead, "webhook_url:") {
+		dead = regexp.MustCompile(`(?m)^(\s*webhook_url:\s*).*$`).ReplaceAllString(dead, "${1}http://127.0.0.1:9/hook")
+	} else {
+		dead = strings.Replace(dead, "\nnotify:\n", "\nnotify:\n    webhook_url: http://127.0.0.1:9/hook\n", 1)
+	}
+	deadCfg := filepath.Join(t.TempDir(), "dead-webhook.yaml")
+	if err := os.WriteFile(deadCfg, []byte(dead), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	_, keep := startKernel(t, bin, deadCfg, "", "")
+	defer keep.Close()
+	c := dialMCP(t, stateDir)
+
+	jobID := confirmTool(t, c, "fb_demo_write", map[string]any{"db": "spike5"})
+	waitJob(t, c, jobID, 60*time.Second)
+
+	time.Sleep(5 * time.Second) // failed deliveries get retry time
+	if got := c.callTool(t, "fb_ping", map[string]any{}); !strings.Contains(got, "pong") {
+		t.Fatalf("kernel unhealthy after dead-webhook emissions: %q", got)
+	}
+	if _, err := audit.Verify(filepath.Join(stateDir, "audit.jsonl")); err != nil {
+		t.Fatalf("audit chain broken by dead-webhook emissions: %v", err)
+	}
+}
