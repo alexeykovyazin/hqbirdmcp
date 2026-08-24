@@ -1,9 +1,10 @@
 # fbmcp — Firebird DBA MCP Server
 
 Work-in-progress implementation per the plans in the parent directory
-(`mcp_implementation_plan.md`, `phase0_plan.md` … `phase6_plan_v2.md`).
+(`mcp_implementation_plan.md`, `phase0_plan.md` … `phase6_plan_v2.md`,
+`phase7_plan.md`).
 
-**Current status: Phase 6 (hardening) in progress — P6.0 register + P6.1 security lane. C7 kill-harness and P6.3 runbook remain.**
+**Current status: Phase 7 (HQBird extensions, M7) closed 2026-08-19. Phase 6 (hardening) remains open — C7 kill-harness, P6.2 chaos/soak and the P6.3 runbook are the remaining M6 work, tracked as WS1 in [`improvement_plan.md`](../improvement_plan.md).**
 
 Execution plan: [`phase6_plan_v2.md`](../phase6_plan_v2.md). Claims: [`docs/findings/claims-register.md`](docs/findings/claims-register.md).
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,38 +12,67 @@ import (
 
 var toolNameRe = regexp.MustCompile(`fb_[a-z][a-z0-9_]*`)
 
+// Files that intentionally reference tools that do not exist (known-gap
+// notes) are exempt from the phantom-tool lint.
+var lintExempt = map[string]bool{
+	"docs/decisions/phase5-gap-notes.md": true,
+}
+
+func lintOneMarkdown(t *testing.T, known map[string]bool, repoRoot, path string) int {
+	t.Helper()
+	rel, err := filepath.Rel(repoRoot, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lintExempt[filepath.ToSlash(rel)] {
+		return 0
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range toolNameRe.FindAllString(string(b), -1) {
+		if !known[name] {
+			t.Errorf("%s references phantom tool %s", rel, name)
+		}
+	}
+	return 1
+}
+
 func TestPlaybookHonestyLint(t *testing.T) {
 	known := map[string]bool{}
 	for _, m := range toolMeta {
 		known[m.Name] = true
 	}
 	_, thisFile, _, _ := runtime.Caller(0)
-	cmdDir := filepath.Dir(thisFile)
+	root := filepath.Join(filepath.Dir(thisFile), "..", "..")
 	roots := []string{
-		filepath.Join(cmdDir, "..", "..", "prompts"),
-		filepath.Join(cmdDir, "..", "..", "docs"),
+		filepath.Join(root, "prompts"),
+		filepath.Join(root, "docs"),
+		filepath.Join(root, "README.md"),
 	}
 	n := 0
-	for _, root := range roots {
-		ents, err := os.ReadDir(root)
+	for _, r := range roots {
+		info, err := os.Stat(r)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, e := range ents {
-			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
-				continue
-			}
-			n++
-			p := filepath.Join(root, e.Name())
-			b, err := os.ReadFile(p)
+		if !info.IsDir() {
+			n += lintOneMarkdown(t, known, root, r)
+			continue
+		}
+		err = filepath.WalkDir(r, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
-				t.Fatal(err)
+				return err
 			}
-			for _, name := range toolNameRe.FindAllString(string(b), -1) {
-				if !known[name] {
-					t.Errorf("%s references phantom tool %s", e.Name(), name)
-				}
+			if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
+				return nil
 			}
+			n += lintOneMarkdown(t, known, root, p)
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
 		}
 	}
 	if n == 0 {

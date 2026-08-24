@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/aleks/fbmcp/internal/killpoint"
 )
 
 // FactsProvider supplies named facts to the policy engine's precondition
@@ -178,7 +180,13 @@ func Open(dir string) (*Store, error) {
 	b, err := os.ReadFile(s.path())
 	if err == nil {
 		if err := json.Unmarshal(b, &s.snap); err != nil {
-			return nil, fmt.Errorf("state: corrupt store: %w", err)
+			// P6.2 T4: corruption is fail-closed. A quarantine copy preserves
+			// the evidence (tamper or crash artifact); state.json itself is
+			// left in place so every subsequent start also refuses until an
+			// operator removes or repairs it — never a silent empty restart.
+			q := fmt.Sprintf("%s.corrupt-%d", s.path(), time.Now().Unix())
+			_ = os.WriteFile(q, b, 0o640)
+			return nil, fmt.Errorf("state: corrupt store (evidence copy: %s): %w", filepath.Base(q), err)
 		}
 	}
 	return s, nil
@@ -186,17 +194,44 @@ func Open(dir string) (*Store, error) {
 
 func (s *Store) path() string { return filepath.Join(s.dir, "state.json") }
 
-// persist is atomic (temp+rename) so readers never see a torn file.
+// persist is crash-durable and atomic: the temp file is fsynced before the
+// rename and the directory afterwards (E.3.1), so a kill at any point leaves
+// either the previous or the new state.json — never a torn file.
 func (s *Store) persist() error {
 	b, err := json.MarshalIndent(s.snap, "", " ")
 	if err != nil {
 		return err
 	}
 	tmp := s.path() + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o640); err != nil {
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o640)
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.path())
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	killpoint.Hit("state.mid-persist") // chaos harness: kill between durable tmp and rename
+	if err := os.Rename(tmp, s.path()); err != nil {
+		return err
+	}
+	d, err := os.Open(s.dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	// Best-effort: directory fsync is unsupported on some platforms (Windows
+	// returns access denied on directory handles); the pre-rename file fsync
+	// above already makes the payload durable.
+	_ = d.Sync()
+	return nil
 }
 
 // AddPending stores a pending action.

@@ -12,6 +12,7 @@ import (
 	fb "github.com/nakagami/firebirdsql"
 
 	"github.com/aleks/fbmcp/internal/config"
+	"github.com/aleks/fbmcp/internal/killpoint"
 	"github.com/aleks/fbmcp/internal/state"
 )
 
@@ -41,8 +42,11 @@ func (c *Client) Backup(dbFile, backupFile string, parallelWorkers int32, progre
 	dctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go drainUntil(dctx, ch, progress)
+	killpoint.Hit("backup.started") // chaos harness: kill after attach, before the backup runs
 	go func() { done <- bm.Backup(dbFile, backupFile, opts, ch) }()
-	return <-done
+	err = <-done
+	killpoint.Hit("backup.finished") // chaos harness: kill after the backup, before catalog/job bookkeeping
+	return err
 }
 
 // Restore restores a backup file into dbFile (blocking). replace allows
@@ -62,8 +66,11 @@ func (c *Client) Restore(backupFile, dbFile string, replace bool, parallelWorker
 	dctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go drainUntil(dctx, ch, progress)
+	killpoint.Hit("restore.started") // chaos harness: kill after attach, before the restore runs
 	go func() { done <- bm.Restore(backupFile, dbFile, opts, ch) }()
-	return <-done
+	err = <-done
+	killpoint.Hit("restore.finished") // chaos harness: kill after the restore, before reopen bookkeeping
+	return err
 }
 
 // Validate runs gfix-style validation (options: 0 = default checks).

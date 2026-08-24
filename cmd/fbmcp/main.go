@@ -112,10 +112,10 @@ func main() {
 	if maybeRunService() {
 		return
 	}
-	runForeground()
+	runForegroundCtx(context.Background())
 }
 
-func runForeground() {
+func runForegroundCtx(ctx context.Context) {
 	cfgPath := flag.String("config", "fbmcp.yaml", "path to fbmcp configuration")
 	flag.Parse()
 
@@ -245,8 +245,12 @@ func runForeground() {
 	sched.Start(context.Background())
 	go func() {
 		for {
-			time.Sleep(30 * time.Second)
-			g.SweepExpired()
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(30 * time.Second):
+				g.SweepExpired()
+			}
 		}
 	}()
 	// fb_confirm → gate → dispatcher → job manager.
@@ -401,25 +405,35 @@ func runForeground() {
 	})
 
 	registerExtra(server, handle, pools, engFacts, aud, st)
-	if err := serve(server, handle, gt); err != nil {
+	if err := serve(ctx, server, handle, gt); err != nil {
 		log.Fatalf("fbmcp: server: %v", err)
 	}
 }
 
-func serve(server *mcp.Server, handle *config.Handle, gt *gatedTools) error {
+// stopAndWait cancels a foreground run and waits (bounded) for its deferred
+// cleanup — audit close, job drain, pools, instance lock — to finish. Used by
+// the Windows service Stop path (P6.2 T6 / improvement-plan A.2) so the SCM
+// sees Stopped only after the kernel has drained.
+func stopAndWait(cancel context.CancelFunc, done <-chan struct{}, timeout time.Duration) {
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+	}
+}
+
+func serve(ctx context.Context, server *mcp.Server, handle *config.Handle, gt *gatedTools) error {
 	cfg := handle.Current()
 	stop, err := attach.Start(cfg.State.Dir, func(c net.Conn) {
-		_ = server.Run(context.Background(), &mcp.IOTransport{Reader: c, Writer: c})
+		_ = server.Run(ctx, &mcp.IOTransport{Reader: c, Writer: c})
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fbmcp: attach listener: %v\n", err)
 	} else {
 		defer stop()
 	}
-	watchCtx, watchCancel := context.WithCancel(context.Background())
-	defer watchCancel()
 	if gt.reloader != nil {
-		if err := gt.reloader.Watch(watchCtx); err != nil {
+		if err := gt.reloader.Watch(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "fbmcp: config watch: %v\n", err)
 		}
 	}
@@ -430,6 +444,12 @@ func serve(server *mcp.Server, handle *config.Handle, gt *gatedTools) error {
 		if err := gt.httpLn.Start(cfg); err != nil {
 			return err
 		}
+		go func() {
+			<-ctx.Done()
+			cctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = gt.httpLn.Close(cctx)
+		}()
 	}
 	defer func() {
 		if gt.httpLn == nil {
@@ -440,12 +460,12 @@ func serve(server *mcp.Server, handle *config.Handle, gt *gatedTools) error {
 		_ = gt.httpLn.Close(ctx)
 	}()
 	if attach.PipedStdin() {
-		return server.Run(context.Background(), &mcp.StdioTransport{})
+		return server.Run(ctx, &mcp.StdioTransport{})
 	}
 	if strings.TrimSpace(cfg.Listen) != "" {
 		return gt.httpLn.Wait()
 	}
-	return server.Run(context.Background(), &mcp.StdioTransport{})
+	return server.Run(ctx, &mcp.StdioTransport{})
 }
 
 func hashOf(s string) string {

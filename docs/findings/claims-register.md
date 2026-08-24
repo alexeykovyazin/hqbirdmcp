@@ -37,7 +37,7 @@ Fuse map: #1→C1 · #2→C2 · #3→C7a · #4→C22 · #5→C15 · #6→C4 · #
 
 ## Known residuals (named; not silent)
 
-- C11: no rate-limit, no session cap. Origin allowlist is now configurable (`allowed_origins`, WS2.2) but empty by default; requests without an Origin header always pass (non-browser clients send none — browser CSRF is the threat). Documented in `c11_residuals_test.go`.
+- C11: no rate-limit, no session cap. Origin allowlist is now configurable (`allowed_origins`, per ADR-022; historically mis-cited here as "WS2.2", an undefined reference) but empty by default; requests without an Origin header always pass (non-browser clients send none — browser CSRF is the threat). Documented in `c11_residuals_test.go`.
 - C12: dual-control for Tier-3 (`fb_db_drop` stub).
 - C14: host with `state.dir` write can rewrite `ArgHash` (T-11).
 - D5: secrets from env, not OS keyring.

@@ -19,13 +19,21 @@ This host (Windows amd64):
 - Server: `E:\Projects_2026\AIDBA\fbmcp\dist\fbmcp.exe`
 - CLI: `E:\Projects_2026\AIDBA\fbmcp\dist\fbmcpctl.exe`
 
-Rebuild:
+Rebuild (or do everything — build, stop/backup/replace in `dist\`, state dir, client config merge — in one command):
 
 ```powershell
 cd E:\Projects_2026\AIDBA\fbmcp
 $env:CGO_ENABLED = "0"
 go build -trimpath -ldflags "-s -w -X main.version=dev" -o dist/fbmcp.exe ./cmd/fbmcp
 go build -trimpath -ldflags "-s -w -X main.version=dev" -o dist/fbmcpctl.exe ./cmd/fbmcpctl
+```
+
+One-command rebuild + update + configure (see `packaging/rebuild-install.ps1`; dry-run with `-WhatIf`):
+
+```powershell
+.\packaging\rebuild-install.ps1 -WhatIf          # dry run
+.\packaging\rebuild-install.ps1 -Force           # stop running dist\ binaries, rebuild, update, configure ZCode
+.\packaging\rebuild-install.ps1 -Clients zcode,claude -Force
 ```
 
 ## 2. Config and secrets

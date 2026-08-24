@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/aleks/fbmcp/internal/audit"
+	"github.com/aleks/fbmcp/internal/killpoint"
 	"github.com/aleks/fbmcp/internal/policy"
 	"github.com/aleks/fbmcp/internal/state"
 )
@@ -76,6 +77,7 @@ func (g *Gate) Request(id policy.Identity, db string, meta policy.ToolMeta, impa
 	if err := g.st.AddPending(p); err != nil {
 		return state.PendingAction{}, err
 	}
+	killpoint.Hit("gate.pending") // chaos harness: kill with an unconsumed pending action on disk
 	g.aud.Log(audit.Entry{Identity: id.Name, Database: db, Tool: meta.Name, Tier: meta.Tier, Decision: "pending",
 		Detail: map[string]interface{}{"request_id": p.ID, "expires_in": g.ttl.String()}})
 	if g.onPending != nil {
@@ -155,6 +157,7 @@ func (g *Gate) Confirm(requestID, identity, channel, token string) (state.Pendin
 
 	g.aud.Log(audit.Entry{Identity: identity, Database: p.Database, Tool: p.Tool, Tier: p.Tier, Decision: "approved", Channel: channel,
 		Detail: map[string]interface{}{"request_id": requestID}})
+	killpoint.Hit("gate.confirmed") // chaos harness: kill after consume, before dispatch
 	p.ConfirmedChannel = channel
 	if g.onConfirm != nil {
 		g.onConfirm(p, channel)

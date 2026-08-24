@@ -13,6 +13,7 @@ import (
 	"github.com/aleks/fbmcp/internal/dbpool"
 	"github.com/aleks/fbmcp/internal/fbparse"
 	"github.com/aleks/fbmcp/internal/gate"
+	"github.com/aleks/fbmcp/internal/killpoint"
 )
 
 const (
@@ -191,9 +192,11 @@ func (s *Service) execAtomic(ctx context.Context, pool *sql.DB, stmts []string, 
 		n, _ := res.RowsAffected()
 		fmt.Fprintf(report, "%d. OK %s (rows affected: %d)\n", i+1, shortOf(stmt), n)
 	}
+	killpoint.Hit("exec.pre-commit") // chaos harness: kill with statements executed but uncommitted
 	if err := tx.Commit(); err != nil {
 		return "", fmt.Errorf("commit failed — rolled back: %w", err)
 	}
+	killpoint.Hit("exec.post-commit") // chaos harness: kill after commit, before the job result is recorded
 	return "committed atomically (single transaction):\n" + report.String(), nil
 }
 

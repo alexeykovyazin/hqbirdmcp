@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aleks/fbmcp/internal/killpoint"
 	"github.com/aleks/fbmcp/internal/state"
 )
 
@@ -113,15 +114,25 @@ func (r *Runner) worker(ch chan task) {
 		j.State = "running"
 		j.UpdatedAt = time.Now().UTC()
 		r.st.PutJob(j)
+		killpoint.Hit("job.running") // chaos harness: kill after the job record says running
 
+		// Progress ticks are coalesced (E.3.3): a chatty producer must not
+		// rewrite the whole state.json snapshot on every callback. The
+		// terminal PutJob below always persists the final state.
+		var lastPersist time.Time
 		progress := func(frac float64, msg string) {
 			j.Progress = frac
 			j.Message = msg
 			j.UpdatedAt = time.Now().UTC()
+			if time.Since(lastPersist) < 500*time.Millisecond {
+				return
+			}
+			lastPersist = time.Now()
 			r.st.PutJob(j)
 		}
 
 		res, err := t.fn(ctx, progress)
+		killpoint.Hit("job.done") // chaos harness: kill after work, before the terminal record
 		wasCancelled := ctx.Err() != nil // check before our own cancel() call
 		cancel()
 		r.mu.Lock()
