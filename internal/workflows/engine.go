@@ -63,6 +63,9 @@ func (e *Engine) Run(ctx context.Context, id, typ, db string, autoReopen bool, d
 }
 
 func (e *Engine) exec(ctx context.Context, wf *state.Workflow, defs []StepDef, from int, prog func(float64, string)) (string, error) {
+	if prog == nil { // Reconcile passes none; steps must be free to call it
+		prog = func(float64, string) {}
+	}
 	for i := from; i < len(defs); i++ {
 		if err := ctx.Err(); err != nil {
 			wf.State = "failed"

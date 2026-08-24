@@ -417,3 +417,122 @@ func TestKillAtBackupStarted(t *testing.T) {
 	requireFirebird(t)
 	runKillScenario(t, "backup.started", "fb_backup_start")
 }
+
+// confirmTool runs a Tier-1 tool through request → in-band confirm and
+// returns the submitted job id.
+func confirmTool(t *testing.T, c *mcpClient, tool string, args map[string]any) string {
+	t.Helper()
+	out := c.callTool(t, tool, args)
+	rid := mustFind(t, out, `Request ID: ([0-9a-f]+)`)
+	tok := mustFind(t, out, `token \(Tier 1 only\): ([0-9a-f]+)`)
+	cout := c.callTool(t, "fb_confirm", map[string]any{"request_id": rid, "token": tok})
+	return mustFind(t, cout, `job ([a-z0-9]+)`)
+}
+
+func waitJob(t *testing.T, c *mcpClient, jobID string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		out := c.callTool(t, "fb_job_status", map[string]any{"job_id": jobID})
+		if strings.Contains(out, "succeeded") {
+			return
+		}
+		if strings.Contains(out, "failed") || strings.Contains(out, "interrupted") {
+			t.Fatalf("job %s terminal: %s", jobID, out)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("job %s timeout: %s", jobID, out)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+// TestKillAtRestoreReplaceC7a is the claims-register C7a scenario: kill the
+// kernel during a Tier-2 restore_replace (approved out-of-band, exactly as
+// the channel policy demands) at the wf.replace checkpoint — after the
+// database file is removed and the .pre-restore snapshot exists, before the
+// restore runs. Invariants: the original file is intact or snapshotted;
+// after restart the AutoReopen reconciliation drives the database back
+// online; the audit chain verifies.
+func TestKillAtRestoreReplaceC7a(t *testing.T) {
+	requireHarness(t)
+	requireFirebird(t)
+	bin := buildServer(t)
+	stateDir := t.TempDir()
+	kpDir := filepath.Join(stateDir, "kp")
+	cfg := writeConfig(t, stateDir)
+
+	src, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbPath := mustFind(t, string(src), `(?s)id: spike5.*?path: (\S+)`)
+
+	cmd, keep := startKernel(t, bin, cfg, "wf.replace", kpDir)
+	defer keep.Close()
+	c := dialMCP(t, stateDir)
+
+	// fresh verified backup: restore_replace preconditions (verified_backup_exists, < 24h)
+	waitJob(t, c, confirmTool(t, c, "fb_backup_start", map[string]any{"db": "spike5"}), 180*time.Second)
+	waitJob(t, c, confirmTool(t, c, "fb_restore_test", map[string]any{"db": "spike5"}), 180*time.Second)
+	// Tier-2 tools require an open maintenance window
+	waitJob(t, c, confirmTool(t, c, "fb_window_open", map[string]any{"db": "spike5", "args": map[string]any{"hours": 1}}), 60*time.Second)
+
+	// Tier 2: out-of-band approval only — drop the marker the watcher polls
+	out := c.callTool(t, "fb_restore_replace", map[string]any{"db": "spike5"})
+	rid := mustFind(t, out, `Request ID: ([0-9a-f]+)`)
+	if strings.Contains(out, "In-band token") {
+		t.Fatalf("Tier 2 action offered an in-band token — channel policy violated: %q", out)
+	}
+	if err := os.MkdirAll(filepath.Join(stateDir, "approvals"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "approvals", rid), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	waitReady(t, kpDir, "wf.replace", 120*time.Second)
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Wait()
+
+	// C7a kill-state invariant: file intact or .pre-restore present
+	pre := dbPath + ".pre-restore"
+	if _, err := os.Stat(pre); err != nil {
+		if _, err := os.Stat(dbPath); err != nil {
+			t.Fatalf("neither %s nor %s exists after the kill — data-loss state", dbPath, pre)
+		}
+	}
+
+	// restart: reconcile must finish the AutoReopen workflow and bring the DB online
+	cmd2, keep2 := startKernel(t, bin, cfg, "", "")
+	defer func() {
+		cmd2.Process.Kill()
+		cmd2.Wait()
+		keep2.Close()
+	}()
+	c2 := dialMCP(t, stateDir)
+	deadline := time.Now().Add(180 * time.Second)
+	for {
+		got := c2.callTool(t, "fb_db_health", map[string]any{"db": "spike5"})
+		if strings.Contains(got, "online") {
+			break
+		}
+		if time.Now().After(deadline) {
+			if b, err := os.ReadFile(filepath.Join(stateDir, "state.json")); err == nil {
+				t.Logf("state.json at timeout:\n%s", b)
+			} else {
+				t.Logf("state.json unreadable: %v", err)
+			}
+			if _, err := os.Stat(dbPath); err != nil {
+				t.Logf("db file %s missing: %v", dbPath, err)
+			}
+			t.Fatalf("spike5 never came back online after reconcile: %q", got)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if _, err := audit.Verify(filepath.Join(stateDir, "audit.jsonl")); err != nil {
+		t.Fatalf("audit chain broken after kill (C5): %v", err)
+	}
+}

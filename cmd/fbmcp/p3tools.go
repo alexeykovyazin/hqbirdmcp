@@ -24,6 +24,7 @@ import (
 	"github.com/aleks/fbmcp/internal/gate"
 	"github.com/aleks/fbmcp/internal/identity"
 	"github.com/aleks/fbmcp/internal/jobs"
+	"github.com/aleks/fbmcp/internal/killpoint"
 	"github.com/aleks/fbmcp/internal/notify"
 	"github.com/aleks/fbmcp/internal/policy"
 	"github.com/aleks/fbmcp/internal/reload"
@@ -575,6 +576,7 @@ func restoreReplaceSteps(gt *gatedTools) []workflows.StepDef {
 			if err := os.Remove(db.Path); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("cannot remove current database file (attached?): %w", err)
 			}
+			killpoint.Hit("wf.replace") // chaos harness (C7a): kill after file removal, before the restore runs
 			prog(0.4, "restoring "+wf.Detail["fbk"])
 			return c.Restore(wf.Detail["fbk"], db.Path, false, 0, func(m string) { prog(0.7, m) })
 		}, Compensate: putBack},

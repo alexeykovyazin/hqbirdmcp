@@ -229,11 +229,15 @@ func runForegroundCtx(ctx context.Context) {
 				Detail: map[string]string{"request_id": p.ID}})
 		},
 	)
-	wfEng.Reconcile(context.Background())
 	registerP3Tools(server, gt)
 	gt.registerRestore(server)
 	registerP4Tools(server, gt)
 	registerP5Tools(server, gt)
+	// AutoReopen reconciliation must run AFTER all workflow types are
+	// registered above (C7a): a restore_replace interrupted by a kill is
+	// resumed from its .pre-restore snapshot — marking it failed here would
+	// leave the database file removed.
+	wfEng.Reconcile(context.Background())
 	gt.startApprovalWatcher(context.Background())
 	sched := schedule.New(st, gt.fireSchedule).OnSkip(func(s state.Schedule, reason string) {
 		_ = bus.Emit(notify.Event{Type: "scheduler.skip", Database: s.Database, Tool: s.Target, Message: reason,
