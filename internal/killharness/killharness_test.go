@@ -17,6 +17,7 @@ package killharness
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -623,4 +624,76 @@ func TestKillDuringCloseDB(t *testing.T) {
 	requireHarness(t)
 	requireFirebird(t)
 	runShutdownKillScenario(t, "db.closedb")
+}
+
+// TestKillNightlyVerifyC7b is the claims-register C7b scenario: a durable
+// schedule grant (target nightly_verify, fires every minute) starts the
+// backup→restore-test chain, and the kernel is hard-killed mid-backup. The
+// source database file must be byte-identical, the schedule grant must
+// survive the restart, and the audit chain must verify.
+func TestKillNightlyVerifyC7b(t *testing.T) {
+	requireHarness(t)
+	requireFirebird(t)
+	bin := buildServer(t)
+	stateDir := t.TempDir()
+	kpDir := filepath.Join(stateDir, "kp")
+	cfg := writeConfig(t, stateDir)
+
+	src, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbPath := mustFind(t, string(src), `(?s)id: spike5.*?path: (\S+)`)
+	before := fileHash(t, dbPath)
+
+	cmd, keep := startKernel(t, bin, cfg, "backup.started", kpDir)
+	defer keep.Close()
+	c := dialMCP(t, stateDir)
+
+	out := c.callTool(t, "fb_schedule_create", map[string]any{
+		"db": "spike5", "target": "nightly_verify", "cron": "* * * * *", "timezone": "UTC",
+	})
+	rid := mustFind(t, out, `Request ID: ([0-9a-f]+)`)
+	tok := mustFind(t, out, `token \(Tier 1 only\): ([0-9a-f]+)`)
+	cout := c.callTool(t, "fb_confirm", map[string]any{"request_id": rid, "token": tok})
+	if !strings.Contains(cout, "confirmed") {
+		t.Fatalf("schedule confirm failed: %q", cout)
+	}
+
+	// next minute boundary + dispatch + service attach
+	waitReady(t, kpDir, "backup.started", 150*time.Second)
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Wait()
+
+	if after := fileHash(t, dbPath); after != before {
+		t.Fatalf("source database modified by killed nightly_verify (C7b): %s != %s", before, after)
+	}
+
+	cmd2, keep2 := startKernel(t, bin, cfg, "", "")
+	defer func() {
+		cmd2.Process.Kill()
+		cmd2.Wait()
+		keep2.Close()
+	}()
+	c2 := dialMCP(t, stateDir)
+	if got := c2.callTool(t, "fb_schedule_list", map[string]any{"db": "spike5"}); !strings.Contains(got, "nightly_verify") {
+		t.Fatalf("schedule grant lost across the kill: %q", got)
+	}
+	if _, err := audit.Verify(filepath.Join(stateDir, "audit.jsonl")); err != nil {
+		t.Fatalf("audit chain broken after kill (C5): %v", err)
+	}
+	if after := fileHash(t, dbPath); after != before {
+		t.Fatalf("source database modified after restart (C7b): %s != %s", before, after)
+	}
+}
+
+func fileHash(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(b))
 }
