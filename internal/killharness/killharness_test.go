@@ -536,3 +536,91 @@ func TestKillAtRestoreReplaceC7a(t *testing.T) {
 		t.Fatalf("audit chain broken after kill (C5): %v", err)
 	}
 }
+
+// runShutdownKillScenario is the C7a shutdown_window variant: Tier-2
+// shutdown (window + verified backup preconditions, OOB approval), killed at
+// the given checkpoint (wf.shut = database shut but not yet online;
+// db.closedb = mid pool close, the P6.2 T6 / P3 finding #3 case). The file
+// must stay intact and the restart must bring the database back online.
+func runShutdownKillScenario(t *testing.T, killpointName string) {
+	t.Helper()
+	bin := buildServer(t)
+	stateDir := t.TempDir()
+	kpDir := filepath.Join(stateDir, "kp")
+	cfg := writeConfig(t, stateDir)
+
+	src, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbPath := mustFind(t, string(src), `(?s)id: spike5.*?path: (\S+)`)
+
+	cmd, keep := startKernel(t, bin, cfg, killpointName, kpDir)
+	defer keep.Close()
+	c := dialMCP(t, stateDir)
+
+	waitJob(t, c, confirmTool(t, c, "fb_backup_start", map[string]any{"db": "spike5"}), 180*time.Second)
+	waitJob(t, c, confirmTool(t, c, "fb_restore_test", map[string]any{"db": "spike5"}), 180*time.Second)
+	waitJob(t, c, confirmTool(t, c, "fb_window_open", map[string]any{"db": "spike5", "args": map[string]any{"hours": 1}}), 60*time.Second)
+
+	out := c.callTool(t, "fb_shutdown_window", map[string]any{"db": "spike5"})
+	rid := mustFind(t, out, `Request ID: ([0-9a-f]+)`)
+	if strings.Contains(out, "In-band token") {
+		t.Fatalf("Tier 2 action offered an in-band token — channel policy violated: %q", out)
+	}
+	if err := os.MkdirAll(filepath.Join(stateDir, "approvals"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "approvals", rid), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	waitReady(t, kpDir, killpointName, 120*time.Second)
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Wait()
+
+	// C7a kill-state invariant: shutdown never removes the file
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Fatalf("database file %s missing after shutdown kill: %v", dbPath, err)
+	}
+
+	// restart: AutoReopen must finish the workflow tail (gfix -online)
+	cmd2, keep2 := startKernel(t, bin, cfg, "", "")
+	defer func() {
+		cmd2.Process.Kill()
+		cmd2.Wait()
+		keep2.Close()
+	}()
+	c2 := dialMCP(t, stateDir)
+	deadline := time.Now().Add(180 * time.Second)
+	for {
+		got := c2.callTool(t, "fb_db_health", map[string]any{"db": "spike5"})
+		if strings.Contains(got, "online") {
+			break
+		}
+		if time.Now().After(deadline) {
+			if b, err := os.ReadFile(filepath.Join(stateDir, "state.json")); err == nil {
+				t.Logf("state.json at timeout:\n%s", b)
+			}
+			t.Fatalf("spike5 never came back online after shutdown kill: %q", got)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if _, err := audit.Verify(filepath.Join(stateDir, "audit.jsonl")); err != nil {
+		t.Fatalf("audit chain broken after kill (C5): %v", err)
+	}
+}
+
+func TestKillAtShutdownWindowC7a(t *testing.T) {
+	requireHarness(t)
+	requireFirebird(t)
+	runShutdownKillScenario(t, "wf.shut")
+}
+
+func TestKillDuringCloseDB(t *testing.T) {
+	requireHarness(t)
+	requireFirebird(t)
+	runShutdownKillScenario(t, "db.closedb")
+}

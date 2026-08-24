@@ -15,6 +15,7 @@ import (
 	_ "github.com/nakagami/firebirdsql"
 
 	"github.com/aleks/fbmcp/internal/config"
+	"github.com/aleks/fbmcp/internal/killpoint"
 )
 
 // Manager owns the pools for every registered database.
@@ -141,6 +142,7 @@ func (m *Manager) Close() {
 // CloseDB closes both pools for one database (used by guarded restore before
 // replacing the file).
 func (m *Manager) CloseDB(dbID string) {
+	killpoint.Hit("db.closedb") // chaos harness (P6.2 T6 / P3 finding #3): kill during CloseDB in restore/shutdown
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if p, ok := m.read[dbID]; ok {

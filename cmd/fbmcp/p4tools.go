@@ -20,6 +20,7 @@ import (
 	execpkg "github.com/aleks/fbmcp/internal/executor"
 	"github.com/aleks/fbmcp/internal/gate"
 	"github.com/aleks/fbmcp/internal/identity"
+	"github.com/aleks/fbmcp/internal/killpoint"
 	"github.com/aleks/fbmcp/internal/lockout"
 	"github.com/aleks/fbmcp/internal/policy"
 	"github.com/aleks/fbmcp/internal/privs"
@@ -579,7 +580,11 @@ func shutdownSteps(gt *gatedTools) []workflows.StepDef {
 				return err
 			}
 			gt.pools.CloseDB(wf.Database)
-			return workflows.GfixShutdown(ctx, inst, db.Path, user, pass, strArg(map[string]any{"mode": wf.Detail["mode"]}, "mode", "force"), 30*time.Second)
+			err = workflows.GfixShutdown(ctx, inst, db.Path, user, pass, strArg(map[string]any{"mode": wf.Detail["mode"]}, "mode", "force"), 30*time.Second)
+			if err == nil {
+				killpoint.Hit("wf.shut") // chaos harness (C7a): database shut, not yet brought online
+			}
+			return err
 		}, Compensate: func(ctx context.Context, wf *state.Workflow) error {
 			inst, db, user, pass, err := gfixCreds(gt, wf.Database)
 			if err != nil {

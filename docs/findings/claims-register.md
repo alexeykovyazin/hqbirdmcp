@@ -16,7 +16,7 @@ Fuse map: #1→C1 · #2→C2 · #3→C7a · #4→C22 · #5→C15 · #6→C4 · #
 | C4 | Second **kernel** fail-fast (lock); extra piped stdio clients attach, they must not acquire the store | [`instlock_test.go`](../../internal/instlock/instlock_test.go) fuse #6; [`c4_lock_test.go`](../../internal/instlock/c4_lock_test.go); [`attach_test.go`](../../internal/attach/attach_test.go) | seed+extend | verified-green |
 | C5 | Audit chain detects edit/delete/reorder | [`audit_test.go`](../../internal/audit/audit_test.go) | seed | verified-green |
 | C6 | Facts fail-closed | [`policy_test.go`](../../internal/policy/policy_test.go) | seed | verified-green |
-| C7a | Kill in `restore_replace` / `shutdown_window` ⇒ file intact or `.pre-restore`; `CloseDB`; AutoReopen = **database** online | P6.2 harness | missing | |
+| C7a | Kill in `restore_replace` / `shutdown_window` ⇒ file intact or `.pre-restore`; `CloseDB`; AutoReopen = **database** online | [`killharness_test.go`](../../internal/killharness/killharness_test.go): restore_replace, shutdown, mid-CloseDB scenarios (killpoint fault injection, hard kill, restart invariants); 3× stability loop green on the dev host | extend | verified-green |
 | C7b | Kill in `nightly_verify` ⇒ **source DB untouched** | P6.2 harness | missing | |
 | C8 | No orphan subprocess; Backup/Trace drain goroutines bounded | [`drain_test.go`](../../internal/backupsvc/drain_test.go) | extend | verified-green |
 | C9 | File I/O confined to registry ids + backup/work dirs (incl. `CleanOrphans`) | [`confine_test.go`](../../internal/confine/confine_test.go); [`housekeep_test.go`](../../internal/housekeep/housekeep_test.go); [`config_test.go`](../../internal/config/config_test.go) | extend | verified-green |
