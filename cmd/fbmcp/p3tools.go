@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -235,13 +236,25 @@ func registerP3Tools(server *mcp.Server, gt *gatedTools) {
 	// work dir, validate, mark verified (verification = successful
 	// test-restore per the P0.2 finding that gbak has no standalone verify).
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_restore_test", Tier: 1, Scope: "database"},
-		"Test-restore of the newest backup of %s into the work dir (never touches the source DB; args: {\"parallel_workers\": N} for HQBird/FB5 multi-thread index creation during restore, 1-64).",
+		"Test-restore of the newest backup of %s into the work dir (never touches the source DB; args: {\"parallel_workers\": N} for HQBird/FB5 multi-thread index creation during restore, 1-64; {\"no_matviews\": true} to skip materialized-view refresh via gbak, FB 5.0+ only).",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			c, db, err := gt.client(dbID)
 			if err != nil {
 				return "", err
 			}
 			parallel, _ := toInt(args["parallel_workers"])
+			noMV, _ := args["no_matviews"].(bool)
+			var inst config.FBInstance
+			if noMV {
+				in, err := gt.cfg.Instance(db.Instance)
+				if err != nil {
+					return "", err
+				}
+				inst = in
+				if ver, perr := strconv.ParseFloat(in.Version, 64); perr != nil || ver < 5 {
+					return "", fmt.Errorf("no_matviews requires Firebird 5.0+ (materialized views); instance %s is %s", in.ID, in.Version)
+				}
+			}
 			backupDir := db.BackupDir
 			if backupDir == "" {
 				backupDir = filepath.Dir(db.Path)
@@ -269,8 +282,14 @@ func registerP3Tools(server *mcp.Server, gt *gatedTools) {
 			} else {
 				prog(0.2, "restoring "+fbk)
 			}
-			if err := c.Restore(fbk, restored, false, int32(parallel), func(m string) { prog(0.6, m) }); err != nil {
-				return "", fmt.Errorf("restore failed: %w", err)
+			var rerr error
+			if noMV {
+				rerr = backupsvc.RestoreNoMatviews(ctx, inst, c.User, c.Pass, fbk, restored, false, func(m string) { prog(0.6, m) })
+			} else {
+				rerr = c.Restore(fbk, restored, false, int32(parallel), func(m string) { prog(0.6, m) })
+			}
+			if rerr != nil {
+				return "", fmt.Errorf("restore failed: %w", rerr)
 			}
 			prog(0.8, "validating restored copy")
 			if err := c.Validate(restored, 0); err != nil {
@@ -532,10 +551,14 @@ func (gt *gatedTools) registerRestore(server *mcp.Server) {
 			if !found {
 				return "", fmt.Errorf("no backup artifact found")
 			}
-			id := fmt.Sprintf("wf%d", time.Now().UnixNano())
-			return gt.wf.Run(ctx, id, "restore_replace", dbID, true, map[string]string{
+			detail := map[string]string{
 				"fbk": fbk, "pre": db.Path + ".pre-restore", "path": db.Path,
-			}, prog)
+			}
+			if noMV, _ := args["no_matviews"].(bool); noMV {
+				detail["no_matviews"] = "true"
+			}
+			id := fmt.Sprintf("wf%d", time.Now().UnixNano())
+			return gt.wf.Run(ctx, id, "restore_replace", dbID, true, detail, prog)
 		})
 }
 
@@ -578,6 +601,13 @@ func restoreReplaceSteps(gt *gatedTools) []workflows.StepDef {
 			}
 			killpoint.Hit("wf.replace") // chaos harness (C7a): kill after file removal, before the restore runs
 			prog(0.4, "restoring "+wf.Detail["fbk"])
+			if wf.Detail["no_matviews"] == "true" {
+				inst, err := gt.cfg.Instance(db.Instance)
+				if err != nil {
+					return err
+				}
+				return backupsvc.RestoreNoMatviews(ctx, inst, c.User, c.Pass, wf.Detail["fbk"], db.Path, false, func(m string) { prog(0.7, m) })
+			}
 			return c.Restore(wf.Detail["fbk"], db.Path, false, 0, func(m string) { prog(0.7, m) })
 		}, Compensate: putBack},
 		{Name: "validate", Do: func(ctx context.Context, wf *state.Workflow, prog func(float64, string)) error {

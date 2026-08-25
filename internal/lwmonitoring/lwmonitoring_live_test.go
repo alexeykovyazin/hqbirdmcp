@@ -32,7 +32,7 @@ func TestQueryLive(t *testing.T) {
 			t.Fatalf("query level %d: %v", level, err)
 		}
 		if strings.TrimSpace(out) == "" {
-			t.Fatalf("query level %d: empty output", level)
+			t.Fatalf("query level %d: empty output - installed fblwmon plugin does not serve this level (D2.1 distinct failure)", level)
 		}
 		if !strings.Contains(out, "idQuery") {
 			t.Errorf("query level %d: output missing idQuery header, got: %s", level, out)

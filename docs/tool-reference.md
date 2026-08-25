@@ -91,8 +91,8 @@ Typical path: `fb_connected_dbs` → `fb_db_register` (`mode=preview` then `exec
 |---|---|---|---|
 | `fb_backup_start` | 1 | `db`, optional `args.parallel_workers` (1-64) | Full gbak into `backup_dir`; catalog **unverified**. `parallel_workers` is HQBird/FB5 multi-thread backup (native driver support, all versions) |
 | `fb_backup_nbackup` | 1 | `db`, `args.level` 0\|1\|2 | Incremental nbackup; level N needs catalog level N−1. No parallel-workers support (page-copy based) |
-| `fb_restore_test` | 1 | `db`, optional `args.parallel_workers` (1-64) | Restore newest backup into **work dir**; never touches the source DB; marks catalog verified. `parallel_workers` speeds up index creation during restore |
-| `fb_restore_replace` | 2 | `db` | In-place replace from newest backup (`.pre-restore` + `CloseDB`). Needs open window + verified backup &lt; 24h. **OOB only.** Cannot be scheduled |
+| `fb_restore_test` | 1 | `db`, optional `args.parallel_workers` (1-64), `args.no_matviews` (bool, FB 5.0+) | Restore newest backup into **work dir**; never touches the source DB; marks catalog verified. `parallel_workers` speeds up index creation during restore. `no_matviews` skips materialized-view refresh via the gbak CLI fallback (the driver has no Services-API field) |
+| `fb_restore_replace` | 2 | `db`, optional `args.no_matviews` (bool, FB 5.0+) | In-place replace from newest backup (`.pre-restore` + `CloseDB`). Needs open window + verified backup &lt; 24h. **OOB only.** Cannot be scheduled |
 | `fb_retention_run` | 1 | `db`, `args.keep_days`, `args.dry_run` (default **true**) | Delete only catalog-verified artifacts past keep days. `keep_days=0` = keep everything. Uncataloged files are never touched |
 | `fb_validate` | 1 | `db` | Online validation (findings only, no repair) |
 | `fb_sweep` | 1 | `db` | Manual sweep |

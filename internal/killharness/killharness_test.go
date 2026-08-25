@@ -786,3 +786,67 @@ func TestDeadWebhookIsNonFatal(t *testing.T) {
 		t.Fatalf("audit chain broken by dead-webhook emissions: %v", err)
 	}
 }
+
+// TestKillAtStateMidPersist kills between the durable temp write and the
+// atomic rename (the state.mid-persist checkpoint inside Store.persist).
+// Invariant: state.json loads cleanly after the kill — the old or the new
+// snapshot, never torn — and the restarted kernel is healthy.
+func TestKillAtStateMidPersist(t *testing.T) {
+	requireHarness(t)
+	bin := buildServer(t)
+	stateDir := t.TempDir()
+	kpDir := filepath.Join(stateDir, "kp")
+	cfg := writeConfig(t, stateDir)
+
+	cmd, keep := startKernel(t, bin, cfg, "state.mid-persist", kpDir)
+	defer keep.Close()
+	c := dialMCP(t, stateDir)
+
+	// any state mutation reaches the checkpoint; the response is never sent
+	go func() { _, _ = c.tryCallTool("fb_demo_write", map[string]any{"db": "spike5"}) }()
+	waitReady(t, kpDir, "state.mid-persist", 60*time.Second)
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Wait()
+
+	if _, err := state.Open(stateDir); err != nil {
+		t.Fatalf("state.json torn after mid-persist kill (atomicity violated): %v", err)
+	}
+
+	cmd2, keep2 := startKernel(t, bin, cfg, "", "")
+	defer func() {
+		cmd2.Process.Kill()
+		cmd2.Wait()
+		keep2.Close()
+	}()
+	c2 := dialMCP(t, stateDir)
+	if got := c2.callTool(t, "fb_ping", map[string]any{}); !strings.Contains(got, "pong") {
+		t.Fatalf("kernel unhealthy after mid-persist kill: %q", got)
+	}
+	if _, err := audit.Verify(filepath.Join(stateDir, "audit.jsonl")); err != nil {
+		t.Fatalf("audit chain broken after kill (C5): %v", err)
+	}
+}
+
+// TestRestoreTestNoMatviewsLive is a non-kill live scenario (phase8_plan
+// D2.2): fb_restore_test with args.no_matviews must complete through the
+// gbak -SE -NO_MATVIEWS fallback and mark the catalog verified.
+func TestRestoreTestNoMatviewsLive(t *testing.T) {
+	requireHarness(t)
+	requireFirebird(t)
+	bin := buildServer(t)
+	stateDir := t.TempDir()
+	cfg := writeConfig(t, stateDir)
+
+	cmd, keep := startKernel(t, bin, cfg, "", "")
+	defer func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+		keep.Close()
+	}()
+	c := dialMCP(t, stateDir)
+
+	waitJob(t, c, confirmTool(t, c, "fb_backup_start", map[string]any{"db": "spike5"}), 180*time.Second)
+	waitJob(t, c, confirmTool(t, c, "fb_restore_test", map[string]any{"db": "spike5", "args": map[string]any{"no_matviews": true}}), 180*time.Second)
+}

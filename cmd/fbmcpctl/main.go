@@ -2,10 +2,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aleks/fbmcp/internal/audit"
 	"github.com/aleks/fbmcp/internal/config"
@@ -17,7 +19,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: fbmcpctl <approve|status|setup|doctor|verify> ...")
+		fmt.Fprintln(os.Stderr, "usage: fbmcpctl <approve|status|setup|doctor|verify|repair> ...")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -31,10 +33,112 @@ func main() {
 		os.Exit(cmdDoctor(os.Args[2:]))
 	case "verify":
 		os.Exit(cmdVerify(os.Args[2:]))
+	case "repair":
+		os.Exit(cmdRepair(os.Args[2:]))
 	default:
 		fmt.Fprintln(os.Stderr, "unknown command:", os.Args[1])
 		os.Exit(2)
 	}
+}
+
+// cmdRepair rebuilds enriched-era schedule grants from audit.jsonl into a
+// fresh state store (phase8_plan D1.2b). Only grants approved AFTER the
+// audit-detail enrichment carry enough information; pre-enrichment entries
+// are counted and skipped. Deletes are not replayed; pending actions are
+// not rebuilt by design (15-min TTL). A corrupt state.json is moved aside
+// as state.json.pre-repair-<ts> first — evidence is never destroyed.
+func cmdRepair(args []string) int {
+	cfgPath := "fbmcp.yaml"
+	for _, a := range args {
+		if a != "" && a[0] != '-' && a != "--from-audit" {
+			cfgPath = a
+		}
+	}
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	auditPath := filepath.Join(cfg.State.Dir, "audit.jsonl")
+	b, err := os.ReadFile(auditPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "audit log unreadable:", err)
+		return 1
+	}
+
+	// A loadable, non-empty state.json means repair is the wrong tool.
+	if st, serr := state.Open(cfg.State.Dir); serr == nil {
+		if len(st.Schedules()) > 0 || len(st.Jobs()) > 0 || len(st.Pending()) > 0 {
+			fmt.Fprintln(os.Stderr, "state.json loads and is non-empty - repair is only for a corrupt or absent state")
+			return 1
+		}
+	} else {
+		// corrupt: move it aside (the .corrupt-* evidence copy already exists)
+		old := filepath.Join(cfg.State.Dir, "state.json")
+		aside := fmt.Sprintf("%s.pre-repair-%d", old, time.Now().Unix())
+		if err := os.Rename(old, aside); err != nil {
+			fmt.Fprintln(os.Stderr, "cannot move corrupt state aside:", err)
+			return 1
+		}
+		fmt.Println("corrupt state.json moved aside:", aside)
+	}
+	st, err := state.Open(cfg.State.Dir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "state:", err)
+		return 1
+	}
+
+	rebuilt, skipped := 0, 0
+	for _, l := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		if l == "" {
+			continue
+		}
+		var e audit.Entry
+		if err := json.Unmarshal([]byte(l), &e); err != nil {
+			fmt.Fprintln(os.Stderr, "audit line unparseable - chain integrity is prerequisite (run verify):", err)
+			return 1
+		}
+		if e.Tool != "fb_schedule_create" || e.Decision != "approved" {
+			continue
+		}
+		d := e.Detail
+		if d == nil {
+			continue
+		}
+		cron, _ := d["cron"].(string)
+		argHash, _ := d["arg_hash"].(string)
+		if cron == "" || argHash == "" {
+			skipped++ // pre-enrichment entry: not reconstructable
+			continue
+		}
+		str := func(k string) string { v, _ := d[k].(string); return v }
+		missed := str("missed_run")
+		if missed == "" {
+			missed = "skip"
+		}
+		win, _ := d["window_required"].(bool)
+		sc := state.Schedule{
+			ID: str("schedule_id"), Database: e.Database, Target: str("target"), Kind: str("kind"),
+			ArgsJSON: str("args"), ArgHash: argHash, MaxTier: e.Tier, Confirmer: e.Identity,
+			Channel: e.Channel, CreatingRequest: str("creating_request"),
+			Cron: cron, Timezone: str("timezone"), WindowRequired: win, MissedRun: missed,
+			Overlap: "skip", Enabled: true, CreatedAt: e.Time,
+		}
+		if sc.ID == "" || sc.Target == "" {
+			skipped++
+			continue
+		}
+		if err := st.PutSchedule(sc); err != nil {
+			fmt.Fprintln(os.Stderr, "rebuild failed:", err)
+			return 1
+		}
+		fmt.Printf("rebuilt grant %s db=%s target=%s cron=%q\n", sc.ID, sc.Database, sc.Target, sc.Cron)
+		rebuilt++
+	}
+	fmt.Printf("repair complete: %d grants rebuilt, %d pre-enrichment entries skipped\n", rebuilt, skipped)
+	fmt.Println("not rebuilt: pending actions (TTL'd by design); schedule deletes (re-apply manually if needed)")
+	fmt.Println("next: fbmcpctl verify", cfgPath, "&& fbmcpctl doctor", cfgPath)
+	return 0
 }
 
 // cmdVerify runs the standalone audit-chain verification (runbook §7.2):

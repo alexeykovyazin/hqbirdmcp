@@ -3,11 +3,12 @@
     One-command fbmcp rebuild + in-place update + client configuration (local deployment).
 
 .DESCRIPTION
-    Implements improvement_plan.md task H.5. Replaces the manual procedure in
-    docs/claude-desktop.md: build the three binaries into dist\ with the release
-    flags, stop/backup/replace in place, ensure the state directory exists, and
-    idempotently merge the fbmcp server entry into MCP client configs (ZCode
-    workspace config by default; Claude Desktop / Claude Code optionally).
+    Implements improvement_plan.md task H.5 / phase8_plan tooling. Replaces the
+    manual procedure in docs/claude-desktop.md: build the binaries into dist\
+    with the release flags, stop/backup/replace in place, ensure the state
+    directory exists, and idempotently merge the fbmcp server entry into MCP
+    client configs (ZCode workspace config by default; Claude Desktop /
+    Claude Code optionally).
 
     Secrets: the dev password is written ONLY into client config env blocks
     (matching docs/claude-desktop.md for the spike setup). A persistent
@@ -57,11 +58,12 @@ $RepoDir   = Split-Path -Parent $ModuleDir      # repo root (AIDBA\)
 if (-not $ConfigPath) { $ConfigPath = Join-Path $ModuleDir 'fbmcp.dev.yaml' }
 $ConfigPath = [System.IO.Path]::GetFullPath($ConfigPath)
 $DistDir = Join-Path $ModuleDir 'dist'
-$ExeNames = @('fbmcp', 'fbmcpctl', 'fbmcp-tray')
+$ExeNames = @('fbmcp', 'fbmcpctl', 'fbmcp-tray', 'fbmcpsoak')
 $ExePaths = @{
-    'fbmcp'     = './cmd/fbmcp'
-    'fbmcpctl'  = './cmd/fbmcpctl'
-    'fbmcp-tray'= './cmd/fbmcp-tray'
+    'fbmcp'      = './cmd/fbmcp'
+    'fbmcpctl'   = './cmd/fbmcpctl'
+    'fbmcp-tray' = './cmd/fbmcp-tray'
+    'fbmcpsoak'  = './cmd/fbmcpsoak'
 }
 
 function Step([string]$msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
@@ -81,7 +83,7 @@ Write-Host "    version stamp: $stamp"
 # --- Build -------------------------------------------------------------------
 $staging = Join-Path $DistDir '.staging'
 if (-not $SkipBuild) {
-    Step "Building into $staging (all three must succeed before dist\ is touched)"
+    Step "Building into $staging (all binaries must succeed before dist\ is touched)"
     if ($PSCmdlet.ShouldProcess($staging, 'build staged binaries')) {
         if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
         New-Item -ItemType Directory -Force -Path $staging | Out-Null

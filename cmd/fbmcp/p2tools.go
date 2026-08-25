@@ -344,6 +344,12 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 		if err != nil {
 			return text("error: " + err.Error()), nil, nil
 		}
+		if strings.TrimSpace(out) == "" {
+			// phase8_plan D2.1: an empty body means the installed fblwmon
+			// plugin does not serve this level (observed live for 2-4) —
+			// degrade loudly instead of returning an empty success.
+			return text(fmt.Sprintf("error: fbsvcmgr returned an empty body for lwm_query level %d - the installed fblwmon plugin likely does not support it (level 1 works; upstream follow-up in docs/decisions/phase5-gap-notes.md)", level)), nil, nil
+		}
 		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_lwmonitoring", Tier: 0, Decision: "allow"})
 		return text(out), nil, nil
 	})

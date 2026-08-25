@@ -169,8 +169,13 @@ func registerScheduleCreate(server *mcp.Server, gt *gatedTools) {
 		if err := gt.st.PutSchedule(sc); err != nil {
 			return "", err
 		}
+		// Detail carries the full grant so fbmcpctl repair --from-audit can
+		// rebuild enriched-era grants from the chain alone (phase8_plan D1.2;
+		// entries before this change are not reconstructable).
 		gt.aud.Log(audit.Entry{Identity: conf, Database: dbID, Tool: "fb_schedule_create", Tier: tier, Decision: "approved", Channel: ch,
-			Detail: map[string]interface{}{"schedule_id": id, "target": target, "creating_request": reqID}})
+			Detail: map[string]interface{}{"schedule_id": id, "target": target, "creating_request": reqID,
+				"cron": cron, "timezone": tz, "kind": kind, "missed_run": missed,
+				"window_required": win, "args": argsJSON, "arg_hash": sc.ArgHash}})
 		return fmt.Sprintf("schedule %s stored (target=%s cron=%q tz=%s grant=%s/%s)", id, target, cron, tz, conf, ch), nil
 	}
 }
