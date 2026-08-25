@@ -850,3 +850,53 @@ func TestRestoreTestNoMatviewsLive(t *testing.T) {
 	waitJob(t, c, confirmTool(t, c, "fb_backup_start", map[string]any{"db": "spike5"}), 180*time.Second)
 	waitJob(t, c, confirmTool(t, c, "fb_restore_test", map[string]any{"db": "spike5", "args": map[string]any{"no_matviews": true}}), 180*time.Second)
 }
+
+// TestSurfacesAndWaitLive verifies D3.2/D3.3 live: prompts/list and
+// resources/list are served, a resource reads, fb_job_status returns
+// structuredContent, and fb_confirm with wait returns the terminal state.
+func TestSurfacesAndWaitLive(t *testing.T) {
+	requireHarness(t)
+	bin := buildServer(t)
+	stateDir := t.TempDir()
+	cfg := writeConfig(t, stateDir)
+
+	cmd, keep := startKernel(t, bin, cfg, "", "")
+	defer func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+		keep.Close()
+	}()
+	c := dialMCP(t, stateDir)
+
+	// prompts/list exposes the playbooks (prompts/ is the source of truth)
+	res := c.roundTrip(t, "prompts/list", map[string]any{})
+	names, _ := res["prompts"].([]any)
+	if len(names) < 5 {
+		t.Fatalf("expected the six playbooks in prompts/list, got %v", names)
+	}
+
+	// resources/list + one read
+	res = c.roundTrip(t, "resources/list", map[string]any{})
+	uris, _ := res["resources"].([]any)
+	if len(uris) < 4 {
+		t.Fatalf("expected four kernel resources, got %v", uris)
+	}
+	read := c.roundTrip(t, "resources/read", map[string]any{"uri": "fbmcp://policy"})
+	if s := fmt.Sprint(read); !strings.Contains(s, "fb_ping") {
+		t.Fatalf("policy resource unreadable: %v", read)
+	}
+
+	// structured job status + wait mode round-trip
+	out := c.callTool(t, "fb_demo_write", map[string]any{"db": "spike5"})
+	rid := mustFind(t, out, `Request ID: ([0-9a-f]+)`)
+	tok := mustFind(t, out, `token \(Tier 1 only\): ([0-9a-f]+)`)
+	cout := c.callTool(t, "fb_confirm", map[string]any{"request_id": rid, "token": tok, "wait": true})
+	if !strings.Contains(cout, "succeeded") {
+		t.Fatalf("wait mode did not reach terminal success: %q", cout)
+	}
+	jobID := mustFind(t, cout, `([a-z0-9]+): succeeded`)
+	st := c.roundTrip(t, "tools/call", map[string]any{"name": "fb_job_status", "arguments": map[string]any{"job_id": jobID}})
+	if _, ok := st["structuredContent"].(map[string]any); !ok {
+		t.Fatalf("fb_job_status has no structuredContent: %v", st)
+	}
+}

@@ -54,12 +54,12 @@ func registerFBWrite(server *mcp.Server, gt *gatedTools) {
 		// identity mismatch made fb_confirm reject their own confirmations.
 		id := identity.Caller(ctx)
 		if _, err := gt.cfg.DB(a.Db); err != nil {
-			return text("DENIED: " + err.Error()), nil, nil
+			return errText("DENIED: " + err.Error())
 		}
 		prep, err := execpkg.Prepare(a.SQL)
 		if err != nil {
 			gt.aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_write", Tier: -1, Decision: "denied", Detail: map[string]interface{}{"reason": err.Error()}})
-			return text("DENIED: " + err.Error()), nil, nil
+			return errText("DENIED: " + err.Error())
 		}
 		impact := "fb_write on " + a.Db + "\n" + gt.execSvc.Impact(ctx, a.Db, prep)
 		if strings.EqualFold(a.Mode, "preview") {
@@ -76,12 +76,12 @@ func registerFBWrite(server *mcp.Server, gt *gatedTools) {
 		if d.Outcome == "deny" || len(d.FailedPreconditions) > 0 {
 			why := d.Reason
 			gt.aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_write", Tier: prep.MaxTier, Decision: "denied", Detail: map[string]interface{}{"reason": why, "templates": classify.Template(a.SQL)}})
-			return text("DENIED: " + why), nil, nil
+			return errText("DENIED: " + why)
 		}
 		argHash := hashOf(a.Db + a.SQL)
 		p, err := gt.g.Request(id, a.Db, meta, impact, argHash, nil)
 		if err != nil {
-			return text("gate error: " + err.Error()), nil, nil
+			return errText("gate error: " + err.Error())
 		}
 		gt.mu.Lock()
 		gt.args[p.ID] = map[string]any{"sql": a.SQL}
@@ -408,7 +408,7 @@ func registerEffectiveAccess(server *mcp.Server, gt *gatedTools) {
 		}
 		gs, err := loadGrants(ctx, gt, a.Db, a.User)
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		return text(privs.Format(gs)), nil, nil
 	})
@@ -628,11 +628,11 @@ func registerConfigTools(server *mcp.Server, gt *gatedTools) {
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_config_get", Description: "Tier 0: read a firebird.conf parameter (or all registry keys) for an instance"}, func(ctx context.Context, req *mcp.CallToolRequest, a instArg) (*mcp.CallToolResult, any, error) {
 		inst, err := gt.cfg.Instance(a.Instance)
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		f, err := configedit.ParseFile(configedit.ConfPath(inst.BinDir))
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		if a.Param != "" {
 			v, ok := f.Get(a.Param)
@@ -700,11 +700,11 @@ func registerConfigTools(server *mcp.Server, gt *gatedTools) {
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_config_diff", Description: "Tier 0: diff firebird.conf vs registry defaults; flag restart-required"}, func(ctx context.Context, req *mcp.CallToolRequest, a instArg) (*mcp.CallToolResult, any, error) {
 		inst, err := gt.cfg.Instance(a.Instance)
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		f, err := configedit.ParseFile(configedit.ConfPath(inst.BinDir))
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		var b strings.Builder
 		for name, p := range configedit.Registry {

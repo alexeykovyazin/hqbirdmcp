@@ -396,7 +396,7 @@ func registerP3Tools(server *mcp.Server, gt *gatedTools) {
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_service_status", Description: "Tier 0: Firebird service status (read-only)"}, func(ctx context.Context, req *mcp.CallToolRequest, a svcArg) (*mcp.CallToolResult, any, error) {
 		in, err := gt.cfg.Instance(a.Instance)
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		svc := in.Service
 		if svc == "" {
@@ -692,7 +692,7 @@ func registerTraceTools(server *mcp.Server, gt *gatedTools) {
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_trace_list", Description: "Tier 0: list engine trace sessions and this server's tracked traces"}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
 		c, _, err := gt.client(a.Db)
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		engine, err := c.ListTrace()
 		if err != nil {

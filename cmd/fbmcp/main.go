@@ -22,6 +22,7 @@ import (
 	"github.com/aleks/fbmcp/internal/backupsvc"
 	"github.com/aleks/fbmcp/internal/config"
 	"github.com/aleks/fbmcp/internal/dbpool"
+	"github.com/aleks/fbmcp/internal/errdoc"
 	execpkg "github.com/aleks/fbmcp/internal/executor"
 	"github.com/aleks/fbmcp/internal/facts"
 	"github.com/aleks/fbmcp/internal/gate"
@@ -188,7 +189,7 @@ func runForegroundCtx(ctx context.Context) {
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_db_health", Description: "Tier 0: probe a registered database"}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
 		if err := pools.Health(ctx, a.Db); err != nil {
 			aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_db_health", Tier: 0, Decision: "error", Detail: map[string]interface{}{"error": err.Error()}})
-			return text("offline: " + err.Error()), nil, nil
+			return errText("offline: " + err.Error())
 		}
 		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_db_health", Tier: 0, Decision: "allow"})
 		return text("online"), nil, nil
@@ -263,14 +264,14 @@ func runForegroundCtx(ctx context.Context) {
 		d := eng.Evaluate(id, a.Db, "fb_demo_write")
 		if d.Outcome == "deny" {
 			aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_demo_write", Tier: d.Meta.Tier, Decision: "denied", Detail: map[string]interface{}{"reason": d.Reason}})
-			return text("DENIED: " + d.Reason), nil, nil
+			return errText("DENIED: " + d.Reason)
 		}
 		argHash := hashOf(a.Db)
 		p, err := g.Request(id, a.Db, d.Meta,
 			fmt.Sprintf("Demo write on database %s (no-op function; demonstrates the gate).", a.Db),
 			argHash, d.FailedPreconditions)
 		if err != nil {
-			return text("gate error: " + err.Error()), nil, nil
+			return errText("gate error: " + err.Error())
 		}
 		tok := gate.IssueToken(p.ID, argHash)
 		var b strings.Builder
@@ -282,12 +283,13 @@ func runForegroundCtx(ctx context.Context) {
 	type confirmArg struct {
 		RequestID string `json:"request_id"`
 		Token     string `json:"token,omitempty" jsonschema:"in-band token from the pending action (Tier 1 only)"`
+		Wait      bool   `json:"wait,omitempty" jsonschema:"block until the submitted job reaches a terminal state; emits progress notifications when the client supplied a progress token (phase8_plan D3.2)"`
 	}
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_confirm", Description: "confirm a pending action (in-band: Tier 1 only; Tier >= 2 requires the out-of-band surface)"}, func(ctx context.Context, req *mcp.CallToolRequest, a confirmArg) (*mcp.CallToolResult, any, error) {
 		caller := identity.Caller(ctx)
 		p, err := g.Confirm(a.RequestID, caller.Name, gate.ChannelInBand, a.Token)
 		if err != nil {
-			return text("confirmation rejected: " + err.Error()), nil, nil
+			return errText("confirmation rejected: " + err.Error())
 		}
 		if p.Tool == "fb_demo_write" { // legacy demo path
 			jobID, err := runner.Submit("demo_write", p.Database, p.Identity, p.ID, func(ctx context.Context, prog func(float64, string)) (string, error) {
@@ -295,13 +297,19 @@ func runForegroundCtx(ctx context.Context) {
 				return "demo mutation 'executed' (no-op)", nil
 			})
 			if err != nil {
-				return text("submit failed: " + err.Error()), nil, nil
+				return errText("submit failed: " + err.Error())
+			}
+			if a.Wait {
+				return waitJobResult(ctx, req, runner, jobID)
 			}
 			return text(fmt.Sprintf("confirmed; job %s submitted — check fb_job_status", jobID)), nil, nil
 		}
 		jobID, err := gt.dispatch(p)
 		if err != nil {
-			return text("dispatch failed: " + err.Error()), nil, nil
+			return errText("dispatch failed: " + err.Error())
+		}
+		if a.Wait {
+			return waitJobResult(ctx, req, runner, jobID)
 		}
 		return text(fmt.Sprintf("confirmed; job %s submitted — check fb_job_status", jobID)), nil, nil
 	})
@@ -319,19 +327,19 @@ func runForegroundCtx(ctx context.Context) {
 	type jobArg struct {
 		JobID string `json:"job_id"`
 	}
-	mcp.AddTool(server, &mcp.Tool{Name: "fb_job_status", Description: "Tier 0: job status"}, func(ctx context.Context, req *mcp.CallToolRequest, a jobArg) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_job_status", Description: "Tier 0: job status (structured: id/type/db/state/progress/message/detail)"}, func(ctx context.Context, req *mcp.CallToolRequest, a jobArg) (*mcp.CallToolResult, any, error) {
 		j, ok := runner.Status(a.JobID)
 		if !ok {
-			return text("unknown job"), nil, nil
+			return errText("unknown job")
 		}
-		return text(fmt.Sprintf("%s: %s (%.0f%%) %s", j.ID, j.State, j.Progress*100, j.Message)), nil, nil
+		return jobPayload(j), jobStruct(j), nil
 	})
 
 	// fb_info — P2.1: capability probe; the facts also feed version gating.
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_info", Description: "Tier 0: engine version, ODS, dialect, page size, RO/ForceWrite state"}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
 		snap, err := engFacts.Snapshot(ctx, a.Db)
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		var b strings.Builder
 		for _, k := range []string{"engine_version_full", "engine_version", "ods", "sql_dialect", "page_size", "read_only", "forced_writes", "sweep_interval"} {
@@ -347,7 +355,7 @@ func runForegroundCtx(ctx context.Context) {
 		info, err := facts.ConnectedDatabases(handle.Current(), a.Instance)
 		if err != nil {
 			aud.Log(audit.Entry{Identity: "local", Database: a.Instance, Tool: "fb_connected_dbs", Tier: 0, Decision: "error", Detail: map[string]interface{}{"error": err.Error()}})
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		aud.Log(audit.Entry{Identity: "local", Database: a.Instance, Tool: "fb_connected_dbs", Tier: 0, Decision: "allow"})
 		return text(formatConnectedDBs(info)), nil, nil
@@ -363,13 +371,13 @@ func runForegroundCtx(ctx context.Context) {
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_sessions", Description: "Tier 0: list attachments (user, remote address, state, timestamp) with running statements"}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
 		tx, err := pools.ReadOnly(ctx, a.Db) // engine-enforced read-only
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		defer tx.Rollback()
 		rows, err := tx.QueryContext(ctx, `SELECT MON$USER, COALESCE(MON$REMOTE_ADDRESS,''), COALESCE(MON$STATE,''), MON$TIMESTAMP
 			FROM MON$ATTACHMENTS ORDER BY MON$TIMESTAMP`)
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		defer rows.Close()
 		var b strings.Builder
@@ -378,7 +386,7 @@ func runForegroundCtx(ctx context.Context) {
 			var user, addr, st string
 			var ts time.Time
 			if err := rows.Scan(&user, &addr, &st, &ts); err != nil {
-				return text("error: " + err.Error()), nil, nil
+				return errText("error: " + err.Error())
 			}
 			fmt.Fprintf(&b, "- %s from %s state=%s since %s\n", user, addr, st, ts.UTC().Format(time.RFC3339))
 			n++
@@ -395,13 +403,13 @@ func runForegroundCtx(ctx context.Context) {
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_transactions", Description: "Tier 0: transaction health — OIT/OAT/OST/Next and gap sizes"}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
 		tx, err := pools.ReadOnly(ctx, a.Db)
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		defer tx.Rollback()
 		var oit, oat, ost, next int64
 		if err := tx.QueryRowContext(ctx, `SELECT MON$OLDEST_TRANSACTION, MON$OLDEST_ACTIVE, MON$OLDEST_SNAPSHOT, MON$NEXT_TRANSACTION FROM MON$DATABASE`).
 			Scan(&oit, &oat, &ost, &next); err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		out := fmt.Sprintf("oldest_transaction: %d\noldest_active: %d\noldest_snapshot: %d\nnext: %d\nnext-oit gap: %d\n", oit, oat, ost, next, next-oit)
 		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_transactions", Tier: 0, Decision: "allow"})
@@ -409,6 +417,7 @@ func runForegroundCtx(ctx context.Context) {
 	})
 
 	registerExtra(server, handle, pools, engFacts, aud, st)
+	registerSurfaces(server, handle, st)
 	if err := serve(ctx, server, handle, gt); err != nil {
 		log.Fatalf("fbmcp: server: %v", err)
 	}
@@ -479,6 +488,64 @@ func hashOf(s string) string {
 
 func text(s string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: s}}}
+}
+
+// errText is the D.2 error envelope (phase8_plan D3.1): a failing tool
+// result that sets IsError and carries {code, message, hint?, remediation?}
+// as structuredContent (the handler's second return) so clients can react
+// programmatically. The text is unchanged for backward compatibility.
+func errText(msg string) (*mcp.CallToolResult, map[string]any, error) {
+	env := map[string]any{"code": "fbmcp", "message": msg}
+	if d, ok := errdoc.Lookup(msg); ok {
+		env["code"] = d.Code
+		env["hint"] = d.Hint
+		env["remediation"] = d.Remediation
+	}
+	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: msg}}}, env, nil
+}
+
+// jobStruct is the structured payload for job results (D3.2).
+func jobStruct(j state.Job) map[string]any {
+	return map[string]any{"id": j.ID, "type": j.Type, "db": j.Database, "state": j.State,
+		"progress": j.Progress, "message": j.Message, "detail": j.Detail}
+}
+
+func jobPayload(j state.Job) *mcp.CallToolResult {
+	return text(fmt.Sprintf("%s: %s (%.0f%%) %s", j.ID, j.State, j.Progress*100, j.Message))
+}
+
+// waitJobResult blocks until the job reaches a terminal state (D3.2 wait
+// mode). Progress notifications go to clients that supplied a progress
+// token; cancellation or the 30-minute bound returns the last known state.
+func waitJobResult(ctx context.Context, req *mcp.CallToolRequest, runner *jobs.Runner, jobID string) (*mcp.CallToolResult, map[string]any, error) {
+	token := req.Params.GetProgressToken()
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	timeout := time.After(30 * time.Minute)
+	for {
+		j, ok := runner.Status(jobID)
+		if !ok {
+			return errText("unknown job")
+		}
+		switch j.State {
+		case "succeeded", "failed", "cancelled", "interrupted":
+			if j.State != "succeeded" {
+				return errText(fmt.Sprintf("%s: %s (%.0f%%) %s", j.ID, j.State, j.Progress*100, j.Message))
+			}
+			return jobPayload(j), jobStruct(j), nil
+		}
+		if token != nil {
+			_ = req.Session.NotifyProgress(ctx, &mcp.ProgressNotificationParams{
+				ProgressToken: token, Progress: j.Progress * 100, Total: 100, Message: j.Message})
+		}
+		select {
+		case <-ctx.Done():
+			return jobPayload(j), jobStruct(j), nil
+		case <-timeout:
+			return errText("wait timeout (30 minutes) — poll fb_job_status")
+		case <-tick.C:
+		}
+	}
 }
 
 func formatConnectedDBs(info *facts.ConnectedDBs) string {

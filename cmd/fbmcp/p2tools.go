@@ -35,23 +35,23 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 	}
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_analyze_query", Description: "Tier 0: retrieve the access plan for a statement (read-only analysis; heavy-read guard: 60s timeout, output cap)"}, func(ctx context.Context, req *mcp.CallToolRequest, a planArg) (*mcp.CallToolResult, any, error) {
 		if strings.Count(a.Query, ";") > 1 || strings.Contains(strings.ToUpper(a.Query), " INSERT ") {
-			return text("error: single statement only"), nil, nil
+			return errText("error: single statement only")
 		}
 		dbCfg, err := cfg.DB(a.Db)
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		inst, err := cfg.Instance(dbCfg.Instance)
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		pass, err := config.SecretFromEnv(dbCfg.AdminSecretEnv)
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		plan, err := queryplan.Explain(ctx, inst, dbCfg, pass, a.Query, a.Explain)
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_analyze_query", Tier: 0, Decision: "allow"})
 		return text("PLAN: " + plan), nil, nil
@@ -61,7 +61,7 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_index_stats", Description: "Tier 0: index statistics (selectivity, uniqueness) with duplicate/unused advisory"}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
 		tx, err := pools.ReadOnly(ctx, a.Db)
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		defer tx.Rollback()
 		rows, err := tx.QueryContext(ctx, `
@@ -70,7 +70,7 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 			WHERE i.RDB$SYSTEM_FLAG = 0
 			ORDER BY 1, 2`)
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		defer rows.Close()
 		var b strings.Builder
@@ -81,7 +81,7 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 			var itype *int
 			var sel float64
 			if err := rows.Scan(&rel, &idx, &uniq, &itype, &sel); err != nil {
-				return text("error: " + err.Error()), nil, nil
+				return errText("error: " + err.Error())
 			}
 			fmt.Fprintf(&b, "- %s.%s unique=%v descending=%v selectivity=%.6f\n", rel, idx, uniq, itype != nil && *itype == 1, sel)
 			n++
@@ -145,7 +145,7 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_schema_list", Description: "Tier 0: list user tables/views/procedures/triggers/functions/packages"}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
 		tx, err := pools.ReadOnly(ctx, a.Db)
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		defer tx.Rollback()
 		var b strings.Builder
@@ -197,7 +197,7 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 		if err := listNames(`
 			SELECT RDB$RELATION_NAME, RDB$VIEW_SOURCE IS NOT NULL AS IS_VIEW
 			FROM RDB$RELATIONS WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 ORDER BY 1`, "", true); err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		_ = listNames(`SELECT RDB$PROCEDURE_NAME FROM RDB$PROCEDURES WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 ORDER BY 1`, "PROCEDURE", false)
 		_ = listNames(`SELECT RDB$TRIGGER_NAME FROM RDB$TRIGGERS WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 ORDER BY 1`, "TRIGGER", false)
@@ -214,7 +214,7 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_describe", Description: "Tier 0: columns, types, nullability of a relation"}, func(ctx context.Context, req *mcp.CallToolRequest, a descArg) (*mcp.CallToolResult, any, error) {
 		tx, err := pools.ReadOnly(ctx, a.Db)
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		defer tx.Rollback()
 		rows, err := tx.QueryContext(ctx, `
@@ -222,7 +222,7 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 			FROM RDB$RELATION_FIELDS rf JOIN RDB$FIELDS f ON f.RDB$FIELD_NAME = rf.RDB$FIELD_SOURCE
 			WHERE rf.RDB$RELATION_NAME = ? ORDER BY rf.RDB$FIELD_POSITION`, strings.ToUpper(a.Table))
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		defer rows.Close()
 		var b strings.Builder
@@ -283,7 +283,7 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 		}
 		first, err := snap()
 		if err != nil {
-			return text("error: " + firstErr(err)), nil, nil
+			return errText("error: " + firstErr(err))
 		}
 		select {
 		case <-ctx.Done():
@@ -292,7 +292,7 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 		}
 		second, err := snap()
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		var b strings.Builder
 		fmt.Fprintf(&b, "window: %ds\n", w)
@@ -318,31 +318,31 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 		}
 		inst, err := cfg.Instance(a.Instance)
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		var dbPath, user, pass string
 		if a.Db != "" {
 			dbCfg, err := cfg.DB(a.Db)
 			if err != nil {
-				return text("error: " + err.Error()), nil, nil
+				return errText("error: " + err.Error())
 			}
 			dbPath, user = dbCfg.Path, dbCfg.ROUser
 			pass, err = config.SecretFromEnv(dbCfg.ROSecretEnv)
 			if err != nil {
-				return text("error: " + err.Error()), nil, nil
+				return errText("error: " + err.Error())
 			}
 		} else {
 			user, pass = inst.ServiceUser, ""
 			if inst.ServiceSecretEnv != "" {
 				pass, err = config.SecretFromEnv(inst.ServiceSecretEnv)
 				if err != nil {
-					return text("error: " + err.Error()), nil, nil
+					return errText("error: " + err.Error())
 				}
 			}
 		}
 		out, err := lwmonitoring.Query(ctx, inst, user, pass, level, dbPath)
 		if err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		if strings.TrimSpace(out) == "" {
 			// phase8_plan D2.1: an empty body means the installed fblwmon

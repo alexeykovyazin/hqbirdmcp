@@ -63,7 +63,7 @@ func registerScheduleList(server *mcp.Server, gt *gatedTools) {
 	}
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_schedule_list", Description: "Tier 0: list durable schedule grants for a database"}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
 		if _, err := gt.cfg.DB(a.Db); err != nil {
-			return text("error: " + err.Error()), nil, nil
+			return errText("error: " + err.Error())
 		}
 		var b strings.Builder
 		n := 0
@@ -98,19 +98,19 @@ func registerScheduleCreate(server *mcp.Server, gt *gatedTools) {
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_schedule_create", Description: "Gated: persist a durable schedule grant (tier = max of target)"}, func(ctx context.Context, req *mcp.CallToolRequest, a createArg) (*mcp.CallToolResult, any, error) {
 		id := identity.Caller(ctx)
 		if _, err := gt.cfg.DB(a.Db); err != nil {
-			return text("DENIED: " + err.Error()), nil, nil
+			return errText("DENIED: " + err.Error())
 		}
 		kind, tier, err := schedule.ValidateCreate(a.Target, a.Cron, a.Timezone, func(name string) (string, int, error) {
 			return scheduleTarget(name)
 		})
 		if err != nil {
 			gt.aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_schedule_create", Tier: -1, Decision: "denied", Detail: map[string]interface{}{"reason": err.Error()}})
-			return text("DENIED: " + err.Error()), nil, nil
+			return errText("DENIED: " + err.Error())
 		}
 		meta := policy.ToolMeta{Name: "fb_schedule_create", Tier: tier, Scope: "database"}
 		d := gt.eng.EvaluateMeta(id, a.Db, meta)
 		if d.Outcome == "deny" {
-			return text("DENIED: " + d.Reason), nil, nil
+			return errText("DENIED: " + d.Reason)
 		}
 		impact := fmt.Sprintf("Create schedule grant on %s: target=%s cron=%q tz=%s (durable; fire path will NOT re-confirm). Informational preview — not a safety guarantee.",
 			a.Db, a.Target, a.Cron, a.Timezone)
@@ -127,7 +127,7 @@ func registerScheduleCreate(server *mcp.Server, gt *gatedTools) {
 		argHash := hashOf(a.Db + string(raw))
 		p, err := gt.g.Request(id, a.Db, meta, impact, argHash, nil)
 		if err != nil {
-			return text("gate error: " + err.Error()), nil, nil
+			return errText("gate error: " + err.Error())
 		}
 		gt.mu.Lock()
 		gt.args[p.ID] = args
