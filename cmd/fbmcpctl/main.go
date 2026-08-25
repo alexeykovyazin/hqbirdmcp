@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/aleks/fbmcp/internal/audit"
 	"github.com/aleks/fbmcp/internal/config"
 	"github.com/aleks/fbmcp/internal/gate"
 	"github.com/aleks/fbmcp/internal/notify"
@@ -15,7 +17,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: fbmcpctl <approve|status|setup|doctor> ...")
+		fmt.Fprintln(os.Stderr, "usage: fbmcpctl <approve|status|setup|doctor|verify> ...")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -27,10 +29,42 @@ func main() {
 		os.Exit(cmdSetup(os.Args[2:]))
 	case "doctor":
 		os.Exit(cmdDoctor(os.Args[2:]))
+	case "verify":
+		os.Exit(cmdVerify(os.Args[2:]))
 	default:
 		fmt.Fprintln(os.Stderr, "unknown command:", os.Args[1])
 		os.Exit(2)
 	}
+}
+
+// cmdVerify runs the standalone audit-chain verification (runbook §7.2):
+// rehashes every entry and checks the chain + head sidecar.
+func cmdVerify(args []string) int {
+	cfgPath := "fbmcp.yaml"
+	if len(args) > 0 {
+		cfgPath = args[0]
+	}
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	// Verify returns the failing line (0 on success); count entries for humans.
+	path := filepath.Join(cfg.State.Dir, "audit.jsonl")
+	if _, err := audit.Verify(path); err != nil {
+		fmt.Fprintln(os.Stderr, "audit chain BROKEN:", err)
+		return 1
+	}
+	n := 0
+	if b, err := os.ReadFile(path); err == nil {
+		for _, l := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+			if l != "" {
+				n++
+			}
+		}
+	}
+	fmt.Printf("audit chain OK: %d entries (%s)\n", n, path)
+	return 0
 }
 
 func cmdApprove(args []string) int {
