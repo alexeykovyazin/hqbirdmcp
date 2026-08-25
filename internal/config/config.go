@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"github.com/aleks/fbmcp/internal/secrets"
 	"os"
 	"regexp"
 	"strings"
@@ -259,13 +260,8 @@ func (c *Config) dbIDs() []string {
 
 // SecretFromEnv resolves a secret exclusively from the environment (ADR-009:
 // never in config files, never in argv).
+// SecretFromEnv resolves a secret: environment first (ADR-009 compat),
+// OS keyring entry "fbmcp/<envName>" as fallback (D5, phase8_plan D4.3).
 func SecretFromEnv(envName string) (string, error) {
-	if envName == "" {
-		return "", fmt.Errorf("empty secret env name")
-	}
-	v := os.Getenv(envName)
-	if v == "" {
-		return "", fmt.Errorf("secret env %s is not set", envName)
-	}
-	return v, nil
+	return secrets.Get(envName)
 }

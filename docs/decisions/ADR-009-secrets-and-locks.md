@@ -21,3 +21,7 @@ all invocations at one state dir.
 
 ## Consequences
 Threat T-06/T-15 mitigations testable in P1.4; P5.6 owns keyring bootstrap.
+
+## D5 closure addendum (2026-08-25, phase8_plan D4.3)
+
+Env-only is no longer the residual: `internal/secrets` provides an OS-keyring fallback keyed by the env-var name (`fbmcp/<ENV_NAME>`; Windows Credential Manager / Linux Secret Service via zalando/go-keyring). Env always wins, so the ADR-009 compat contract holds; `fbmcpctl secret set` reads the value from stdin (never argv, C10).

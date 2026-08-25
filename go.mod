@@ -7,12 +7,14 @@ require (
 	github.com/getlantern/systray v1.2.2
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/nakagami/firebirdsql v0.9.19
+	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/sys v0.47.0
 	golang.org/x/time v0.15.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
+	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/getlantern/context v0.0.0-20190109183933-c447772a6520 // indirect
 	github.com/getlantern/errors v0.0.0-20190325191628-abdb3e3e36f7 // indirect
 	github.com/getlantern/golog v0.0.0-20190830074920-4ef2e798c2d7 // indirect
@@ -20,6 +22,7 @@ require (
 	github.com/getlantern/hidden v0.0.0-20190325191715-f02dbb02be55 // indirect
 	github.com/getlantern/ops v0.0.0-20190325191751-d70cb0d6f85f // indirect
 	github.com/go-stack/stack v1.8.0 // indirect
+	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/kardianos/osext v0.0.0-20190222173326-2bc1f35cddc0 // indirect
 	github.com/nakagami/chacha20 v0.1.0 // indirect

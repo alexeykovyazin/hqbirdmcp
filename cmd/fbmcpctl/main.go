@@ -4,6 +4,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,12 +15,13 @@ import (
 	"github.com/aleks/fbmcp/internal/gate"
 	"github.com/aleks/fbmcp/internal/notify"
 	"github.com/aleks/fbmcp/internal/posture"
+	"github.com/aleks/fbmcp/internal/secrets"
 	"github.com/aleks/fbmcp/internal/state"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: fbmcpctl <approve|status|setup|doctor|verify|repair> ...")
+		fmt.Fprintln(os.Stderr, "usage: fbmcpctl <approve|status|setup|doctor|verify|repair|secret> ...")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -35,6 +37,8 @@ func main() {
 		os.Exit(cmdVerify(os.Args[2:]))
 	case "repair":
 		os.Exit(cmdRepair(os.Args[2:]))
+	case "secret":
+		os.Exit(cmdSecret(os.Args[2:]))
 	default:
 		fmt.Fprintln(os.Stderr, "unknown command:", os.Args[1])
 		os.Exit(2)
@@ -139,6 +143,56 @@ func cmdRepair(args []string) int {
 	fmt.Println("not rebuilt: pending actions (TTL'd by design); schedule deletes (re-apply manually if needed)")
 	fmt.Println("next: fbmcpctl verify", cfgPath, "&& fbmcpctl doctor", cfgPath)
 	return 0
+}
+
+// cmdSecret manages keyring fallback entries (D4.3 / E.4): the value is
+// read from stdin, never argv (C10). set <ENV_NAME>, get <ENV_NAME>,
+// drop <ENV_NAME>. Environment variables still win at lookup time.
+func cmdSecret(args []string) int {
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "usage: fbmcpctl secret set|get|drop <ENV_NAME>  (set reads the value from stdin)")
+		return 2
+	}
+	op, name := args[0], args[1]
+	switch op {
+	case "set":
+		val, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		v := strings.TrimSpace(string(val))
+		if v == "" {
+			fmt.Fprintln(os.Stderr, "empty value on stdin")
+			return 1
+		}
+		if err := secrets.Set(name, v); err != nil {
+			fmt.Fprintln(os.Stderr, "keyring:", err)
+			return 1
+		}
+		fmt.Printf("stored fbmcp/%s in the OS keyring (env %s still wins if set)\n", name, name)
+		return 0
+	case "get":
+		if os.Getenv(name) != "" {
+			fmt.Printf("env %s is set - the keyring entry is shadowed\n", name)
+			return 0
+		}
+		if _, err := secrets.Get(name); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		fmt.Printf("keyring entry fbmcp/%s present\n", name)
+		return 0
+	case "drop":
+		if err := secrets.Drop(name); err != nil {
+			fmt.Fprintln(os.Stderr, "keyring:", err)
+			return 1
+		}
+		fmt.Printf("dropped fbmcp/%s\n", name)
+		return 0
+	}
+	fmt.Fprintln(os.Stderr, "unknown secret op:", op)
+	return 2
 }
 
 // cmdVerify runs the standalone audit-chain verification (runbook §7.2):

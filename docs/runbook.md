@@ -31,7 +31,7 @@ only as trustworthy as the channel it arrives on (principle §2.7).
 2. **Config**: one YAML (`fbmcp.yaml`; example:
    [`packaging/fbmcp.yaml.example`](../packaging/fbmcp.yaml.example)).
    Databases are referenced by registry id only — never paths in client
-   conversations. Secrets come from environment variables, never the YAML.
+   conversations. Secrets come from environment variables (never the YAML); an unset variable falls back to the OS keyring entry `fbmcp/<ENV_NAME>` (`fbmcpctl secret set <ENV_NAME>`, value via stdin; env always wins).
 3. **State directory**: created once; holds `state.json`, `audit.jsonl`,
    `approvals\`, `instance.lock`. One state dir = one kernel (extra piped
    clients attach to it automatically).
