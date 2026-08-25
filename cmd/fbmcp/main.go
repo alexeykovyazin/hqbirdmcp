@@ -451,7 +451,7 @@ func serve(ctx context.Context, server *mcp.Server, handle *config.Handle, gt *g
 		}
 	}
 	if strings.TrimSpace(cfg.Listen) != "" {
-		if err := transport.CheckRemote(cfg.Listen, cfg.TLS.Cert, cfg.TLS.Key, len(cfg.Identities)); err != nil {
+		if err := transport.CheckRemote(cfg.Listen, cfg.TLS.Cert, cfg.TLS.Key, len(cfg.Identities), len(cfg.AllowedOrigins)); err != nil {
 			return err
 		}
 		if err := gt.httpLn.Start(cfg); err != nil {

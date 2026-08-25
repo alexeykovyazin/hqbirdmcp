@@ -48,3 +48,7 @@ handler lost its request context).
 remote API-key calls were audited as "local", bypassed their configured
 `max_tier`, and could not in-band-confirm their own requests. It now uses
 `identity.Caller(ctx)` like every other gated tool.
+
+## E.1 addendum (2026-08-25, phase8_plan D4.1)
+
+Remote mode additionally requires a non-empty `allowed_origins` (default-deny: any Origin header not allowlisted is 403; no-Origin requests still pass), and enforces per-identity `limits:` — token-bucket rate (default 30/min, burst 60) and concurrent-request session cap (default 8) — returning structured 429s. Closes the C11 residual.

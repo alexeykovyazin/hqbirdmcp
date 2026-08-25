@@ -12,24 +12,25 @@ import (
 )
 
 func TestCheckRemoteRefuse(t *testing.T) {
-	if err := CheckRemote("", "", "", 0); err != nil {
+	if err := CheckRemote("", "", "", 0, 0); err != nil {
 		t.Fatal("stdio must be allowed")
 	}
 	cases := []struct {
 		listen, cert, key string
-		n                 int
+		n, origins        int
 	}{
-		{"127.0.0.1:8443", "c", "k", 1},
-		{"localhost:8443", "c", "k", 1},
-		{"10.0.0.5:8443", "", "k", 1},
-		{"10.0.0.5:8443", "c", "k", 0},
+		{"127.0.0.1:8443", "c", "k", 1, 1},
+		{"localhost:8443", "c", "k", 1, 1},
+		{"10.0.0.5:8443", "", "k", 1, 1},
+		{"10.0.0.5:8443", "c", "k", 0, 1},
+		{"10.0.0.5:8443", "c", "k", 1, 0}, // E.1: empty Origin allowlist refused
 	}
 	for _, c := range cases {
-		if err := CheckRemote(c.listen, c.cert, c.key, c.n); err == nil {
+		if err := CheckRemote(c.listen, c.cert, c.key, c.n, c.origins); err == nil {
 			t.Errorf("expected refuse for %+v", c)
 		}
 	}
-	if err := CheckRemote("10.0.0.5:8443", "c", "k", 1); err != nil {
+	if err := CheckRemote("10.0.0.5:8443", "c", "k", 1, 1); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -44,7 +45,7 @@ func TestAuthBattery(t *testing.T) {
 	})
 	ids := []config.APIIdentity{{Name: "op", KeyEnv: "X", MaxTier: 2}}
 	secrets := map[string]string{"op": "good-key"}
-	h := Auth(ids, secrets, []string{"https://console.example"}, okH)
+	h := Auth(ids, secrets, []string{"https://console.example"}, config.Limits{MaxSessions: 64, RatePerMinute: 100000, RateBurst: 100000}, okH)
 
 	for _, entry := range MCPEntries {
 		req := httptest.NewRequest(http.MethodPost, entry, nil)
@@ -84,7 +85,7 @@ func TestAuthBattery(t *testing.T) {
 
 func TestAuthenticatorReplace(t *testing.T) {
 	okH := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })
-	a := NewAuthenticator([]config.APIIdentity{{Name: "op", KeyEnv: "X", MaxTier: 2}}, map[string]string{"op": "old-key"}, nil)
+	a := NewAuthenticator([]config.APIIdentity{{Name: "op", KeyEnv: "X", MaxTier: 2}}, map[string]string{"op": "old-key"}, nil, config.Limits{})
 	h := a.Handler(okH)
 	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	req.Header.Set("Authorization", "Bearer old-key")

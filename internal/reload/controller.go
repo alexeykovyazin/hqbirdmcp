@@ -92,7 +92,7 @@ func (c *Controller) applyLocked(reason, exceptJobID string) (Result, error) {
 	}
 
 	if strings.TrimSpace(next.Listen) != "" {
-		if err := transport.CheckRemote(next.Listen, next.TLS.Cert, next.TLS.Key, len(next.Identities)); err != nil {
+		if err := transport.CheckRemote(next.Listen, next.TLS.Cert, next.TLS.Key, len(next.Identities), len(next.AllowedOrigins)); err != nil {
 			return Result{Class: "refuse", Reason: err.Error(), Diff: diff, Hash: hash}, err
 		}
 	}

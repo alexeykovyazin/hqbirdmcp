@@ -20,17 +20,45 @@ type Config struct {
 	Listen     string        `yaml:"listen"` // empty = stdio only (P5.1)
 	TLS        TLS           `yaml:"tls"`
 	Identities []APIIdentity `yaml:"identities"`
-	// AllowedOrigins is the browser-CSRF Origin allowlist for /mcp and /sse
-	// (WS2.2, closes part of the C11 residual). Empty = any Origin accepted.
-	// Non-empty: requests carrying an Origin header not in the list get 403;
-	// requests with NO Origin header are still allowed (non-browser clients
-	// send none — the threat is a browser being used as a confused deputy).
+	// AllowedOrigins is the browser-CSRF Origin allowlist for /mcp and /sse.
+	// E.1 default-deny: requests carrying an Origin header not in the list
+	// get 403 (an empty list rejects every Origin); requests with NO Origin
+	// header are still allowed (non-browser clients send none — the threat
+	// is a browser being used as a confused deputy). Remote mode refuses to
+	// START with an empty allowlist (CheckRemote).
 	AllowedOrigins []string `yaml:"allowed_origins"`
 	// LocalMaxTier caps the stdio-local fallback identity (WS2.3). 0 in
 	// YAML means "not set" — use LocalMaxTierOrDefault (default 2).
 	LocalMaxTier int       `yaml:"local_max_tier"`
+	Limits       Limits    `yaml:"limits"`
 	Retention    Retention `yaml:"retention"`
 	SourcePath   string    `yaml:"-"`
+}
+
+// Limits bounds remote-mode resource use per identity (phase8_plan D4.1 /
+// E.1, closing the C11 residual). Zero values mean defaults.
+type Limits struct {
+	// MaxSessions caps concurrent in-flight authenticated requests per
+	// identity (streamable POSTs + held SSE streams).
+	MaxSessions int `yaml:"max_sessions"`
+	// RatePerMinute is the sustained request budget per identity.
+	RatePerMinute int `yaml:"rate_per_minute"`
+	// RateBurst is the token-bucket burst size.
+	RateBurst int `yaml:"rate_burst"`
+}
+
+// OrDefault fills the E.1 defaults: 8 sessions, 30/min sustained, burst 60.
+func (l Limits) OrDefault() Limits {
+	if l.MaxSessions <= 0 {
+		l.MaxSessions = 8
+	}
+	if l.RatePerMinute <= 0 {
+		l.RatePerMinute = 30
+	}
+	if l.RateBurst <= 0 {
+		l.RateBurst = 60
+	}
+	return l
 }
 
 // Notify is K7 delivery (ADR-024). Empty webhook = local event log only.

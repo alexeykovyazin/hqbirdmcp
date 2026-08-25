@@ -55,7 +55,7 @@ func (l *httpListener) Start(cfg *config.Config) error {
 	if strings.TrimSpace(cfg.Listen) == "" {
 		return l.Stop(context.Background())
 	}
-	if err := transport.CheckRemote(cfg.Listen, cfg.TLS.Cert, cfg.TLS.Key, len(cfg.Identities)); err != nil {
+	if err := transport.CheckRemote(cfg.Listen, cfg.TLS.Cert, cfg.TLS.Key, len(cfg.Identities), len(cfg.AllowedOrigins)); err != nil {
 		return err
 	}
 	secrets, err := secretsFrom(cfg)
@@ -76,7 +76,7 @@ func (l *httpListener) Start(cfg *config.Config) error {
 		cancel()
 		l.mu.Lock()
 	}
-	auth := transport.NewAuthenticator(cfg.Identities, secrets, cfg.AllowedOrigins)
+	auth := transport.NewAuthenticator(cfg.Identities, secrets, cfg.AllowedOrigins, cfg.Limits)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", transport.Healthz)
 	stream := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return l.mcp }, nil)

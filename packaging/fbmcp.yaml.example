@@ -10,10 +10,15 @@ state:
 #   - name: operator
 #     key_env: FBMCP_API_KEY
 #     max_tier: 2
-# allowed_origins:          # browser-CSRF Origin allowlist for /mcp + /sse.
-#   - https://ops.example   # Empty/omitted = any Origin. Requests WITHOUT an
-#                           # Origin header always pass (non-browser clients).
+# allowed_origins:          # REQUIRED in remote mode (default-deny, E.1):
+#   - https://ops.example   # any Origin header not listed gets 403; remote
+#                           # starts refuse without at least one entry. Requests
+#                           # WITHOUT an Origin header always pass (non-browser).
 # local_max_tier: 2         # ceiling of the stdio-local identity (0-2)
+# limits:                   # per-identity remote-mode bounds (E.1; 0 = default)
+#   max_sessions: 8         # concurrent in-flight authenticated requests
+#   rate_per_minute: 30     # sustained request budget (token bucket)
+#   rate_burst: 60          # burst size
 notify:
   webhook_url: ""
   webhook_secret_env: ""
