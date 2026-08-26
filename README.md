@@ -100,6 +100,7 @@ identities); duplicate database paths.
 | `fb_transactions` | `db` | OIT / OAT / OST / Next and gap sizes |
 | `fb_analyze_query` | `db`, `query`, optional `explain` | Access plan (read-only; 60s / output cap) |
 | `fb_index_stats` | `db` | Index stats + unused/duplicate advisories |
+| `fb_gstat` | `db`, optional `mode` (header\|records, default header), `tables` (records: restrict analysis), `system` | Raw `gstat` output (ADR-003 subprocess route): header page dump (`-h`, no auth, works without a running server) or record/index statistics (`-r`, authenticated), optionally limited to specific tables |
 | `fb_schema_list` | `db` | User tables / views / procedures / triggers |
 | `fb_describe` | `db`, `table` | Columns, types, nullability |
 | `fb_activity_sample` | `db`, `seconds` (1–30) | MON$ IO / record-stat deltas |
@@ -148,7 +149,7 @@ Typical path: `fb_connected_dbs` → `fb_db_register` (`mode=preview` then
 
 | Tool | Tier | Args | What it does |
 |---|---|---|---|
-| `fb_write` | 1+ (classified) | `db`, `sql`, `mode` | Generic script on the **admin** pool. Mixed tiers denied. Irreversible / Tier 2 needs verified backup &lt; 24h. Includes HQBird/FB5-only extensions: `CREATE/ALTER INDEX ... CONCURRENTLY`, `ALTER INDEX ... VALIDATE UNIQUE`, `CREATE/ALTER/RECREATE MATERIALIZED VIEW`, `REFRESH MATERIALIZED VIEW [CONCURRENTLY\|DROP DATA] [CASCADE]`, `ALTER VIEW ... TO [NOT] MATERIALIZED` (ADR-027; denied on engines below 5.0 by the `MinFB` gate) |
+| `fb_write` | 1+ (classified) | `db`, `sql`, `mode` | Generic script on the **admin** pool. Mixed tiers denied. Irreversible / Tier 2 needs verified backup &lt; 24h. Includes HQBird/FB5-only extensions: `CREATE/ALTER INDEX ... CONCURRENTLY`, `ALTER INDEX ... VALIDATE UNIQUE`, `CREATE/ALTER/RECREATE MATERIALIZED VIEW`, `REFRESH MATERIALIZED VIEW [CONCURRENTLY\|DROP DATA] [CASCADE]`, `ALTER VIEW ... TO [NOT] MATERIALIZED` (ADR-027; denied on engines below 5.0 by the `MinFB` gate). Note: a bare `DROP INDEX` classifies Tier 2 here — prefer `fb_index_drop` (Tier 1) |
 | `fb_index_rebuild` | 1 | `args.index`, `args.action` rebuild\|statistics, optional `args.advisory_id` | INACTIVE+ACTIVE or SET STATISTICS |
 | `fb_index_drop` | 1 | `args.index` or `args.advisory_id` | DROP INDEX; **refused if the index backs a constraint** |
 | `fb_comment_set` | 1 | `args.on` TABLE\|COLUMN, `args.name`, `args.column`, `args.text` | COMMENT ON |

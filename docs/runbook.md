@@ -159,6 +159,8 @@ intact. A restart loop is a finding, not a bug — look at stderr.
 | `fb_restore_replace` denied: preconditions | Need a *verified* backup < 24 h old: run `fb_backup_start` + `fb_restore_test`, and open a maintenance window. |
 | Service control denied | `posture.verified` marker missing (run `fbmcpctl setup --write-posture`) or the OS account lacks service rights (ADR-017). |
 | Tools missing for one database only | That database is offline (`fb_db_health`) — tools degrade per-database by design. |
+| Raw `DROP INDEX` via `fb_write` denied: "no open maintenance window" | Statement classification puts bare `DROP INDEX` at Tier 2. Use `fb_index_drop` instead (Tier 1, in-band confirm; refuses indexes backing a constraint). Same for a script mixing e.g. `DROP` + `CREATE INDEX`: split it per tier. |
+| New index on a column never picked up by the optimizer | Two causes seen on FB 4/5: (1) fresh statistics — run `SET STATISTICS INDEX` (`fb_index_rebuild` action=statistics); (2) `ORDER BY <col> DESC` will not walk an ascending index on FB — create a `DESCENDING` index for it. |
 
 ## 9. State directory reference
 
