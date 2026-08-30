@@ -64,6 +64,8 @@ var toolMeta = []policy.ToolMeta{
 	{Name: "fb_gstat", Tier: 0, Scope: "database"}, // ADR-003 gstat route; no MinFB — utility route, works without a server
 	{Name: "fb_schema_list", Tier: 0, Scope: "database", MinFB: "2.5"},
 	{Name: "fb_describe", Tier: 0, Scope: "database", MinFB: "2.5"},
+	{Name: "fb_diff_schema", Tier: 0, Scope: "database", MinFB: "2.5"}, // C.3: two dbs or snapshot-vs-now
+	{Name: "fb_diff_data", Tier: 0, Scope: "database", MinFB: "2.5"},   // C.3: bounded key-based data diff
 	{Name: "fb_activity_sample", Tier: 0, Scope: "database", MinFB: "2.5"},
 	{Name: "fb_lwmonitoring", Tier: 0, Scope: "instance"},
 	{Name: "fb_backup_start", Tier: 1, Scope: "database"},

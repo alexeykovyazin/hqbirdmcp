@@ -15,6 +15,7 @@ import (
 
 	"github.com/aleks/fbmcp/internal/adminexec"
 	"github.com/aleks/fbmcp/internal/audit"
+	"github.com/aleks/fbmcp/internal/config"
 	"github.com/aleks/fbmcp/internal/gate"
 	"github.com/aleks/fbmcp/internal/housekeep"
 	"github.com/aleks/fbmcp/internal/identity"
@@ -23,6 +24,7 @@ import (
 	"github.com/aleks/fbmcp/internal/posture"
 	"github.com/aleks/fbmcp/internal/retention"
 	"github.com/aleks/fbmcp/internal/schedule"
+	"github.com/aleks/fbmcp/internal/schemadiff"
 	"github.com/aleks/fbmcp/internal/state"
 	"github.com/aleks/fbmcp/internal/workflows"
 )
@@ -51,8 +53,59 @@ func nightlyVerifySteps(gt *gatedTools) []workflows.StepDef {
 			if exec == nil {
 				return fmt.Errorf("fb_restore_test not registered")
 			}
-			_, err := exec(ctx, wf.Database, nil, prog)
+			args := map[string]any{}
+			if wf.Detail["diff_schema"] == "true" { // C.3: keep the verify copy for the diff step
+				args["keep_verify"] = true
+			}
+			_, err := exec(ctx, wf.Database, args, prog)
 			return err
+		}},
+		// C.3 DR validation: when the run carries diff_schema=true in its
+		// detail (schedule args / workflow request), compare the restored
+		// verify copy's schema against the live source; any difference fails
+		// the workflow. No-op (and no verify copy expected) otherwise.
+		{Name: "diff_schema", Do: func(ctx context.Context, wf *state.Workflow, prog func(float64, string)) error {
+			if wf.Detail["diff_schema"] != "true" {
+				return nil
+			}
+			db, err := gt.cfg.DB(wf.Database)
+			if err != nil {
+				return err
+			}
+			inst, err := gt.cfg.Instance(db.Instance)
+			if err != nil {
+				return err
+			}
+			workDir := db.WorkDir
+			if workDir == "" {
+				workDir = db.BackupDir
+			}
+			restored := filepath.Join(workDir, "verify_"+wf.Database+".fdb")
+			pass, err := config.SecretFromEnv(db.AdminSecretEnv)
+			if err != nil {
+				return err
+			}
+			verify, err := openFirebirdPath(inst.Addr, restored, db.AdminUser, pass)
+			if err != nil {
+				return fmt.Errorf("verify copy: %w", err)
+			}
+			defer verify.Close()
+			prog(0.5, "capturing schemas (verify copy vs live)")
+			src, err := captureRegistryDB(ctx, gt.pools, wf.Database)
+			if err != nil {
+				return err
+			}
+			dst, err := schemadiff.Capture(ctx, verify)
+			if err != nil {
+				return fmt.Errorf("verify copy schema: %w", err)
+			}
+			os.Remove(restored) // handled; never leave the copy behind
+			res := schemadiff.Diff(src, dst)
+			if !res.Identical {
+				return fmt.Errorf("restore-test schema diff (live vs restored) found differences:\n%s",
+					schemadiff.Render(res, wf.Database, "restored copy"))
+			}
+			return nil
 		}},
 	}
 }
@@ -263,9 +316,17 @@ func (gt *gatedTools) fireSchedule(ctx context.Context, s state.Schedule) (strin
 	gt.aud.Log(audit.Entry{Identity: "schedule:" + s.ID, Database: s.Database, Tool: s.Target, Tier: s.MaxTier, Decision: "allow", Channel: s.Channel,
 		Detail: map[string]interface{}{"schedule_id": s.ID, "confirmer": s.Confirmer, "creating_request": s.CreatingRequest, "preauth": true}})
 	if s.Kind == "workflow" {
+		detail := map[string]string{"schedule_id": s.ID}
+		var sargs map[string]any
+		if s.ArgsJSON != "" && s.ArgsJSON != "null" {
+			_ = json.Unmarshal([]byte(s.ArgsJSON), &sargs)
+		}
+		if v, _ := sargs["diff_schema"].(bool); v { // C.3: nightly chain validates restored schema too
+			detail["diff_schema"] = "true"
+		}
 		return gt.runner.Submit(s.Target, s.Database, "schedule:"+s.ID, s.CreatingRequest, func(ctx context.Context, prog func(float64, string)) (string, error) {
 			id := fmt.Sprintf("wf%d", time.Now().UnixNano())
-			return gt.wf.Run(ctx, id, s.Target, s.Database, false, map[string]string{"schedule_id": s.ID}, prog)
+			return gt.wf.Run(ctx, id, s.Target, s.Database, false, detail, prog)
 		})
 	}
 	exec, ok := gt.execs[s.Target]

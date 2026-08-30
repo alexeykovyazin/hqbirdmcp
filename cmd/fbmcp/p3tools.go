@@ -303,9 +303,18 @@ func registerP3Tools(server *mcp.Server, gt *gatedTools) {
 			if err := c.Validate(restored, 0); err != nil {
 				return "", fmt.Errorf("validation failed: %w", err)
 			}
-			os.Remove(restored)
+			keep := false
+			if kv, _ := args["keep_verify"].(bool); kv { // C.3: verify file left in place for a follow-up diff step
+				keep = true
+			}
+			if !keep {
+				os.Remove(restored)
+			}
 			if err := backupsvc.NewCatalog(gt.st).Register(dbID, fbk, true); err != nil {
 				return "", err
+			}
+			if keep {
+				return fmt.Sprintf("backup %s verified by test-restore; catalog updated; verify copy kept at %s (diff step or operator should remove it)", fbk, restored), nil
 			}
 			return fmt.Sprintf("backup %s verified by test-restore; catalog updated", fbk), nil
 		})

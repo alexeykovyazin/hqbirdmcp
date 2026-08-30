@@ -189,7 +189,8 @@ func loadExistingIndexes(ctx context.Context, pools *dbpool.Manager, db string, 
 	}
 	defer tx.Rollback()
 	rows, err := tx.QueryContext(ctx, `
-		SELECT i.RDB$RELATION_NAME, i.RDB$INDEX_NAME, s.RDB$FIELD_NAME, s.RDB$SEGMENT_SEQUENCE
+		SELECT CAST(i.RDB$RELATION_NAME AS VARCHAR(66)), CAST(i.RDB$INDEX_NAME AS VARCHAR(66)),
+		       CAST(s.RDB$FIELD_NAME AS VARCHAR(66)), s.RDB$SEGMENT_SEQUENCE
 		FROM RDB$INDICES i
 		JOIN RDB$INDEX_SEGMENTS s ON s.RDB$INDEX_NAME = i.RDB$INDEX_NAME
 		WHERE i.RDB$SYSTEM_FLAG = 0`)

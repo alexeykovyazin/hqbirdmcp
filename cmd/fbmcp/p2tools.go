@@ -402,6 +402,9 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 
 	// C.2 — fb_index_advice (advicetool.go): plan analysis → proposed DDL.
 	registerIndexAdviceTool(server, cfg, pools, aud, st)
+
+	// C.3 — fb_diff_schema / fb_diff_data (difftool.go).
+	registerDiffTools(server, cfg, pools, aud)
 }
 
 func firstErr(err error) string { return err.Error() }

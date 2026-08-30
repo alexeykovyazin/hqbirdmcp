@@ -43,6 +43,10 @@ func dsn(addr, path, user, pass string) string {
 	return fmt.Sprintf("%s:%s@%s/%s?charset=UTF8", user, pass, addr, path)
 }
 
+// DSN is dsn exported for callers outside the pool lifecycle (the C.3
+// restore-test diff step opens the verify copy directly).
+func DSN(addr, path, user, pass string) string { return dsn(addr, path, user, pass) }
+
 // ReadPool returns the read-only pool for a registry DB id. Every transaction
 // opened through ReadOnly() carries the read-only TPB.
 func (m *Manager) ReadPool(ctx context.Context, dbID string) (*sql.DB, error) {
