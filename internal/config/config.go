@@ -116,6 +116,7 @@ type Database struct {
 	Path           string `yaml:"path"`
 	BackupDir      string `yaml:"backup_dir"`
 	WorkDir        string `yaml:"work_dir"`
+	MigrationsDir  string `yaml:"migrations_dir"` // C.1: ordered .sql files; confine-checked at use
 	ROUser         string `yaml:"ro_user"`
 	ROSecretEnv    string `yaml:"ro_secret_env"` // env var name holding the RO password
 	AdminUser      string `yaml:"admin_user"`

@@ -73,8 +73,12 @@ var toolMeta = []policy.ToolMeta{
 	{Name: "fb_set_forcewrite", Tier: 1, Scope: "database"},
 	{Name: "fb_set_readonly", Tier: 1, Scope: "database"},
 	{Name: "fb_service_status", Tier: 0, Scope: "instance"},
-	{Name: "fb_write", Tier: 1, Scope: "database"},               // dynamic tier: classified per request
-	{Name: "fb_query", Tier: 0, Scope: "database", MinFB: "2.5"}, // read-only tx; fallback into fb_write's gated flow for refused EXECUTE PROCEDURE
+	{Name: "fb_write", Tier: 1, Scope: "database"},                                 // dynamic tier: classified per request
+	{Name: "fb_migration_status", Tier: 0, Scope: "database", MinFB: "2.5"},        // C.1: dir vs history
+	{Name: "fb_migration_plan", Tier: 0, Scope: "database", MinFB: "2.5"},          // C.1: dry-run classification
+	{Name: "fb_migration_apply", Tier: 1, Scope: "database"},                       // C.1: ADR-030 batch gate; dynamic tier per batch
+	{Name: "fb_migration_rollback_plan", Tier: 0, Scope: "database", MinFB: "2.5"}, // C.1: renders recorded down sections
+	{Name: "fb_query", Tier: 0, Scope: "database", MinFB: "2.5"},                   // read-only tx; fallback into fb_write's gated flow for refused EXECUTE PROCEDURE
 	{Name: "fb_index_rebuild", Tier: 1, Scope: "database"},
 	{Name: "fb_index_drop", Tier: 1, Scope: "database"},
 	{Name: "fb_session_kill", Tier: 1, Scope: "database"},

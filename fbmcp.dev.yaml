@@ -62,6 +62,7 @@ databases:
       path: C:/HQbirdData/output/fbmcp-spike/spike_FB3.0.fdb
       backup_dir: C:/HQbirdData/output/fbmcp-spike/backup
       work_dir: C:/HQbirdData/output/fbmcp-spike/work
+      migrations_dir: E:/Projects_2026/AIDBA/fbmcp/examples/migrations
       ro_user: SYSDBA
       ro_secret_env: FBMCP_DEV_PW
       admin_user: SYSDBA

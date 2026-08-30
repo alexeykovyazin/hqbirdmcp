@@ -121,6 +121,10 @@ Typical path: `fb_connected_dbs` → `fb_db_register` (`mode=preview` then `exec
 | Tool | Tier | Args | What it does |
 |---|---|---|---|
 | `fb_write` | 1+ (classified) | `db`, `sql`, `mode` | Generic script on the **admin** pool. Mixed tiers denied. Irreversible / Tier 2 needs verified backup &lt; 24h. Includes HQBird/FB5-only extensions: `CREATE/ALTER INDEX ... CONCURRENTLY`, `ALTER INDEX ... VALIDATE UNIQUE`, `CREATE/ALTER/RECREATE MATERIALIZED VIEW`, `REFRESH MATERIALIZED VIEW [CONCURRENTLY\|DROP DATA] [CASCADE]`, `ALTER VIEW ... TO [NOT] MATERIALIZED` (ADR-027; denied on engines below 5.0 by the `MinFB` gate) |
+| `fb_migration_status` | `db` | Migration state: files in the database's `migrations_dir` vs `FBMCP_MIGRATIONS` history (applied / pending / tamper / uninitialized) |
+| `fb_migration_plan` | `db`, optional `baseline` | Dry-run: per-statement classification (ADR-019 tiers), batch tier, checksums, down-section presence. Executes nothing |
+| `fb_migration_apply` | `db`, optional `mode`, `baseline` | **Gated batch (ADR-030):** one confirmation for all pending migrations — manifest is argHash-bound (any file change ⇒ re-request), statements re-classified and checksums re-verified at execution time, each migration atomic with its history row. Batch escalates to Tier 2 (out-of-band + verified-backup preconditions) if any statement is Tier 2. `baseline:true` records the current schema as version 0 (INSERT only) |
+| `fb_migration_rollback_plan` | `db`, optional `to_version` | Renders the down sections **recorded at apply time** (immune to later file edits), statements classified; executes nothing — paste into `fb_write` |
 | `fb_index_rebuild` | 1 | `args.index`, `args.action` rebuild\|statistics, optional `args.advisory_id` | INACTIVE+ACTIVE or SET STATISTICS |
 | `fb_index_drop` | 1 | `args.index` or `args.advisory_id` | DROP INDEX; **refused if the index backs a constraint** |
 | `fb_comment_set` | 1 | `args.on` TABLE\|COLUMN, `args.name`, `args.column`, `args.text` | COMMENT ON |

@@ -31,6 +31,8 @@ import (
 func registerP4Tools(server *mcp.Server, gt *gatedTools) {
 	registerFBWrite(server, gt)
 	registerQueryTool(server, gt)
+	registerMigrateTools(server, gt)
+	gt.execs["fb_migration_apply"] = gt.migrationApplyExec
 	registerIndexTools(server, gt)
 	registerSecurityTools(server, gt)
 	registerEffectiveAccess(server, gt)
