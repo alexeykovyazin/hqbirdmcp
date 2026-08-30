@@ -27,14 +27,13 @@ require (
 	github.com/kardianos/osext v0.0.0-20190222173326-2bc1f35cddc0 // indirect
 	github.com/nakagami/chacha20 v0.1.0 // indirect
 	github.com/oxtoacart/bpool v0.0.0-20190530202638-03653db5a59c // indirect
-	github.com/remyoudompheng/bigfft v0.0.0-20200410134404-eec4a21b6bb0 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
-	github.com/shopspring/decimal v1.2.0 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	gitlab.com/nyarla/go-crypt v0.0.0-20160106005555-d9a5dc2b789b // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/text v0.21.0 // indirect
-	modernc.org/mathutil v1.4.2-0.20220822142738-b13e5b564332 // indirect
+	golang.org/x/text v0.22.0 // indirect
 )
+
+replace github.com/nakagami/firebirdsql => github.com/IBSurgeon/firebirdsql-go v0.0.0-20260828141318-badf2230e80d
