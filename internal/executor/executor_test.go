@@ -1,6 +1,9 @@
 package executor
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestPrepareDeniesGarbage(t *testing.T) {
 	if _, err := Prepare("~~~ nonsense ~~~"); err == nil {
@@ -15,8 +18,12 @@ func TestPrepareDeniesDropDatabase(t *testing.T) {
 }
 
 func TestPrepareDeniesReads(t *testing.T) {
-	if _, err := Prepare("SELECT * FROM T"); err == nil {
+	_, err := Prepare("SELECT * FROM T")
+	if err == nil {
 		t.Fatal("expected read deny")
+	}
+	if !strings.Contains(err.Error(), "fb_query") {
+		t.Fatalf("read deny must redirect to fb_query, got: %v", err)
 	}
 }
 

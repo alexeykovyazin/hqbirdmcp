@@ -31,6 +31,7 @@ import (
 	"github.com/aleks/fbmcp/internal/jobs"
 	"github.com/aleks/fbmcp/internal/notify"
 	"github.com/aleks/fbmcp/internal/policy"
+	"github.com/aleks/fbmcp/internal/qlog"
 	"github.com/aleks/fbmcp/internal/reload"
 	"github.com/aleks/fbmcp/internal/schedule"
 	"github.com/aleks/fbmcp/internal/state"
@@ -59,6 +60,7 @@ var toolMeta = []policy.ToolMeta{
 	{Name: "fb_transactions", Tier: 0, Scope: "database", MinFB: "2.5"},
 	{Name: "fb_analyze_query", Tier: 0, Scope: "database", MinFB: "2.5"},
 	{Name: "fb_index_stats", Tier: 0, Scope: "database", MinFB: "2.5"},
+	{Name: "fb_gstat", Tier: 0, Scope: "database"}, // ADR-003 gstat route; no MinFB — utility route, works without a server
 	{Name: "fb_schema_list", Tier: 0, Scope: "database", MinFB: "2.5"},
 	{Name: "fb_describe", Tier: 0, Scope: "database", MinFB: "2.5"},
 	{Name: "fb_activity_sample", Tier: 0, Scope: "database", MinFB: "2.5"},
@@ -70,7 +72,8 @@ var toolMeta = []policy.ToolMeta{
 	{Name: "fb_set_forcewrite", Tier: 1, Scope: "database"},
 	{Name: "fb_set_readonly", Tier: 1, Scope: "database"},
 	{Name: "fb_service_status", Tier: 0, Scope: "instance"},
-	{Name: "fb_write", Tier: 1, Scope: "database"}, // dynamic tier: classified per request
+	{Name: "fb_write", Tier: 1, Scope: "database"},               // dynamic tier: classified per request
+	{Name: "fb_query", Tier: 0, Scope: "database", MinFB: "2.5"}, // read-only tx; fallback into fb_write's gated flow for refused EXECUTE PROCEDURE
 	{Name: "fb_index_rebuild", Tier: 1, Scope: "database"},
 	{Name: "fb_index_drop", Tier: 1, Scope: "database"},
 	{Name: "fb_session_kill", Tier: 1, Scope: "database"},
@@ -147,6 +150,12 @@ func runForegroundCtx(ctx context.Context) {
 		os.Exit(1)
 	}
 	defer aud.Close()
+	ql, err := qlog.Open(cfg.State.Dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fbmcp: qlog: %v\n", err)
+		os.Exit(1)
+	}
+	defer ql.Close()
 	st, err := state.Open(cfg.State.Dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fbmcp: state: %v\n", err)
@@ -198,7 +207,7 @@ func runForegroundCtx(ctx context.Context) {
 	// fb_demo_write — the M1 gated-tool demo: policy → pending action →
 	execSvc := &execpkg.Service{Pools: pools}
 	wfEng := workflows.New(st)
-	gt := &gatedTools{cfg: handle, pools: pools, eng: eng, g: g, runner: runner, aud: aud, st: st,
+	gt := &gatedTools{cfg: handle, pools: pools, eng: eng, g: g, runner: runner, aud: aud, qlog: ql, st: st,
 		execSvc: execSvc, wf: wfEng, execs: map[string]executor{}, args: map[string]map[string]any{},
 		traces: map[string]*backupsvc.LiveTrace{}, facts: engFacts}
 	hookSecret := ""

@@ -28,6 +28,7 @@ import (
 	"github.com/aleks/fbmcp/internal/killpoint"
 	"github.com/aleks/fbmcp/internal/notify"
 	"github.com/aleks/fbmcp/internal/policy"
+	"github.com/aleks/fbmcp/internal/qlog"
 	"github.com/aleks/fbmcp/internal/reload"
 	"github.com/aleks/fbmcp/internal/state"
 	"github.com/aleks/fbmcp/internal/workflows"
@@ -43,6 +44,7 @@ type gatedTools struct {
 	g        *gate.Gate
 	runner   *jobs.Runner
 	aud      *audit.Logger
+	qlog     *qlog.Logger // fb_query telemetry (query-log.jsonl); nil-safe
 	st       *state.Store
 	execSvc  *execpkg.Service
 	wf       *workflows.Engine
@@ -52,6 +54,12 @@ type gatedTools struct {
 	reloader *reload.Controller
 	httpLn   *httpListener
 	facts    *facts.EngineFacts
+
+	// fb_query per-db feature/cache state (guarded by mu):
+	// noPerTable marks engines without MON$TABLE_STATS (pre-5.0);
+	// planCache memoizes isql plans for engines without MON$EXPLAINED_PLAN.
+	noPerTable map[string]bool
+	planCache  map[string]string
 
 	mu   sync.Mutex
 	args map[string]map[string]any // requestID -> tool args (in-memory; single instance per D8)

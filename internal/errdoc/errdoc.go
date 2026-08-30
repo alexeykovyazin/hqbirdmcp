@@ -94,6 +94,30 @@ var signals = []struct {
 			Remediation: "Check the instance service status; start it if stopped (service tools, Tier 2).",
 		},
 	},
+	{
+		match: "fb_write is for mutations",
+		doc: Doc{
+			Code:        "fbwrite-read-denied",
+			Hint:        "fb_write executes mutations only; reads never need its confirmation gate.",
+			Remediation: "Call fb_query (Tier 0): one SELECT or EXECUTE PROCEDURE on a read-only transaction.",
+		},
+	},
+	{
+		match: "fb_query accepts",
+		doc: Doc{
+			Code:        "fbquery-rejected",
+			Hint:        "fb_query runs single read statements only (one SELECT/WITH-SELECT or EXECUTE PROCEDURE).",
+			Remediation: "Use fb_write for DML/DDL/DCL scripts and EXECUTE BLOCK (confirmation required).",
+		},
+	},
+	{
+		match: "attempted update during read-only transaction",
+		doc: Doc{
+			Code:        "ro-write-refused",
+			Hint:        "The engine refused a write on fb_query's read-only transaction (typically an EXECUTE PROCEDURE that mutates).",
+			Remediation: "fb_query routes such calls into fb_write's gated flow — confirm the pending action (Tier 1 in-band token) or call fb_write directly.",
+		},
+	},
 }
 
 // Lookup classifies an error message; ok=false leaves the generic code.

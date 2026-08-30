@@ -30,6 +30,7 @@ import (
 
 func registerP4Tools(server *mcp.Server, gt *gatedTools) {
 	registerFBWrite(server, gt)
+	registerQueryTool(server, gt)
 	registerIndexTools(server, gt)
 	registerSecurityTools(server, gt)
 	registerEffectiveAccess(server, gt)
@@ -48,53 +49,15 @@ func registerFBWrite(server *mcp.Server, gt *gatedTools) {
 		Mode string `json:"mode,omitempty" jsonschema:"preview or execute (default execute)"`
 	}
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_write", Description: "Tier 1+ (dynamic) gated: classified statement script; mode=preview|execute; executed on the admin pool"}, func(ctx context.Context, req *mcp.CallToolRequest, a writeArg) (*mcp.CallToolResult, any, error) {
-		// WS2.1 fix: this handler previously hardcoded a "local"/MaxTier-2
-		// identity, so remote API-key calls were audited as "local", their
-		// configured max_tier ceiling was bypassed, and the pending action's
-		// identity mismatch made fb_confirm reject their own confirmations.
+		// WS2.1 fix (kept by requestWrite): the identity comes from the
+		// caller context, never a hardcoded "local" — remote API-key calls
+		// keep their max_tier ceiling and can confirm their own pendings.
 		id := identity.Caller(ctx)
-		if _, err := gt.cfg.DB(a.Db); err != nil {
-			return errText("DENIED: " + err.Error())
+		msg, denied := gt.requestWrite(ctx, id, a.Db, a.SQL, strings.EqualFold(a.Mode, "preview"))
+		if denied {
+			return errText(msg)
 		}
-		prep, err := execpkg.Prepare(a.SQL)
-		if err != nil {
-			gt.aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_write", Tier: -1, Decision: "denied", Detail: map[string]interface{}{"reason": err.Error()}})
-			return errText("DENIED: " + err.Error())
-		}
-		impact := "fb_write on " + a.Db + "\n" + gt.execSvc.Impact(ctx, a.Db, prep)
-		if strings.EqualFold(a.Mode, "preview") {
-			return text(impact + "\nmode=preview (informational — confirmation still required to execute)\n"), nil, nil
-		}
-		meta := policy.ToolMeta{Name: "fb_write", Tier: prep.MaxTier, Scope: "database", MinFB: prep.MinFB}
-		if prep.MaxTier >= 2 {
-			meta.Preconditions = []policy.Precondition{
-				{Name: "verified_backup_exists", Op: "true", Why: "Tier-2 / irreversible content requires a verified backup"},
-				{Name: "backup_freshness", Op: "lt", Value: 24.0, Why: "newest verified backup must be < 24h"},
-			}
-		}
-		d := gt.eng.EvaluateMeta(id, a.Db, meta)
-		if d.Outcome == "deny" || len(d.FailedPreconditions) > 0 {
-			why := d.Reason
-			gt.aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_write", Tier: prep.MaxTier, Decision: "denied", Detail: map[string]interface{}{"reason": why, "templates": classify.Template(a.SQL)}})
-			return errText("DENIED: " + why)
-		}
-		argHash := hashOf(a.Db + a.SQL)
-		p, err := gt.g.Request(id, a.Db, meta, impact, argHash, nil)
-		if err != nil {
-			return errText("gate error: " + err.Error())
-		}
-		gt.mu.Lock()
-		gt.args[p.ID] = map[string]any{"sql": a.SQL}
-		gt.mu.Unlock()
-		var b strings.Builder
-		b.WriteString(gate.ImpactStatement(p))
-		if meta.Tier <= 1 {
-			fmt.Fprintf(&b, "In-band token (Tier 1 only): %s\n", gate.IssueToken(p.ID, argHash))
-		} else {
-			b.WriteString("Confirmation: out-of-band only (fbmcp-tray popup or fbmcpctl approve)\n")
-		}
-		gt.aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_write", Tier: prep.MaxTier, Decision: "pending", Detail: map[string]interface{}{"templates": classify.Template(a.SQL)}})
-		return text(b.String()), nil, nil
+		return text(msg), nil, nil
 	})
 
 	gt.execs["fb_write"] = func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
@@ -117,6 +80,55 @@ func registerFBWrite(server *mcp.Server, gt *gatedTools) {
 		}
 		return gt.execSvc.Exec(ctx, dbID, prep, prog)
 	}
+}
+
+// requestWrite is the fb_write path (also the fb_query fallback for
+// EXECUTE PROCEDURE calls the engine refuses on the read-only transaction):
+// classify → preview short-circuit → policy → pending action. It never
+// executes; confirmation dispatches to gt.execs["fb_write"].
+func (gt *gatedTools) requestWrite(ctx context.Context, id policy.Identity, dbID, sqlText string, previewOnly bool) (string, bool) {
+	if _, err := gt.cfg.DB(dbID); err != nil {
+		return "DENIED: " + err.Error(), true
+	}
+	prep, err := execpkg.Prepare(sqlText)
+	if err != nil {
+		gt.aud.Log(audit.Entry{Identity: id.Name, Database: dbID, Tool: "fb_write", Tier: -1, Decision: "denied", Detail: map[string]interface{}{"reason": err.Error()}})
+		return "DENIED: " + err.Error(), true
+	}
+	impact := "fb_write on " + dbID + "\n" + gt.execSvc.Impact(ctx, dbID, prep)
+	if previewOnly {
+		return impact + "\nmode=preview (informational — confirmation still required to execute)\n", false
+	}
+	meta := policy.ToolMeta{Name: "fb_write", Tier: prep.MaxTier, Scope: "database", MinFB: prep.MinFB}
+	if prep.MaxTier >= 2 {
+		meta.Preconditions = []policy.Precondition{
+			{Name: "verified_backup_exists", Op: "true", Why: "Tier-2 / irreversible content requires a verified backup"},
+			{Name: "backup_freshness", Op: "lt", Value: 24.0, Why: "newest verified backup must be < 24h"},
+		}
+	}
+	d := gt.eng.EvaluateMeta(id, dbID, meta)
+	if d.Outcome == "deny" || len(d.FailedPreconditions) > 0 {
+		why := d.Reason
+		gt.aud.Log(audit.Entry{Identity: id.Name, Database: dbID, Tool: "fb_write", Tier: prep.MaxTier, Decision: "denied", Detail: map[string]interface{}{"reason": why, "templates": classify.Template(sqlText)}})
+		return "DENIED: " + why, true
+	}
+	argHash := hashOf(dbID + sqlText)
+	p, err := gt.g.Request(id, dbID, meta, impact, argHash, nil)
+	if err != nil {
+		return "gate error: " + err.Error(), true
+	}
+	gt.mu.Lock()
+	gt.args[p.ID] = map[string]any{"sql": sqlText}
+	gt.mu.Unlock()
+	var b strings.Builder
+	b.WriteString(gate.ImpactStatement(p))
+	if meta.Tier <= 1 {
+		fmt.Fprintf(&b, "In-band token (Tier 1 only): %s\n", gate.IssueToken(p.ID, argHash))
+	} else {
+		b.WriteString("Confirmation: out-of-band only (fbmcp-tray popup or fbmcpctl approve)\n")
+	}
+	gt.aud.Log(audit.Entry{Identity: id.Name, Database: dbID, Tool: "fb_write", Tier: prep.MaxTier, Decision: "pending", Detail: map[string]interface{}{"templates": classify.Template(sqlText)}})
+	return b.String(), false
 }
 
 func registerIndexTools(server *mcp.Server, gt *gatedTools) {

@@ -18,8 +18,14 @@ import (
 )
 
 // Explain returns the access plan (and, on FB 4+, optionally the EXPLAIN
-// form) for one SELECT statement.
+// form) for one SELECT statement, connecting as the admin user.
 func Explain(ctx context.Context, inst config.FBInstance, db config.Database, pass, query string, explain bool) (string, error) {
+	return ExplainAs(ctx, inst, db, db.AdminUser, pass, query, explain)
+}
+
+// ExplainAs is Explain with explicit credentials. fb_query passes the
+// read-only user: reading a plan requires no write privileges.
+func ExplainAs(ctx context.Context, inst config.FBInstance, db config.Database, user, pass, query string, explain bool) (string, error) {
 	if len(query) > 1<<20 {
 		return "", fmt.Errorf("query too large")
 	}
@@ -42,7 +48,7 @@ func Explain(ctx context.Context, inst config.FBInstance, db config.Database, pa
 		bin = filepath.Join(inst.BinDir, "isql")
 	}
 	res := adminexec.Run(ctx, bin,
-		[]string{"-i", tmp.Name(), "-user", db.AdminUser, "-q", fmt.Sprintf("localhost/%s:%s", portOf(inst.Addr), db.Path)},
+		[]string{"-i", tmp.Name(), "-user", user, "-q", fmt.Sprintf("localhost/%s:%s", portOf(inst.Addr), db.Path)},
 		60*time.Second, 4<<20, map[string]string{"ISC_PASSWORD": pass})
 	if res.Err != nil && res.Output == "" {
 		return "", fmt.Errorf("isql: %v", res.Err)

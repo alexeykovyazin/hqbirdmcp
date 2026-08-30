@@ -10,11 +10,11 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/aleks/fbmcp/internal/adminexec"
 	"github.com/aleks/fbmcp/internal/audit"
 	"github.com/aleks/fbmcp/internal/config"
 	"github.com/aleks/fbmcp/internal/dbpool"
 	"github.com/aleks/fbmcp/internal/facts"
+	"github.com/aleks/fbmcp/internal/gstat"
 	"github.com/aleks/fbmcp/internal/lwmonitoring"
 	"github.com/aleks/fbmcp/internal/queryplan"
 	"github.com/aleks/fbmcp/internal/state"
@@ -139,6 +139,52 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 		}
 		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_index_stats", Tier: 0, Decision: "allow"})
 		return text(b.String()), nil, nil
+	})
+
+	// ADR-003 gstat route (was the "future use" placeholder below) — raw
+	// gstat collection: header page dump (mode=header, reads the file
+	// directly, no auth) or record/index statistics (mode=records,
+	// embedded attach, authenticated user), optionally restricted to a
+	// table list (-r -t T1 -t T2 …).
+	type gstatArg struct {
+		Db     string   `json:"db" jsonschema:"registry id of the database"`
+		Mode   string   `json:"mode,omitempty" jsonschema:"header (default) or records"`
+		Tables []string `json:"tables,omitempty" jsonschema:"records mode: restrict analysis to these tables (exact case; unquoted names are uppercase)"`
+		System bool     `json:"system,omitempty" jsonschema:"records mode: include system relations (-s)"`
+	}
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_gstat", Description: "Tier 0: raw gstat output — header page (mode=header, no auth) or record/index statistics (mode=records, -r), optionally restricted to a table list"}, func(ctx context.Context, req *mcp.CallToolRequest, a gstatArg) (*mcp.CallToolResult, any, error) {
+		dbCfg, err := cfg.DB(a.Db)
+		if err != nil {
+			return errText("error: " + err.Error())
+		}
+		inst, err := cfg.Instance(dbCfg.Instance)
+		if err != nil {
+			return errText("error: " + err.Error())
+		}
+		mode := strings.ToLower(strings.TrimSpace(a.Mode))
+		if mode == "" {
+			mode = gstat.ModeHeader
+		}
+		// header mode reads the file directly — tolerate a missing secret.
+		pass, passErr := config.SecretFromEnv(dbCfg.AdminSecretEnv)
+		if passErr != nil && mode != gstat.ModeHeader {
+			return errText("error: " + passErr.Error())
+		}
+		if mode == gstat.ModeRecords && len(a.Tables) > 0 {
+			if missing, sugg, ok := gstatTableCheck(ctx, pools, a.Db, a.Tables, a.System); ok && len(missing) > 0 {
+				msg := fmt.Sprintf("error: table not found (gstat matches exact case): %s", strings.Join(missing, ", "))
+				if len(sugg) > 0 {
+					msg += " — did you mean: " + strings.Join(sugg, ", ")
+				}
+				return errText(msg)
+			}
+		}
+		out, err := gstat.Run(ctx, inst, dbCfg.AdminUser, pass, dbCfg.Path, gstat.Options{Mode: mode, Tables: a.Tables, System: a.System})
+		if err != nil {
+			return errText("error: " + err.Error())
+		}
+		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_gstat", Tier: 0, Decision: "allow"})
+		return text(out), nil, nil
 	})
 
 	// P2.6 — fb_schema_list + fb_describe.
@@ -357,7 +403,44 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 
 func firstErr(err error) string { return err.Error() }
 
-var _ = adminexec.Run // future use (gstat route)
+// gstatTableCheck verifies records-mode table names against RDB$RELATIONS
+// (gstat matching is exact case; unquoted Firebird names are uppercase).
+// ok=false means the RO pool is unreachable — gstat's embedded attach does
+// not need the server, so the caller degrades to regex-only validation.
+func gstatTableCheck(ctx context.Context, pools *dbpool.Manager, db string, tables []string, system bool) (missing, suggest []string, ok bool) {
+	tx, err := pools.ReadOnly(ctx, db)
+	if err != nil {
+		return nil, nil, false
+	}
+	defer tx.Rollback()
+	q := `SELECT RDB$RELATION_NAME FROM RDB$RELATIONS`
+	if !system {
+		q += ` WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0`
+	}
+	rows, err := tx.QueryContext(ctx, q)
+	if err != nil {
+		return nil, nil, false
+	}
+	defer rows.Close()
+	known := map[string]bool{}
+	for rows.Next() {
+		var n string
+		if rows.Scan(&n) != nil {
+			return nil, nil, false
+		}
+		known[strings.TrimSpace(n)] = true
+	}
+	for _, t := range tables {
+		if known[t] {
+			continue
+		}
+		missing = append(missing, t)
+		if up := strings.ToUpper(t); up != t && known[up] {
+			suggest = append(suggest, up)
+		}
+	}
+	return missing, suggest, true
+}
 
 // typeName maps RDB$FIELD_TYPE blr codes to readable names.
 func typeName(t int) string {

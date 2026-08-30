@@ -40,6 +40,22 @@ instances:
       default_admin_secret_env: FBMCP_DEV_PW
       default_backup_dir: C:/HQbirdData/output/fbmcp-spike/backup
       default_work_dir: C:/HQbirdData/output/fbmcp-spike/work
+    # stock (non-HQbird) Firebird 5 install — gstat/subprocess route demo;
+    # no server listens on 3050, so SQL-backed tools on its databases
+    # cannot connect (fb_gstat still works: header reads the file directly,
+    # records attaches via the embedded engine).
+    - id: fb5std
+      addr: localhost:3050
+      bin_dir: C:/Firebird5
+      version: "5.0"
+      service_user: SYSDBA
+      service_secret_env: FBMCP_DEV_PW
+      default_ro_user: SYSDBA
+      default_ro_secret_env: FBMCP_DEV_PW
+      default_admin_user: SYSDBA
+      default_admin_secret_env: FBMCP_DEV_PW
+      default_backup_dir: C:/HQbirdData/output/fbmcp-spike/backup
+      default_work_dir: C:/HQbirdData/output/fbmcp-spike/work
 databases:
     - id: spike3
       instance: fb3
@@ -81,6 +97,17 @@ databases:
       instance: fb5
       path: C:\Database\TEST_10\db1\EMPLOYEE.FDB
       backup_dir: E:\temp
+      work_dir: C:/HQbirdData/output/fbmcp-spike/work
+      ro_user: SYSDBA
+      ro_secret_env: FBMCP_DEV_PW
+      admin_user: SYSDBA
+      admin_secret_env: FBMCP_DEV_PW
+    # stock Firebird 5 example database (instance fb5std has no running
+    # server — usable by fb_gstat, not by SQL-backed tools)
+    - id: employee5std
+      instance: fb5std
+      path: C:\Firebird5\examples\empbuild\EMPLOYEE.FDB
+      backup_dir: C:/HQbirdData/output/fbmcp-spike/backup
       work_dir: C:/HQbirdData/output/fbmcp-spike/work
       ro_user: SYSDBA
       ro_secret_env: FBMCP_DEV_PW

@@ -154,3 +154,19 @@ func (m *Manager) CloseDB(dbID string) {
 		delete(m.admin, dbID)
 	}
 }
+
+// CloseRead closes only the read pool for one database. Used by fb_query's
+// fb_write fallback: a procedure the engine refused on the read-only
+// transaction leaves its compiled statement pinning the procedure's target
+// objects on that attachment (driver-level: the handle survives stmt.Close
+// and rollback), blocking DDL on them until idle reaping. Draining the
+// stateless read pool releases the pins immediately; read tools reopen on
+// next use.
+func (m *Manager) CloseRead(dbID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if p, ok := m.read[dbID]; ok {
+		p.Close()
+		delete(m.read, dbID)
+	}
+}

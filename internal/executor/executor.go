@@ -57,7 +57,7 @@ func Prepare(sqlText string) (Prepared, error) {
 		return Prepared{}, fmt.Errorf("%s", why)
 	}
 	if maxTier == 0 {
-		return Prepared{}, fmt.Errorf("fb_write is for mutations; use Tier-0 read tools for SELECT")
+		return Prepared{}, fmt.Errorf("fb_write is for mutations; use fb_query (Tier-0, read-only transaction) for SELECT")
 	}
 	if maxTier >= 3 {
 		return Prepared{}, fmt.Errorf("script contains Tier-3 content (disabled by default)")

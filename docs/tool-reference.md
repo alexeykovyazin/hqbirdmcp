@@ -59,7 +59,9 @@ Refused: `state.dir` change; ADR-022 (loopback bind, missing cert/key, zero iden
 | `fb_sessions` | `db` | Attachments (user, address, state) + running statements |
 | `fb_transactions` | `db` | OIT / OAT / OST / Next and gap sizes |
 | `fb_analyze_query` | `db`, `query`, optional `explain` | Access plan (read-only; 60s / output cap) |
+| `fb_query` | `db`, `sql`, optional `max_rows` (default 100, max 1000) | **Default for reads.** One `SELECT` / `WITH…SELECT` / `EXECUTE PROCEDURE` on an engine-enforced **read-only transaction** (RO-user pool) — no confirmation. Returns rows, the statement's access plan and execution statistics (per-table on FB 5+). An `EXECUTE PROCEDURE` the engine refuses on the RO transaction is routed into `fb_write`'s gated flow (confirmation still required). Every call — ok / error / fallback / denied — is logged to `<state.dir>/query-log.jsonl` (NDJSON: query, params, plan, stats, per-table stats) |
 | `fb_index_stats` | `db` | Index stats + unused/duplicate advisories |
+| `fb_gstat` | `db`, optional `mode` (header\|records, default header), `tables` (records: restrict analysis), `system` | Raw `gstat` output (ADR-003 subprocess route): header page dump (`-h`, no auth, works without a running server) or record/index statistics (`-r`, authenticated), optionally limited to specific tables |
 | `fb_schema_list` | `db` | User tables / views / procedures / triggers |
 | `fb_describe` | `db`, `table` | Columns, types, nullability |
 | `fb_activity_sample` | `db`, `seconds` (1–30) | MON$ IO / record-stat deltas |
@@ -72,6 +74,8 @@ Refused: `state.dir` change; ADR-022 (loopback bind, missing cert/key, zero iden
 | `fb_lwmonitoring` | `instance`, optional `query` (1-4, default 1), `db` (required for levels 2-4) | HQBird lightweight monitoring (`isc_action_svc_lwmonitoring` via `fbsvcmgr`, ADR-028) — DB/attachment/transaction counts without MON$ table overhead; all Firebird versions |
 
 Min Firebird 2.5 for the MON$-backed reads (`fb_info` … `fb_activity_sample`).
+
+`fb_query` notes: writes are refused twice — the read-only transaction (engine TPB) and the RO user's grants. A PSQL `IN AUTONOMOUS TRANSACTION` block does not inherit the read-only TPB but still executes as the RO user, so privileges gate it; verify `ro_user` holds no write grants via `fb_effective_access`. Bind parameters are not supported — send literal SQL; tool arguments (`max_rows`) are what the query log records as `params`. Heavy reads are bounded by the row cap (1000), 4 KiB value truncation, and a 30 s statement timeout.
 
 ---
 
