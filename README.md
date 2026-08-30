@@ -104,6 +104,15 @@ identities); duplicate database paths.
 | `fb_schema_list` | `db` | User tables / views / procedures / triggers |
 | `fb_describe` | `db`, `table` | Columns, types, nullability |
 | `fb_activity_sample` | `db`, `seconds` (1–30) | MON$ IO / record-stat deltas |
+| `fb_index_advice` | `db`, `query`, optional `recheck_of` | Plan analysis → proposed CREATE INDEX DDL (estimate-only; applied via `fb_write`; `recheck_of` diffs after applying) |
+| `fb_query` | `db`, `sql`, optional `max_rows` | Default for reads: one SELECT / WITH-SELECT / EXECUTE PROCEDURE on an engine-enforced read-only transaction; rows + plan + per-table stats; mutating-procedure refusals route to `fb_write`'s gate; every call logged to `query-log.jsonl` |
+| `fb_diff_schema` | `db`, optional `vs_db`, `use_snapshot`, `save_snapshot` | Schema diff between two registered databases or db vs stored snapshot (grouped CREATE/ALTER/DROP output) |
+| `fb_diff_data` | `db`, `vs_db`, `table`, optional `row_cap` (default 100k), `sample_rows` | Bounded PK-based data diff; refuses above the cap |
+| `fb_trends` | `db`, optional `hours` (default 24), `threshold_gb` | Capacity trends from sampler history: size projection, attachment-spike flag, IO deltas |
+| `fb_migration_status` | `db` | Migration state: `migrations_dir` files vs `FBMCP_MIGRATIONS` history |
+| `fb_migration_plan` | `db`, optional `baseline` | Dry-run per-statement classification for the migration batch |
+| `fb_migration_apply` | `db`, optional `mode`, `baseline` | ADR-030 gated batch: one confirmation, manifest argHash-bound, re-validated at execution |
+| `fb_migration_rollback_plan` | `db`, optional `to_version` | Renders down sections recorded at apply time; execution via `fb_write` |
 | `fb_effective_access` | `db`, `user` | Object privileges for a user/role (cap 200; no role expansion) |
 | `fb_trace_list` | `db` | Engine traces + traces this server started |
 | `fb_service_status` | `instance` | OS Firebird service status (read-only) |

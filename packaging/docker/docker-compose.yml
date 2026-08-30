@@ -1,0 +1,80 @@
+# E.5 Linux matrix (phase8_plan D7; execution is 8M/M4 on a Docker host).
+# Four Firebird majors + a Go runner that builds fbmcp for linux and runs
+# the live suite against each. Reduced chaos loop: see the runner command.
+#
+# Dev-only credentials (SYSDBA/masterkey) — never point these at production
+# databases (same discipline as fbmcp.dev.yaml).
+#
+#   cd packaging/docker
+#   docker compose up -d fb25 fb30 fb40 fb50
+#   docker compose run --rm runner          # builds + runs the matrix suite
+#
+# Tag notes: firebirdsql/firebird publishes major aliases (2.5-ss / 3.0 /
+# 4.0 / 5.0); pin exact minors on the M4 host if reproducibility matters.
+name: fbmcp-matrix
+
+services:
+  fb25:
+    image: firebirdsql/firebird:2.5-ss
+    environment:
+      ISC_PASSWORD: masterkey
+      FIREBIRD_USER: SYSDBA
+      FIREBIRD_PASSWORD: masterkey
+      FIREBIRD_DATABASE: /firebird/data/employee.fdb
+    volumes:
+      - fb25data:/firebird/data
+  fb30:
+    image: firebirdsql/firebird:3.0
+    environment:
+      ISC_PASSWORD: masterkey
+      FIREBIRD_USER: SYSDBA
+      FIREBIRD_PASSWORD: masterkey
+      FIREBIRD_DATABASE: /firebird/data/employee.fdb
+    volumes:
+      - fb30data:/firebird/data
+  fb40:
+    image: firebirdsql/firebird:4.0
+    environment:
+      ISC_PASSWORD: masterkey
+      FIREBIRD_PASSWORD: masterkey
+      FIREBIRD_DATABASE: /firebird/data/employee.fdb
+    volumes:
+      - fb40data:/firebird/data
+  fb50:
+    image: firebirdsql/firebird:5.0
+    environment:
+      ISC_PASSWORD: masterkey
+      FIREBIRD_PASSWORD: masterkey
+      FIREBIRD_DATABASE: /firebird/data/employee.fdb
+    volumes:
+      - fb50data:/firebird/data
+
+  runner:
+    image: golang:1.25
+    depends_on: [fb25, fb30, fb40, fb50]
+    working_dir: /src
+    volumes:
+      - ../..:/src
+    environment:
+      # the matrix config generator (below) writes this file; the live
+      # tests read ../../fbmcp.dev.yaml relative to cmd/fbmcp
+      FBMCP_MATRIX_CONFIG: "1"
+    command: >
+      bash -c "
+        apt-get update -qq && apt-get install -y -qq firebird3.0-utils >/dev/null 2>&1 || true &&
+        bash packaging/docker/matrix-config.sh &&
+        go build ./... &&
+        FBMCP_DEV_PW=masterkey FBMCP_REQUIRE_FIREBIRD=1
+        FBMCP_QUERY_LIVE=1 FBMCP_GSTAT_LIVE=1 FBMCP_ADVICE_LIVE=1
+        FBMCP_MIGRATE_LIVE=1 FBMCP_DIFF_LIVE=1 FBMCP_TRENDS_LIVE=1
+        go test ./... -count=1 &&
+        echo 'reduced chaos loop (gate §9-4 CI lane):' &&
+        FBMCP_KILLHARNESS=1 FBMCP_REQUIRE_FIREBIRD=1
+        go test ./internal/killharness -count=1 -run 'TestKillGatePending|TestKillNightlyVerifyC7b' -timeout 20m
+      "
+
+volumes:
+  fb25data:
+  fb30data:
+  fb40data:
+  fb50data:

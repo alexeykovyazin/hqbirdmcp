@@ -1,0 +1,84 @@
+# E.5 Linux matrix CI (phase8_plan D7). One job per Firebird major; each
+# spins the official container as a service, generates the dev config
+# against it (packaging/docker/matrix-config.sh), and runs the unit suite +
+# the live suites with skips forced to fail (FBMCP_REQUIRE_FIREBIRD=1).
+#
+# Best-effort by plan: M4 (8M) executes and tunes this on a real Docker
+# host. The killharness's full loop stays host-side (Windows services +
+# local installs); the CI lane runs its two config-independent scenarios.
+name: fbmcp-matrix
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ["packaging/docker/**", "internal/**", "cmd/**"]
+  schedule:
+    - cron: "43 3 * * *" # nightly lane
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - fb: "2.5"
+            tag: "2.5-ss"
+          - fb: "3.0"
+            tag: "3.0"
+          - fb: "4.0"
+            tag: "4.0"
+          - fb: "5.0"
+            tag: "5.0"
+    services:
+      firebird:
+        image: firebirdsql/firebird:${{ matrix.tag }}
+        ports:
+          - 3050:3050
+        env:
+          ISC_PASSWORD: masterkey
+          FIREBIRD_PASSWORD: masterkey
+          FIREBIRD_DATABASE: /firebird/data/employee.fdb
+        options: >-
+          --health-cmd "echo > /dev/tcp/localhost/3050"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Firebird client tools (isql/gstat for the subprocess routes)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq firebird3.0-utils || sudo apt-get install -y -qq firebird-utils
+      - name: generate matrix config
+        env:
+          FBMCP_MATRIX_INSTANCE: fb-${{ matrix.fb }}
+          FBMCP_MATRIX_HOST: localhost
+        shell: bash
+        run: |
+          bash packaging/docker/matrix-config.sh
+      - name: unit + live suites (skips fail)
+        env:
+          FBMCP_DEV_PW: masterkey
+          FBMCP_REQUIRE_FIREBIRD: "1"
+          FBMCP_QUERY_LIVE: "1"
+          FBMCP_GSTAT_LIVE: "1"
+          FBMCP_ADVICE_LIVE: "1"
+          FBMCP_MIGRATE_LIVE: "1"
+          FBMCP_DIFF_LIVE: "1"
+          FBMCP_TRENDS_LIVE: "1"
+        run: go test ./... -count=1 -timeout 25m
+      - name: linux binary + checksum (gate §9-3 evidence per arch)
+        run: |
+          mkdir -p dist
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/fbmcp-linux-amd64 ./cmd/fbmcp
+          sha256sum dist/fbmcp-linux-amd64
+      - name: reduced chaos loop (config-independent scenarios)
+        env:
+          FBMCP_DEV_PW: masterkey
+          FBMCP_REQUIRE_FIREBIRD: "1"
+          FBMCP_KILLHARNESS: "1"
+        run: go test ./internal/killharness -count=1 -run 'TestKillGatePending|TestKillMidPersist' -timeout 20m

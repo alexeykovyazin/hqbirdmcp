@@ -21,7 +21,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: fbmcpctl <approve|status|setup|doctor|verify|repair|secret> ...")
+		fmt.Fprintln(os.Stderr, "usage: fbmcpctl <approve|status|setup|doctor|verify|repair|secret|gate> ...")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -39,6 +39,8 @@ func main() {
 		os.Exit(cmdRepair(os.Args[2:]))
 	case "secret":
 		os.Exit(cmdSecret(os.Args[2:]))
+	case "gate":
+		os.Exit(cmdGate(os.Args[2:]))
 	default:
 		fmt.Fprintln(os.Stderr, "unknown command:", os.Args[1])
 		os.Exit(2)
