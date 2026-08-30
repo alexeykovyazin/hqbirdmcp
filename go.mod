@@ -36,4 +36,4 @@ require (
 	golang.org/x/text v0.22.0 // indirect
 )
 
-replace github.com/nakagami/firebirdsql => github.com/IBSurgeon/firebirdsql-go v0.0.0-20260828141318-badf2230e80d
+replace github.com/nakagami/firebirdsql => github.com/IBSurgeon/firebirdsql-go v0.0.0-20260830172316-a07a26c8e763
