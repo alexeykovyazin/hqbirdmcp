@@ -11,4 +11,4 @@ Written with P5.4. These are explicit, not silent.
 | Role-hierarchy expansion | Capped at 200; documented in security-audit playbook. |
 | Linux Firebird containers | Best-effort. Docker image exists; host matrix deferred if Docker is down. |
 | D5 OS keyring | Env fallback remains supported (ADR-009). `fbmcpctl setup` documents the residual. |
-| `fb_index_advice` | Does not exist. Use `fb_index_stats`. |
+| `fb_index_advice` | **Closed (Phase 8D C.2, 2026-08-30).** Now exists: plan analysis → proposed CREATE INDEX DDL (estimate-only), applied via `fb_write`; `recheck_of` diffs after a human applies. |

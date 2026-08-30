@@ -59,6 +59,7 @@ var toolMeta = []policy.ToolMeta{
 	{Name: "fb_sessions", Tier: 0, Scope: "database", MinFB: "2.5"},
 	{Name: "fb_transactions", Tier: 0, Scope: "database", MinFB: "2.5"},
 	{Name: "fb_analyze_query", Tier: 0, Scope: "database", MinFB: "2.5"},
+	{Name: "fb_index_advice", Tier: 0, Scope: "database", MinFB: "2.5"}, // C.2: plan analysis → proposed CREATE INDEX DDL (apply via fb_write)
 	{Name: "fb_index_stats", Tier: 0, Scope: "database", MinFB: "2.5"},
 	{Name: "fb_gstat", Tier: 0, Scope: "database"}, // ADR-003 gstat route; no MinFB — utility route, works without a server
 	{Name: "fb_schema_list", Tier: 0, Scope: "database", MinFB: "2.5"},

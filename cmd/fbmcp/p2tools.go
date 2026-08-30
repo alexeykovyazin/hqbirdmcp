@@ -399,6 +399,9 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_lwmonitoring", Tier: 0, Decision: "allow"})
 		return text(out), nil, nil
 	})
+
+	// C.2 — fb_index_advice (advicetool.go): plan analysis → proposed DDL.
+	registerIndexAdviceTool(server, cfg, pools, aud, st)
 }
 
 func firstErr(err error) string { return err.Error() }

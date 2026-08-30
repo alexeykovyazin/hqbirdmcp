@@ -78,6 +78,10 @@ type Advisory struct {
 	Object    string    `json:"object"`
 	Reason    string    `json:"reason"`
 	CreatedAt time.Time `json:"created_at"`
+	// Detail carries a tool-specific advisory payload (fb_index_advice stores
+	// the query, the plan's natural scans and the proposed DDL so a later
+	// recheck can diff). Additive: older state.json loads without it.
+	Detail map[string]any `json:"detail,omitempty"`
 }
 
 // TraceRec is a persisted P3.6 trace session (engine id + output path).
