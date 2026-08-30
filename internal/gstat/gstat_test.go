@@ -87,6 +87,11 @@ func TestBinFallback(t *testing.T) {
 }
 
 func TestRunContract(t *testing.T) {
+	// contract test asserts the Windows layout (gstat.exe under bin_dir);
+	// skip-with-log on hosts without it (C1 CI policy)
+	if _, err := Bin(config.FBInstance{ID: "probe", BinDir: `C:\Firebird5`}); err != nil {
+		t.Skip("gstat.exe not available on this host (CI): running the arg/env contract with stubbed runCmd still requires the Windows path layout")
+	}
 	var gotBin string
 	var gotArgs []string
 	var gotEnv map[string]string
