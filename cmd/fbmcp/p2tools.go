@@ -405,6 +405,9 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 
 	// C.3 — fb_diff_schema / fb_diff_data (difftool.go).
 	registerDiffTools(server, cfg, pools, aud)
+
+	// C.4 — fb_trends (trendstool.go): sampler history → projections.
+	registerTrendsTool(server, cfg, pools, aud)
 }
 
 func firstErr(err error) string { return err.Error() }

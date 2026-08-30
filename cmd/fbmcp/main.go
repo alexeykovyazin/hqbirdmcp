@@ -67,6 +67,7 @@ var toolMeta = []policy.ToolMeta{
 	{Name: "fb_diff_schema", Tier: 0, Scope: "database", MinFB: "2.5"}, // C.3: two dbs or snapshot-vs-now
 	{Name: "fb_diff_data", Tier: 0, Scope: "database", MinFB: "2.5"},   // C.3: bounded key-based data diff
 	{Name: "fb_activity_sample", Tier: 0, Scope: "database", MinFB: "2.5"},
+	{Name: "fb_trends", Tier: 0, Scope: "database", MinFB: "2.5"}, // C.4: sampler history → capacity projections
 	{Name: "fb_lwmonitoring", Tier: 0, Scope: "instance"},
 	{Name: "fb_backup_start", Tier: 1, Scope: "database"},
 	{Name: "fb_restore_test", Tier: 1, Scope: "database"},
@@ -264,6 +265,7 @@ func runForegroundCtx(ctx context.Context) {
 		return err == nil
 	})
 	sched.Start(context.Background())
+	startTrendsSampler(ctx, handle, pools) // C.4: capacity sampler (trends/ dir)
 	go func() {
 		for {
 			select {

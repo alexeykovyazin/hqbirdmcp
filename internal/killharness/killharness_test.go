@@ -77,6 +77,12 @@ func writeConfig(t *testing.T, stateDir string) string {
 	}
 	re := regexp.MustCompile(`(?m)^(\s*dir:\s*).*$`)
 	body := re.ReplaceAllString(string(src), "${1}"+filepath.ToSlash(stateDir))
+	// The C7 scenarios assert strict byte-level source-database invariants;
+	// the C.4 trends sampler attaches to every configured database on its
+	// ticker, and even a read-only-transaction attachment makes the engine
+	// touch the file (housekeeping on attach/detach). Disable it here so the
+	// invariants measure the killed workflow, not sampler side effects.
+	body += "\ntrends:\n    disabled: true\n"
 	p := filepath.Join(t.TempDir(), "kill.yaml")
 	if err := os.WriteFile(p, []byte(body), 0o640); err != nil {
 		t.Fatal(err)

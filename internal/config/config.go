@@ -33,7 +33,28 @@ type Config struct {
 	LocalMaxTier int       `yaml:"local_max_tier"`
 	Limits       Limits    `yaml:"limits"`
 	Retention    Retention `yaml:"retention"`
+	Trends       Trends    `yaml:"trends"`
 	SourcePath   string    `yaml:"-"`
+}
+
+// Trends configures the C.4 capacity sampler (periodic per-DB metrics
+// under <state.dir>/trends/). Enabled unless explicitly disabled; zero
+// intervals/days mean defaults.
+type Trends struct {
+	Disabled        bool `yaml:"disabled"`
+	IntervalSeconds int  `yaml:"interval_seconds"` // 0 → 300 (5 min)
+	RetentionDays   int  `yaml:"retention_days"`   // 0 → 30
+}
+
+// OrDefault fills the C.4 defaults.
+func (t Trends) OrDefault() Trends {
+	if t.IntervalSeconds <= 0 {
+		t.IntervalSeconds = 300
+	}
+	if t.RetentionDays <= 0 {
+		t.RetentionDays = 30
+	}
+	return t
 }
 
 // Limits bounds remote-mode resource use per identity (phase8_plan D4.1 /
