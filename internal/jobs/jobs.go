@@ -132,7 +132,7 @@ func (r *Runner) worker(ch chan task) {
 		}
 
 		res, err := t.fn(ctx, progress)
-		killpoint.Hit("job.done") // chaos harness: kill after work, before the terminal record
+		killpoint.Hit("job.done")        // chaos harness: kill after work, before the terminal record
 		wasCancelled := ctx.Err() != nil // check before our own cancel() call
 		cancel()
 		r.mu.Lock()

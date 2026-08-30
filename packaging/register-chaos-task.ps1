@@ -12,11 +12,18 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$ModuleDir = (Split-Path -Parent $PSScriptRoot),
+    [string]$ModuleDir = '',
     [string]$Time = '02:30'
 )
 
 $ErrorActionPreference = 'Stop'
+
+# resolve module dir in the body: $PSScriptRoot is reliably set here,
+# but not always at param-default evaluation time
+if (-not $ModuleDir) {
+    if (-not $PSScriptRoot) { throw "cannot locate script dir (run via -File)" }
+    $ModuleDir = Split-Path -Parent $PSScriptRoot
+}
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
     -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$ModuleDir\packaging\chaos-nightly.ps1`""
 $trigger = New-ScheduledTaskTrigger -Daily -At $Time

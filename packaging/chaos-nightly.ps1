@@ -17,10 +17,17 @@
 [CmdletBinding()]
 param(
     [int]$Count = 50,
-    [string]$ModuleDir = (Split-Path -Parent $PSScriptRoot)
+    [string]$ModuleDir = ''
 )
 
 $ErrorActionPreference = 'Stop'
+
+# resolve module dir in the body: $PSScriptRoot is reliably set here,
+# but not always at param-default evaluation time
+if (-not $ModuleDir) {
+    if (-not $PSScriptRoot) { throw "cannot locate script dir (run via -File)" }
+    $ModuleDir = Split-Path -Parent $PSScriptRoot
+}
 $log = Join-Path $ModuleDir 'docs\findings\chaos-log.md'
 if (-not (Test-Path $log)) {
     # Keep this file free of fb_* tool names: docs/ subdirs are phantom-linted.

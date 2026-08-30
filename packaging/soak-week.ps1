@@ -21,10 +21,17 @@
 param(
     [int]$Days = 7,
     [string]$ConfigPath = '',
-    [string]$ModuleDir = (Split-Path -Parent $PSScriptRoot)
+    [string]$ModuleDir = ''
 )
 
 $ErrorActionPreference = 'Continue'
+
+# resolve module dir in the body: $PSScriptRoot is reliably set here,
+# but not always at param-default evaluation time
+if (-not $ModuleDir) {
+    if (-not $PSScriptRoot) { throw "cannot locate script dir (run via -File)" }
+    $ModuleDir = Split-Path -Parent $PSScriptRoot
+}
 if (-not $ConfigPath) { $ConfigPath = Join-Path $ModuleDir 'fbmcp.dev.yaml' }
 $soakBin = Join-Path $ModuleDir 'dist\fbmcpsoak.exe'
 $ctl = Join-Path $ModuleDir 'dist\fbmcpctl.exe'
@@ -41,6 +48,16 @@ $env:FBMCP_DEV_PW = $env:FBMCP_DEV_PW
 if ($LASTEXITCODE -ne 0) { throw "bootstrap failed" }
 
 $deadline = (Get-Date).AddDays($Days)
+$lockFile = Join-Path $cfg.State.Dir 'soak-active.pid'
+if (Test-Path $lockFile) {
+    $other = Get-Content $lockFile -ErrorAction SilentlyContinue
+    if ($other -and (Get-Process -Id $other -ErrorAction SilentlyContinue)) {
+        Write-Host "soak already running (pid $other); nothing to do"
+        exit 0
+    }
+}
+$pidFromFile = $PID
+Set-Content -Path $lockFile -Value $pidFromFile
 Add-Content $report "`n## run started $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ($Days days)"
 while ((Get-Date) -lt $deadline) {
     $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
@@ -51,4 +68,5 @@ while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 3600
 }
 Add-Content $report "`n## run ended $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+Remove-Item $lockFile -ErrorAction SilentlyContinue
 Write-Host "soak sampling window complete; report: $report"

@@ -10,7 +10,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/aleks/fbmcp/internal/attach"
+	"github.com/aleks/fbmcp/internal/config"
 	"github.com/aleks/fbmcp/internal/policy"
 )
 
@@ -266,4 +269,33 @@ func findRepoRoot() (string, error) {
 		}
 		dir = parent
 	}
+}
+
+// cmdPing — real readiness check: can a client reach the kernel over the
+// attach socket right now? (fbmcpctl status is an offline state.json read;
+// it says nothing about a running kernel.) Exit 0 = reachable.
+func cmdPing(args []string) int {
+	cfgPath := "fbmcp.yaml"
+	if len(args) > 0 {
+		cfgPath = args[0]
+	}
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	timeout := 15 * time.Second
+	if len(args) > 1 {
+		if d, err := time.ParseDuration(args[1]); err == nil {
+			timeout = d
+		}
+	}
+	conn, err := attach.Dial(cfg.State.Dir, timeout)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ping: no kernel on the attach socket:", err)
+		return 1
+	}
+	conn.Close()
+	fmt.Println("kernel reachable")
+	return 0
 }

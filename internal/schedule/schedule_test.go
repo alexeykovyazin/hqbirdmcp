@@ -260,7 +260,7 @@ func TestClockJumpBackwardNoRefire(t *testing.T) {
 	st.PutSchedule(state.Schedule{
 		ID: "s1", Database: "spike5", Target: "fb_backup_start", Kind: "tool",
 		ArgsJSON: args, ArgHash: HashArgs(args), Cron: "* * * * *", Timezone: "UTC",
-		Enabled: true,
+		Enabled:     true,
 		LastFiredAt: time.Date(2026, 8, 17, 5, 0, 0, 0, time.UTC),
 	})
 	now := time.Date(2026, 8, 17, 4, 59, 0, 0, time.UTC) // clock wound back before the last fire

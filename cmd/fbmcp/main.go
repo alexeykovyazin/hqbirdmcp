@@ -12,7 +12,9 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -55,6 +57,7 @@ func main() {
 
 func runForegroundCtx(ctx context.Context) {
 	cfgPath := flag.String("config", "fbmcp.yaml", "path to fbmcp configuration")
+	serveMode := flag.Bool("serve", false, "unattended mode: no stdio transport; run attach socket + scheduler until terminated")
 	flag.Parse()
 
 	cfg, err := config.Load(*cfgPath)
@@ -362,7 +365,7 @@ func runForegroundCtx(ctx context.Context) {
 
 	registerExtra(server, handle, pools, engFacts, aud, st)
 	registerSurfaces(server, handle, st)
-	if err := serve(ctx, server, handle, gt); err != nil {
+	if err := serve(ctx, server, handle, gt, *serveMode); err != nil {
 		log.Fatalf("fbmcp: server: %v", err)
 	}
 }
@@ -379,7 +382,7 @@ func stopAndWait(cancel context.CancelFunc, done <-chan struct{}, timeout time.D
 	}
 }
 
-func serve(ctx context.Context, server *mcp.Server, handle *config.Handle, gt *gatedTools) error {
+func serve(ctx context.Context, server *mcp.Server, handle *config.Handle, gt *gatedTools, serveMode bool) error {
 	cfg := handle.Current()
 	stop, err := attach.Start(cfg.State.Dir, func(c net.Conn) {
 		_ = server.Run(ctx, &mcp.IOTransport{Reader: c, Writer: c})
@@ -416,6 +419,17 @@ func serve(ctx context.Context, server *mcp.Server, handle *config.Handle, gt *g
 		defer cancel()
 		_ = gt.httpLn.Close(ctx)
 	}()
+	if serveMode {
+		// Unattended mode (8M/M2 soak): no stdio transport — a detached
+		// kernel with no client must not exit on stdin EOF. The attach
+		// socket, scheduler and trends sampler keep the process useful;
+		// Ctrl+C / SIGTERM stops it.
+		ch := make(chan os.Signal, 1)
+		signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
+		fmt.Fprintln(os.Stderr, "fbmcp: serve mode (no stdio); interrupt or SIGTERM to stop")
+		<-ch
+		return nil
+	}
 	if attach.PipedStdin() {
 		return server.Run(ctx, &mcp.StdioTransport{})
 	}

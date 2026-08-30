@@ -47,6 +47,12 @@ func main() {
 
 	rc := 0
 	for _, db := range cfg.Databases {
+		// idempotent: a restart of the soak must not double the grants
+		if list, err := c.callTool("fb_schedule_list", map[string]any{"db": db.ID}); err == nil &&
+			strings.Contains(list, "nightly_verify") {
+			fmt.Printf("soak grant exists: %s (skipping)\n", db.ID)
+			continue
+		}
 		out, err := c.callTool("fb_schedule_create", map[string]any{
 			"db": db.ID, "target": "nightly_verify", "cron": "15 3 * * *", "timezone": "UTC",
 		})
