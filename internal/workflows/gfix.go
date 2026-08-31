@@ -6,11 +6,33 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/aleks/fbmcp/internal/adminexec"
 	"github.com/aleks/fbmcp/internal/config"
 )
+
+// runCmd is the subprocess seam (stubbed in tests).
+var runCmd = adminexec.Run
+
+// connString renders the TCP connection string for gfix:
+//
+//	localhost/port:/path/db.fdb        (Linux)
+//	localhost/port:Disk\Path\db.fdb    (Windows)
+//
+// A bare path means a LOCAL (embedded) attach: the client then loads the
+// embedded engine and scans config-declared plugins, which fails on
+// HQBird installs (MySQLEngine dependency error) — and the operation
+// silently does not happen while the exit code may still be 0. Always
+// connect over TCP to the instance's server.
+func connString(inst config.FBInstance, dbPath string) string {
+	port := "3050"
+	if i := strings.LastIndex(inst.Addr, ":"); i >= 0 {
+		port = inst.Addr[i+1:]
+	}
+	return fmt.Sprintf("localhost/%s:%s", port, dbPath)
+}
 
 func gfixBin(inst config.FBInstance) string {
 	name := "gfix"
@@ -56,7 +78,7 @@ func GfixShutdown(ctx context.Context, inst config.FBInstance, dbPath, user, pas
 	case "tran":
 		flag = "-tran"
 	}
-	res := adminexec.Run(ctx, gfixBin(inst), []string{"-shut", flag, "0", dbPath}, timeout, 64<<10,
+	res := runCmd(ctx, gfixBin(inst), []string{"-shut", flag, "0", connString(inst, dbPath)}, timeout, 64<<10,
 		gfixEnv(inst, user, pass))
 	if res.Err != nil {
 		return fmt.Errorf("gfix -shut: %w (%s)", res.Err, res.Output)
@@ -67,7 +89,7 @@ func GfixShutdown(ctx context.Context, inst config.FBInstance, dbPath, user, pas
 // GfixOnline brings the database back online. Called from compensation and
 // the workflow tail (AutoReopen).
 func GfixOnline(ctx context.Context, inst config.FBInstance, dbPath, user, pass string) error {
-	res := adminexec.Run(ctx, gfixBin(inst), []string{"-online", dbPath}, 30*time.Second, 64<<10,
+	res := runCmd(ctx, gfixBin(inst), []string{"-online", connString(inst, dbPath)}, 30*time.Second, 64<<10,
 		gfixEnv(inst, user, pass))
 	if res.Err != nil {
 		return fmt.Errorf("gfix -online: %w (%s)", res.Err, res.Output)
@@ -77,7 +99,7 @@ func GfixOnline(ctx context.Context, inst config.FBInstance, dbPath, user, pass 
 
 // GfixBuffers sets page buffers (P3.5 leftover).
 func GfixBuffers(ctx context.Context, inst config.FBInstance, dbPath, user, pass string, n int) error {
-	res := adminexec.Run(ctx, gfixBin(inst), []string{"-buffers", fmt.Sprintf("%d", n), dbPath}, 30*time.Second, 64<<10,
+	res := runCmd(ctx, gfixBin(inst), []string{"-buffers", fmt.Sprintf("%d", n), connString(inst, dbPath)}, 30*time.Second, 64<<10,
 		gfixEnv(inst, user, pass))
 	if res.Err != nil {
 		return fmt.Errorf("gfix -buffers: %w (%s)", res.Err, res.Output)
