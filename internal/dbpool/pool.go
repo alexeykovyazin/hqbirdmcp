@@ -39,6 +39,12 @@ func NewManager(cfg registry) *Manager {
 	}
 }
 
+// dsn builds the DRIVER connection string — a different syntax family from
+// the CLI client string (gfix/isql/gstat use "localhost/port:path"; the
+// driver wants "user:pass@host:port/path"). Both must keep the host:port
+// prefix: a bare path means a local/embedded attach, whose plugin scan
+// fails on HQBird installs ("Error loading plugin MySQLEngine") and the
+// connection silently does not happen.
 func dsn(addr, path, user, pass string) string {
 	return fmt.Sprintf("%s:%s@%s/%s?charset=UTF8", user, pass, addr, path)
 }
