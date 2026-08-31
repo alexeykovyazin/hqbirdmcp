@@ -83,6 +83,40 @@ func writeConfig(t *testing.T, stateDir string) string {
 	// touch the file (housekeeping on attach/detach). Disable it here so the
 	// invariants measure the killed workflow, not sampler side effects.
 	body += "\ntrends:\n    disabled: true\n"
+
+	// Per-run database COPIES: the scenarios share the dev spike files with
+	// anything else running on the host (the soak kernel samples them every
+	// 5 minutes; its attachments change bytes and broke the C7a invariants
+	// — observed live 2026-08-31). Redirect every database path to a copy
+	// under the isolated state dir.
+	dbDir := filepath.Join(stateDir, "dbs")
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pathRe := regexp.MustCompile(`(?m)^(\s*path:\s*)(.+)$`)
+	copies := map[string]string{}
+	for _, m := range pathRe.FindAllStringSubmatch(string(src), -1) {
+		orig := strings.TrimSpace(m[2])
+		if _, done := copies[orig]; done {
+			continue
+		}
+		b, err := os.ReadFile(filepath.FromSlash(strings.TrimSpace(orig)))
+		if err != nil {
+			continue // not a local file / not copyable — leave the path as-is
+		}
+		dst := filepath.ToSlash(filepath.Join(dbDir, filepath.Base(strings.TrimSpace(orig))))
+		if err := os.WriteFile(filepath.FromSlash(dst), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		copies[orig] = dst
+	}
+	body = pathRe.ReplaceAllStringFunc(body, func(line string) string {
+		m := pathRe.FindStringSubmatch(line)
+		if c, ok := copies[strings.TrimSpace(m[2])]; ok {
+			return m[1] + c
+		}
+		return line
+	})
 	p := filepath.Join(t.TempDir(), "kill.yaml")
 	if err := os.WriteFile(p, []byte(body), 0o640); err != nil {
 		t.Fatal(err)

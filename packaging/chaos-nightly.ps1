@@ -47,7 +47,10 @@ finally { Pop-Location }
 
 $verdict = if ($code -eq 0) { 'GREEN' } else { 'RED' }
 Add-Content -Path $log -Value "$stamp count=$Count verdict=$verdict exit=$code"
-Write-Host "chaos run: $verdict (logged to $log)"
+# keep the full output for post-mortem (outside docs/: test names are not phantom-lint-safe)
+$detail = Join-Path $env:TEMP 'fbmcp-chaos-last.log'
+$out | Set-Content -Path $detail
+Write-Host "chaos run: $verdict (logged to $log; detail: $detail)"
 if ($code -ne 0) {
     $out | Select-Object -Last 40 | Write-Host
     exit $code
