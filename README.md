@@ -1,21 +1,142 @@
 # fbmcp — Firebird DBA MCP Server
 
-Work-in-progress implementation per the plans in the parent directory
-(`mcp_implementation_plan.md`, `phase0_plan.md` … `phase6_plan_v2.md`,
-`phase7_plan.md`).
+fbmcp is an MCP (Model Context Protocol) server that lets an LLM client —
+Claude Desktop, Claude Code, ZCode, any MCP host — operate Firebird
+databases as a DBA: monitoring, backups and verified restores, SQL/DDL/DCL,
+security, indexes, migrations and a scheduler, across Firebird 2.5–5.0.
+Every mutating call passes a tiered policy engine and a **human confirmation
+gate** before it touches the database, and every decision is written to a
+hash-chained audit log. 67 tools in total (32 read-only, 27 Tier 1, 7
+Tier 2, 1 disabled-by-design Tier 3).
 
-**Current status: Phase 7 (HQBird extensions, M7) closed 2026-08-19. Phase 6 (hardening) remains open — C7 kill-harness, P6.2 chaos/soak and the P6.3 runbook are the remaining M6 work, tracked as WS1 in [`improvement_plan.md`](../improvement_plan.md).**
+## Quick start
 
-Execution plan: [`phase6_plan_v2.md`](../phase6_plan_v2.md). Claims: [`docs/findings/claims-register.md`](docs/findings/claims-register.md).
+Requirements: Go ≥ 1.25.13, CGO not needed (pure-Go Firebird driver),
+a reachable Firebird 2.5–5.0 server. Windows and Linux.
 
-**Claude Desktop / Claude Code:** [`docs/claude-desktop.md`](docs/claude-desktop.md) — stdio MCP, spike config, confirmations.
+```bash
+# checkout
+git clone https://github.com/alexeykovyazin/hqbirdmcp.git
+cd hqbirdmcp/fbmcp
+```
 
-Everything under `spikes/` is throwaway/reference code — it intentionally cuts
-corners (hardcoded ports, `masterkey` passwords) that production code must not.
+```powershell
+# setup Go (skip if `go version` already reports >= 1.25)
+winget install GoLang.Go          # Windows; otherwise https://go.dev/dl/
+go version                        # must be >= 1.25
+```
 
-## Environment (this dev host)
+```bash
+# build — one binary per surface, into dist/
+mkdir -p dist
+CGO_ENABLED=0 go build -trimpath -o dist/fbmcp.exe ./cmd/fbmcp        # the MCP server (stdio)
+CGO_ENABLED=0 go build -trimpath -o dist/fbmcpctl.exe ./cmd/fbmcpctl  # operator CLI
+# Windows tray for Tier >= 2 approvals — GUI subsystem, no console window:
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist/fbmcp-tray.exe ./cmd/fbmcp-tray
 
-- Go 1.24.5, Windows amd64
+# tests (live Firebird suites are opt-in via FBMCP_*_LIVE env vars)
+go test ./...
+```
+
+On the dev host, `packaging/rebuild-install.ps1` does the whole loop in one
+command: rebuild all four binaries into `dist\`, stop/update/restart the
+running kernel and tray, merge the MCP client config, then `fbmcpctl doctor`.
+
+Wire the server into an MCP client and configure `fbmcp.yaml`:
+[`docs/claude-desktop.md`](docs/claude-desktop.md). Then verify the host:
+`dist\fbmcpctl doctor <config>` must end `doctor: green`.
+
+## Status (v1.0 run-up, phase 8)
+
+Plans: [`../phase8_plan.md`](../phase8_plan.md) (operational),
+[`../improvement_plan.md`](../improvement_plan.md) (workstreams).
+Claims register: [`docs/findings/claims-register.md`](docs/findings/claims-register.md)
+(23 verified-green, 1 accepted-residual, 0 open).
+
+**Done** (development phase 8D complete):
+
+- Core kernel: single-process MCP server (stdio + optional remote TLS/HTTP
+  with API-key identities), live `fbmcp.yaml` reload without restarts,
+  registry ids instead of connection strings.
+- Confirmation gate: tiered policy engine with identity ceilings,
+  maintenance windows and verified-backup preconditions; in-band
+  `fb_confirm` for Tier 1; out-of-band only for Tier ≥ 2
+  (`fbmcp-tray` popup / `fbmcpctl approve`); Tier 3 disabled by design
+  (ADR-029); `mode: preview` impact statements on every gated tool.
+- Monitoring & diagnostics: engine facts, sessions, transactions, gstat,
+  query plan analysis + index advice, schema/data diff, capacity trends,
+  lightweight monitoring, engine traces.
+- Data safety: gbak backup, incremental nbackup, test-restore verification
+  catalog, restore-replace with `.pre-restore` snapshot, retention with
+  dry-run default, `nightly_verify` scheduled workflow.
+- SQL surface: `fb_write` classified scripts (per-statement tiers,
+  DML-atomic vs DDL-per-statement execution), HQBird/FB5 extensions
+  (materialized views, `INDEX CONCURRENTLY`), migrations with manifest-bound
+  batch confirmation (ADR-030).
+- Security & scheduler: users/roles/grants with lockout guards, session
+  kill, named trace templates; durable pre-authorized schedule grants
+  (ADR-023).
+- Hardening: chaos kill-harness (13 fault-injection sites, 9+ scenarios),
+  audit chain with `fbmcpctl verify`/`repair`, structured error envelopes,
+  OS-keyring secret fallback, per-identity rate limits, fuzz corpus,
+  `fbmcpctl gate` report. CI green.
+
+**In progress** (manual validation phase 8M, running unattended):
+
+- **M2 soak week** — live on the dev kernel since 2026-08-30: 6
+  `nightly_verify` grants, hourly health samples into
+  [`docs/findings/soak-report.md`](docs/findings/soak-report.md); 7-day window.
+- **M3 nightly chaos loop** — `fbmcp-chaos-nightly` (daily 02:30, N=50),
+  results in [`docs/findings/chaos-log.md`](docs/findings/chaos-log.md);
+  acceptance is ≥ 5 consecutive clean nights.
+- **M8 client smoke** — real-task usage of the deployed tools.
+
+**Planned** (remaining to the v1.0 gate):
+
+- **M1** runbook walkthrough on a fresh Windows host
+- **M4** Linux matrix execution (FB 2.5/3.0/4.0/5.0 via compose)
+- **M5** disk-full injection (VHD/quota) behavior documentation
+- **M6** materialized-view refresh live verification under concurrent reads
+- **M7** lwmonitoring levels-2–4 upstream report to HQBird
+- **M9** go/no-go gate review against `phase6_plan_v2.md` §9, release
+  assembly and the v1.0 tag
+
+## General description
+
+fbmcp runs as **one kernel process** per state directory (ADR-005): the
+first client launches it over stdio, extra stdio clients and a remote
+listener (TLS + API keys, ADR-022) attach to the same kernel. Configuration
+lives in one `fbmcp.yaml`; edits are applied in-process (ADR-012) — no
+client or process restarts. Databases are referenced by registry id
+(`db`, `instance`), never by path in a client conversation; secrets come
+from environment variables with an OS-keyring fallback.
+
+The safety model (§5.5 / ADR-006/007/019/021/029/030): every tool has a
+tier — **0** reads (engine-enforced read-only transactions, no
+confirmation), **1** mutations (single human confirmation, in-band token),
+**2** high impact (out-of-band confirmation only, maintenance window +
+verified backup < 24 h preconditions), **3** critical (disabled by design).
+A gated call never executes directly: it returns an impact statement plus a
+pending action that a human confirms through a channel the LLM cannot
+reach for Tier ≥ 2. The confirmed body runs as a job on the admin pool,
+with progress via `fb_job_status`; previews (`mode: preview`) are
+informational only. Every decision — allow / pending / approved / denied —
+is appended to a hash-chained `audit.jsonl`.
+
+Host-side surfaces (not MCP tools): `fbmcpctl` (approve, status, setup,
+doctor, verify, repair, secret, gate, ping) and the Windows `fbmcp-tray`
+Approve/Deny popup — these exist because Tier ≥ 2 confirmation must be
+out of the model's reach. Scheduled jobs run from durable pre-authorized
+grants (confirmed once at create time); Tier 3 and restore-replace can
+never be scheduled.
+
+Everything under `spikes/` is throwaway/reference code — it intentionally
+cuts corners (hardcoded ports, `masterkey` passwords) that production code
+must not.
+
+### Environment (this dev host)
+
+- Go 1.25.13, Windows amd64
 - Local Firebird instances (HQbird installs, all running as services):
   - FB 2.5 — port 3052 (`C:\HQbird\Firebird25`)
   - FB 3.0 — port 3053 (`C:\HQbird\Firebird30`)
