@@ -38,7 +38,7 @@ func dialogWorker(stateDir string, tr *tracker, queue <-chan state.PendingAction
 func showOneDialog(stateDir string, tr *tracker, p state.PendingAction) {
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Fprintln(os.Stderr, "fbmcp-tray: dialog panic (action left pending):", r)
+			logErr("dialog panic (action %s left pending): %v", p.ID, r)
 		}
 	}()
 
@@ -48,7 +48,7 @@ func showOneDialog(stateDir string, tr *tracker, p state.PendingAction) {
 
 	pressed, err := approveDenyDialog(title, main, content)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "fbmcp-tray: dialog:", err)
+		logErr("dialog: %v", err)
 		tr.Snooze(p.ID) // retry after the cool-down rather than never
 		return
 	}
@@ -68,10 +68,10 @@ func showOneDialog(stateDir string, tr *tracker, p state.PendingAction) {
 func writeMarker(stateDir, subdir, id, body string) {
 	dir := filepath.Join(stateDir, subdir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		fmt.Fprintln(os.Stderr, "fbmcp-tray: marker dir:", err)
+		logErr("marker dir %s: %v", dir, err)
 		return
 	}
 	if err := os.WriteFile(filepath.Join(dir, id), []byte(body), 0o640); err != nil {
-		fmt.Fprintln(os.Stderr, "fbmcp-tray: write marker:", err)
+		logErr("write marker %s/%s: %v", subdir, id, err)
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/getlantern/systray"
 
@@ -25,6 +26,17 @@ import (
 var trayIcon []byte
 
 func main() {
+	// A windowsgui binary dies without any visible trace when a goroutine
+	// panics, and WS2.6a: a silent exit is indistinguishable from "running
+	// with nothing pending" — surface main-goroutine crashes before
+	// exiting. Worker-goroutine panics are recovered at their own loops.
+	defer func() {
+		if r := recover(); r != nil {
+			msgBox("fbmcp-tray — crashed", fmt.Sprintf("fbmcp-tray exited unexpectedly: %v\n\nPending approvals will not pop until it is restarted.", r))
+			os.Exit(1)
+		}
+	}()
+
 	// Single-instance guard (WS2.6f): two trays would double-prompt the
 	// operator for the same pending action.
 	if !acquireSingleInstance() {
@@ -35,12 +47,22 @@ func main() {
 	// Default config path is exe-relative, not CWD-relative (WS2.6b): this
 	// is a GUI binary launched from a Startup shortcut where the CWD is
 	// unpredictable and stderr goes nowhere.
+	// --console reattaches stdout/stderr to the parent terminal for
+	// diagnostics; every other argument stays the config path.
+	var args []string
+	for _, a := range os.Args[1:] {
+		if a == "--console" {
+			attachConsole()
+			continue
+		}
+		args = append(args, a)
+	}
 	cfgPath := "fbmcp.yaml"
 	if exe, err := os.Executable(); err == nil {
 		cfgPath = filepath.Join(filepath.Dir(exe), "fbmcp.yaml")
 	}
-	if len(os.Args) > 1 {
-		cfgPath = os.Args[1]
+	if len(args) > 0 {
+		cfgPath = args[0]
 	}
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
@@ -51,8 +73,26 @@ func main() {
 		os.Exit(1)
 	}
 	stateDir := cfg.State.Dir
+	trayLogPath = filepath.Join(stateDir, "tray.log")
 
 	systray.Run(func() { onReady(stateDir) }, func() {})
+}
+
+// trayLogPath is the diagnostic sink for a windowsgui binary: stderr goes
+// nowhere unless --console was passed, so recovered panics and dialog
+// failures append here instead. Best-effort; empty until config loads.
+var trayLogPath string
+
+func logErr(format string, args ...any) {
+	if trayLogPath == "" {
+		return
+	}
+	f, err := os.OpenFile(trayLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o640)
+	if err != nil {
+		return // nothing to log into — nothing else to do
+	}
+	defer f.Close()
+	fmt.Fprintf(f, time.Now().Format("2006-01-02 15:04:05.000 ")+format+"\n", args...)
 }
 
 func onReady(stateDir string) {

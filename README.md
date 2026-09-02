@@ -213,9 +213,12 @@ Tier ≥ 2 actions require out-of-band confirmation the MCP client cannot reach.
 **`fbmcp-tray`** (Windows) sits in the system tray, polls the state dir for
 Tier ≥ 2 pending actions, and pops a native Approve/Deny dialog for each one.
 Approving/denying writes the same marker files the CLI below writes.
+Built as a GUI-subsystem binary (`-H=windowsgui` — no console window at
+logon); recovered panics and dialog failures append to `tray.log` in the
+state dir, and `--console` reattaches stdout/stderr for terminal diagnostics.
 
 ```
-fbmcp-tray.exe [fbmcp.yaml]
+fbmcp-tray.exe [--console] [fbmcp.yaml]
 ```
 
 **`fbmcpctl`** (cross-platform; absorbs the former `fbmcp-approve` alias):

@@ -7,7 +7,8 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X ma
 GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=dev" -o dist/fbmcp-linux-amd64 ./cmd/fbmcp
 GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=dev" -o dist/fbmcp-linux-arm64 ./cmd/fbmcp
 go build -trimpath -o dist/fbmcpctl.exe ./cmd/fbmcpctl
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o dist/fbmcp-tray.exe ./cmd/fbmcp-tray
+# fbmcp-tray: -H=windowsgui = GUI subsystem, no console window at logon
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist/fbmcp-tray.exe ./cmd/fbmcp-tray
 ```
 
 Checksums: `Get-FileHash dist/*` / `sha256sum dist/*`. SBOM: `go version -m dist/fbmcp-*` (feeds P6.1).

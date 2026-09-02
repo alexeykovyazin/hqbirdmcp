@@ -65,6 +65,12 @@ $ExePaths = @{
     'fbmcp-tray' = './cmd/fbmcp-tray'
     'fbmcpsoak'  = './cmd/fbmcpsoak'
 }
+# fbmcp-tray is the only GUI-subsystem binary: -H=windowsgui keeps Windows
+# from allocating a console window at logon. The others must stay console —
+# fbmcp is an stdio MCP server, fbmcpctl/fbmcpsoak are CLIs.
+$ExeLdExtra = @{
+    'fbmcp-tray' = ' -H=windowsgui'
+}
 
 function Step([string]$msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 
@@ -91,7 +97,7 @@ if (-not $SkipBuild) {
         try {
             $env:CGO_ENABLED = '0'
             foreach ($name in $ExeNames) {
-                & go build -trimpath -ldflags "-s -w -X main.version=$stamp" -o (Join-Path $staging "$name.exe") $ExePaths[$name]
+                & go build -trimpath -ldflags "-s -w -X main.version=$stamp$($ExeLdExtra[$name])" -o (Join-Path $staging "$name.exe") $ExePaths[$name]
                 if ($LASTEXITCODE -ne 0) { throw "build failed: $name" }
                 Write-Host "    built $name.exe"
             }

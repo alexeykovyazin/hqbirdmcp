@@ -50,58 +50,70 @@ func (t *tracker) Snooze(id string) {
 // bytes), so pruning is only about bounding memory.
 func pollLoop(stateDir string, tr *tracker, queue chan<- state.PendingAction) {
 	for {
-		st, err := state.Open(stateDir)
-		if err != nil {
-			// WS2.6c: previously swallowed — pending approvals would just
-			// stop appearing with no operator-visible signal.
-			systray.SetTooltip("fbmcp — state unreadable: " + err.Error())
-			time.Sleep(pollInterval)
+		pollOnce(stateDir, tr, queue)
+		time.Sleep(pollInterval)
+	}
+}
+
+// pollOnce is one poll cycle behind a recover: a panic on a worker
+// goroutine is process-fatal and invisible in a windowsgui binary, so a
+// bad tick must degrade to a skipped cycle, not a silent tray death.
+// (The dialog path recovers per-dialog in showOneDialog.)
+func pollOnce(stateDir string, tr *tracker, queue chan<- state.PendingAction) {
+	defer func() {
+		if r := recover(); r != nil {
+			logErr("poll tick panic (recovered): %v", r)
+		}
+	}()
+	st, err := state.Open(stateDir)
+	if err != nil {
+		// WS2.6c: previously swallowed — pending approvals would just
+		// stop appearing with no operator-visible signal.
+		systray.SetTooltip("fbmcp — state unreadable: " + err.Error())
+		return // pollLoop sleeps before the next cycle
+	}
+	now := time.Now()
+	live := map[string]bool{}
+	count := 0
+	for _, p := range st.Pending() {
+		if p.Tier < 2 {
 			continue
 		}
-		now := time.Now()
-		live := map[string]bool{}
-		count := 0
-		for _, p := range st.Pending() {
-			if p.Tier < 2 {
-				continue
-			}
-			live[p.ID] = true
-			count++
-			tr.mu.Lock()
-			until, snoozed := tr.snooze[p.ID]
-			if snoozed && now.After(until) {
-				delete(tr.snooze, p.ID)
-				snoozed = false
-			}
-			eligible := !tr.shown[p.ID] && !snoozed
-			if eligible {
-				// WS2.6d: non-blocking send. A full queue no longer wedges
-				// the poll goroutine (which also froze tooltip updates and
-				// pruning); the id simply stays unshown and is retried on
-				// the next tick.
-				select {
-				case queue <- p:
-					tr.shown[p.ID] = true
-				default:
-				}
-			}
-			tr.mu.Unlock()
-		}
+		live[p.ID] = true
+		count++
 		tr.mu.Lock()
-		for id := range tr.shown {
-			if !live[id] {
-				delete(tr.shown, id)
-			}
+		until, snoozed := tr.snooze[p.ID]
+		if snoozed && now.After(until) {
+			delete(tr.snooze, p.ID)
+			snoozed = false
 		}
-		for id := range tr.snooze {
-			if !live[id] {
-				delete(tr.snooze, id)
+		eligible := !tr.shown[p.ID] && !snoozed
+		if eligible {
+			// WS2.6d: non-blocking send. A full queue no longer wedges
+			// the poll goroutine (which also froze tooltip updates and
+			// pruning); the id simply stays unshown and is retried on
+			// the next tick.
+			select {
+			case queue <- p:
+				tr.shown[p.ID] = true
+			default:
 			}
 		}
 		tr.mu.Unlock()
-		updateTooltip(count)
-		time.Sleep(pollInterval)
 	}
+	tr.mu.Lock()
+	for id := range tr.shown {
+		if !live[id] {
+			delete(tr.shown, id)
+		}
+	}
+	for id := range tr.snooze {
+		if !live[id] {
+			delete(tr.snooze, id)
+		}
+	}
+	tr.mu.Unlock()
+	updateTooltip(count)
 }
 
 func updateTooltip(count int) {
