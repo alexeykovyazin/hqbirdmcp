@@ -152,7 +152,18 @@ jobs:
           FBMCP_MIGRATE_LIVE: "1"
           FBMCP_DIFF_LIVE: "1"
           FBMCP_TRENDS_LIVE: "1"
-        run: go test ./... -count=1 -timeout 25m
+        run: |
+          # FB containers occasionally stall a few seconds on GH runners
+          # (random read timeouts in a different test each run, always green
+          # on rerun) — retry the whole suite once before failing.
+          ok=0
+          for attempt in 1 2; do
+            if go test ./... -count=1 -timeout 25m; then ok=1; break; fi
+            [ "$attempt" = 2 ] && break
+            echo "::warning::suite failed on attempt $attempt — retrying once"
+            sleep 30
+          done
+          test "$ok" = 1
       - name: linux binary + checksum (gate §9-3 evidence per arch)
         run: |
           mkdir -p dist
