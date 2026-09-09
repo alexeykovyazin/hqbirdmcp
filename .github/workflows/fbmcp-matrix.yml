@@ -22,17 +22,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # firebirdsql/firebird dropped the old "3.0"/"4.0"/"5.0" floating
+          # tags and every 2.5 tag (2026-09); current aliases are 3/4/5 and
+          # 2.5 lives only on the pre-rename jacobalberty/firebird image.
           - fb: "2.5"
+            image: "jacobalberty/firebird"
             tag: "2.5-ss"
           - fb: "3.0"
-            tag: "3.0"
+            image: "firebirdsql/firebird"
+            tag: "3"
           - fb: "4.0"
-            tag: "4.0"
+            image: "firebirdsql/firebird"
+            tag: "4"
           - fb: "5.0"
-            tag: "5.0"
+            image: "firebirdsql/firebird"
+            tag: "5"
     services:
       firebird:
-        image: firebirdsql/firebird:${{ matrix.tag }}
+        image: ${{ matrix.image }}:${{ matrix.tag }}
         ports:
           - 3050:3050
         env:
