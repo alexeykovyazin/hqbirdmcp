@@ -63,7 +63,7 @@ instances:
       default_backup_dir: /tmp/fbmcp-matrix/backup
       default_work_dir: /tmp/fbmcp-matrix/work
     - id: fbstd
-      addr: localhost:13050
+      addr: 127.0.0.1:13050
       bin_dir: /usr/local/firebird/bin
       version: "${VERSION}"
       default_backup_dir: /tmp/fbmcp-matrix/backup

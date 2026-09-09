@@ -97,7 +97,7 @@ jobs:
         run: |
           ISQL="$(command -v isql-fb || command -v isql)"
           GBAK="$(command -v gbak-fb || command -v gbak)"
-          DSN="localhost/3050:${{ matrix.data }}/employee.fdb"
+          DSN="127.0.0.1/3050:${{ matrix.data }}/employee.fdb"
           "$GBAK" -rep -user SYSDBA -password masterkey \
             packaging/docker/testdata/employee.fbk "$DSN"
           "$ISQL" -q -user SYSDBA -password masterkey "$DSN" \
@@ -131,7 +131,7 @@ jobs:
       - name: generate matrix config
         env:
           FBMCP_MATRIX_INSTANCE: fb-${{ matrix.fb }}
-          FBMCP_MATRIX_HOST: localhost
+          FBMCP_MATRIX_HOST: 127.0.0.1
           FBMCP_MATRIX_DBPATH: ${{ matrix.data }}
           FBMCP_MATRIX_VERSION: ${{ matrix.fb }}
         shell: bash
@@ -142,7 +142,7 @@ jobs:
           FBMCP_DEV_PW: masterkey
           FBMCP_REQUIRE_FIREBIRD: "1"
           FBMCP_FUSE_DB: ${{ matrix.data }}/employee.fdb
-          FBMCP_FUSE_ADDR: localhost:3050
+          FBMCP_FUSE_ADDR: 127.0.0.1:3050
           FBMCP_DIFF_WORK: /tmp/fbmcp-matrix/work
           FBMCP_GSTAT_BIN: /usr/local/firebird/bin
           FBMCP_GSTAT_DB: ${{ matrix.data }}/employee5std.fdb
