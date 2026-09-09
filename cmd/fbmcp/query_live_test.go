@@ -217,34 +217,34 @@ func TestQueryLiveMCP(t *testing.T) {
 			t.Fatalf("query-log line not JSON: %v\n%s", err, l)
 		}
 		switch e["outcome"] {
-			case "ok":
-				if strings.Contains(e["query"].(string), "EMPLOYEE_PROJECT") {
-					okSel = true
-					if e["plan"] == nil || e["plan"].(string) == "" {
-						t.Fatal("ok entry missing plan")
+		case "ok":
+			if strings.Contains(e["query"].(string), "EMPLOYEE_PROJECT") {
+				okSel = true
+				if e["plan"] == nil || e["plan"].(string) == "" {
+					t.Fatal("ok entry missing plan")
+				}
+				pts, _ := e["per_table_stats"].([]any)
+				if fb5Plus {
+					if len(pts) == 0 {
+						t.Fatal("ok entry missing per_table_stats on FB5")
 					}
-					pts, _ := e["per_table_stats"].([]any)
-					if fb5Plus {
-						if len(pts) == 0 {
-							t.Fatal("ok entry missing per_table_stats on FB5")
+					seen := map[string]bool{}
+					for _, p := range pts {
+						tbl := p.(map[string]any)["table"].(string)
+						if seen[tbl] {
+							t.Fatalf("per_table_stats duplicate: %s", tbl)
 						}
-						seen := map[string]bool{}
-						for _, p := range pts {
-							tbl := p.(map[string]any)["table"].(string)
-							if seen[tbl] {
-								t.Fatalf("per_table_stats duplicate: %s", tbl)
-							}
-							seen[tbl] = true
-						}
-					}
-					st, _ := e["stats"].(map[string]any)
-					if st == nil || st["seq_reads"].(float64) <= 0 {
-						t.Fatal("ok entry missing stats")
-					}
-					if e["engine"] != ver {
-						t.Fatalf("engine field = %v, want %s", e["engine"], ver)
+						seen[tbl] = true
 					}
 				}
+				st, _ := e["stats"].(map[string]any)
+				if st == nil || st["seq_reads"].(float64) <= 0 {
+					t.Fatal("ok entry missing stats")
+				}
+				if e["engine"] != ver {
+					t.Fatalf("engine field = %v, want %s", e["engine"], ver)
+				}
+			}
 		case "fallback":
 			okFallback = true
 			if !strings.Contains(e["error"].(string), "read-only") {
