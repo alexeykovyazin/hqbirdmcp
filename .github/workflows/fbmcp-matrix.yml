@@ -102,20 +102,32 @@ jobs:
             packaging/docker/testdata/employee.fbk "$DSN"
           "$ISQL" -q -user SYSDBA -password masterkey "$DSN" \
             -i packaging/docker/seed-employee.sql
-      - name: mirror the container DB to the same host path (gstat reads files directly)
+      - name: container-side provisioning (work dir, employee5std copy)
         run: |
           CID=$(docker ps -q --filter "ancestor=${{ matrix.image }}:${{ matrix.tag }}" | head -1)
           test -n "$CID" || { echo "firebird service container not found" >&2; exit 1; }
-          sudo mkdir -p "${{ matrix.data }}"
-          sudo docker cp "$CID":${{ matrix.data }}/employee.fdb "${{ matrix.data }}/employee.fdb"
-          sudo cp "${{ matrix.data }}/employee.fdb" "${{ matrix.data }}/employee5std.fdb"
-          sudo chmod a+r "${{ matrix.data }}/employee.fdb" "${{ matrix.data }}/employee5std.fdb"
-          ls -la "${{ matrix.data }}"
+          echo "FBMCP_CID=$CID" >> "$GITHUB_ENV"
+          docker exec "$CID" sh -c "mkdir -p /tmp/fbmcp-matrix/work && chmod 777 /tmp/fbmcp-matrix /tmp/fbmcp-matrix/work"
+          docker exec "$CID" cp "${{ matrix.data }}/employee.fdb" "${{ matrix.data }}/employee5std.fdb"
+      - name: gstat wrapper (host gstat cannot read foreign ODS; run the container's own)
+        run: |
+          cat <<WRAP | sudo tee /usr/local/firebird/bin/gstat > /dev/null
+          #!/bin/sh
+          # firebird 2.5 refuses to run gstat as root, prefer the firebird user
+          if docker exec -u firebird "$FBMCP_CID" true 2>/dev/null; then
+            exec docker exec -u firebird "$FBMCP_CID" gstat "\$@"
+          else
+            exec docker exec "$FBMCP_CID" gstat "\$@"
+          fi
+          WRAP
+          sudo chmod +x /usr/local/firebird/bin/gstat
+          /usr/local/firebird/bin/gstat -h 2>&1 | head -3 || true
       - name: generate matrix config
         env:
           FBMCP_MATRIX_INSTANCE: fb-${{ matrix.fb }}
           FBMCP_MATRIX_HOST: localhost
           FBMCP_MATRIX_DBPATH: ${{ matrix.data }}
+          FBMCP_MATRIX_VERSION: ${{ matrix.fb }}
         shell: bash
         run: |
           bash packaging/docker/matrix-config.sh
@@ -126,6 +138,8 @@ jobs:
           FBMCP_FUSE_DB: ${{ matrix.data }}/employee.fdb
           FBMCP_FUSE_ADDR: localhost:3050
           FBMCP_DIFF_WORK: /tmp/fbmcp-matrix/work
+          FBMCP_GSTAT_BIN: /usr/local/firebird/bin
+          FBMCP_GSTAT_DB: ${{ matrix.data }}/employee5std.fdb
           FBMCP_QUERY_LIVE: "1"
           FBMCP_GSTAT_LIVE: "1"
           FBMCP_ADVICE_LIVE: "1"

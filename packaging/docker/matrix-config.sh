@@ -14,6 +14,7 @@ INSTANCE="${FBMCP_MATRIX_INSTANCE:-fb50}"
 HOST="${FBMCP_MATRIX_HOST:-fb50}"   # compose service name (runner network)
 PORT="${FBMCP_MATRIX_PORT:-3050}"
 DBPATH="${FBMCP_MATRIX_DBPATH:-/var/lib/firebird/data}"
+VERSION="${FBMCP_MATRIX_VERSION:-5.0}"   # real engine behind this job
 PW="masterkey"
 
 wait_for() { # host port label
@@ -40,7 +41,7 @@ instances:
     - id: fb5
       addr: ${HOST}:${PORT}
       bin_dir: /usr/local/firebird/bin
-      version: "5.0"
+      version: "${VERSION}"
       service_user: SYSDBA
       service_secret_env: FBMCP_DEV_PW
       default_ro_user: SYSDBA
@@ -52,7 +53,7 @@ instances:
     - id: fb3
       addr: ${HOST}:${PORT}
       bin_dir: /usr/local/firebird/bin
-      version: "3.0"
+      version: "${VERSION}"
       service_user: SYSDBA
       service_secret_env: FBMCP_DEV_PW
       default_ro_user: SYSDBA
@@ -64,7 +65,7 @@ instances:
     - id: fbstd
       addr: localhost:13050
       bin_dir: /usr/local/firebird/bin
-      version: "3.0"
+      version: "${VERSION}"
       default_backup_dir: /tmp/fbmcp-matrix/backup
       default_work_dir: /tmp/fbmcp-matrix/work
 databases:

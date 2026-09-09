@@ -104,6 +104,20 @@ func TestQueryLiveMCP(t *testing.T) {
 		return b.String()
 	}
 
+	// Real engine version of the employee DB's instance: per-table stats
+	// only exist on FB 5+, so the expectations below must follow it.
+	ver := "5.0"
+	for _, db := range cfg.Databases {
+		if db.ID == "employee" {
+			for _, i := range cfg.Instances {
+				if i.ID == db.Instance && i.Version != "" {
+					ver = i.Version
+				}
+			}
+		}
+	}
+	fb5Plus := strings.HasPrefix(ver, "5") || strings.HasPrefix(ver, "6")
+
 	t0 := time.Now()
 	mark := func(s string) { t.Logf("[%6.1fs] %s", time.Since(t0).Seconds(), s) }
 	mark("session connected")
@@ -139,7 +153,11 @@ func TestQueryLiveMCP(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("SELECT failed:\n%s", out)
 	}
-	for _, want := range []string{"EMP_NO | FULL_NAME", "rows: 92\n", "plan:", "per-table:", "EMPLOYEE_PROJECT", "EMPLOYEE", "stats:", "elapsed:"} {
+	wants := []string{"EMP_NO | FULL_NAME", "rows: 92\n", "plan:", "EMPLOYEE_PROJECT", "EMPLOYEE", "stats:", "elapsed:"}
+	if fb5Plus {
+		wants = append(wants, "per-table:")
+	}
+	for _, want := range wants {
 		if !strings.Contains(out, want) {
 			t.Fatalf("SELECT output missing %q:\n%.600s", want, out)
 		}
@@ -197,32 +215,34 @@ func TestQueryLiveMCP(t *testing.T) {
 			t.Fatalf("query-log line not JSON: %v\n%s", err, l)
 		}
 		switch e["outcome"] {
-		case "ok":
-			if strings.Contains(e["query"].(string), "EMPLOYEE_PROJECT") {
-				okSel = true
-				if e["plan"] == nil || e["plan"].(string) == "" {
-					t.Fatal("ok entry missing plan")
-				}
-				pts, _ := e["per_table_stats"].([]any)
-				if len(pts) == 0 {
-					t.Fatal("ok entry missing per_table_stats on FB5")
-				}
-				seen := map[string]bool{}
-				for _, p := range pts {
-					tbl := p.(map[string]any)["table"].(string)
-					if seen[tbl] {
-						t.Fatalf("per_table_stats duplicate: %s", tbl)
+			case "ok":
+				if strings.Contains(e["query"].(string), "EMPLOYEE_PROJECT") {
+					okSel = true
+					if e["plan"] == nil || e["plan"].(string) == "" {
+						t.Fatal("ok entry missing plan")
 					}
-					seen[tbl] = true
+					pts, _ := e["per_table_stats"].([]any)
+					if fb5Plus {
+						if len(pts) == 0 {
+							t.Fatal("ok entry missing per_table_stats on FB5")
+						}
+						seen := map[string]bool{}
+						for _, p := range pts {
+							tbl := p.(map[string]any)["table"].(string)
+							if seen[tbl] {
+								t.Fatalf("per_table_stats duplicate: %s", tbl)
+							}
+							seen[tbl] = true
+						}
+					}
+					st, _ := e["stats"].(map[string]any)
+					if st == nil || st["seq_reads"].(float64) <= 0 {
+						t.Fatal("ok entry missing stats")
+					}
+					if e["engine"] != ver {
+						t.Fatalf("engine field = %v, want %s", e["engine"], ver)
+					}
 				}
-				st, _ := e["stats"].(map[string]any)
-				if st == nil || st["seq_reads"].(float64) <= 0 {
-					t.Fatal("ok entry missing stats")
-				}
-				if e["engine"] != "5.0" {
-					t.Fatalf("engine field = %v, want 5.0", e["engine"])
-				}
-			}
 		case "fallback":
 			okFallback = true
 			if !strings.Contains(e["error"].(string), "read-only") {
