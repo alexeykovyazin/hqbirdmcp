@@ -12,22 +12,38 @@ import (
 // refused by the ENGINE. Runs against the local spike DB when available;
 // skips (with a loud message) otherwise — CI provides the DB.
 //
-// Env: FBMCP_FUSE_DB (default: the P0 spike FB5 database + masterkey creds).
+// Env: FBMCP_FUSE_DB (default: the P0 spike FB5 database + masterkey creds),
+// FBMCP_FUSE_ADDR / FBMCP_FUSE_BINDIR to retarget the instance (CI points at
+// the service container; there the DB path is server-side, so the client-side
+// stat is skipped).
 func TestFuse1ReadPoolRefusesWrites(t *testing.T) {
 	dbFile := os.Getenv("FBMCP_FUSE_DB")
 	if dbFile == "" {
 		dbFile = `C:/HQbirdData/output/fbmcp-spike/spike_FB5.0.fdb`
 	}
-	if _, err := os.Stat(dbFile); err != nil {
-		if os.Getenv("FBMCP_REQUIRE_FIREBIRD") != "" {
-			t.Fatalf("FBMCP_REQUIRE_FIREBIRD set but spike DB missing: %v", err)
+	addr := os.Getenv("FBMCP_FUSE_ADDR")
+	if addr == "" {
+		addr = "localhost:3055"
+	}
+	binDir := os.Getenv("FBMCP_FUSE_BINDIR")
+	if binDir == "" {
+		binDir = "C:/HQbird/Firebird50"
+	}
+	// CI sets FBMCP_FUSE_ADDR: the DB lives inside the server container, so
+	// the path is not stat-able from the client.
+	serverSideDB := os.Getenv("FBMCP_FUSE_ADDR") != ""
+	if !serverSideDB {
+		if _, err := os.Stat(dbFile); err != nil {
+			if os.Getenv("FBMCP_REQUIRE_FIREBIRD") != "" {
+				t.Fatalf("FBMCP_REQUIRE_FIREBIRD set but spike DB missing: %v", err)
+			}
+			t.Skipf("spike DB not present (%v) — fuse test needs a Firebird instance", err)
 		}
-		t.Skipf("spike DB not present (%v) — fuse test needs a Firebird instance", err)
 	}
 
 	cfg := &config.Config{
 		State:     config.State{Dir: t.TempDir()},
-		Instances: []config.FBInstance{{ID: "fb5", Addr: "localhost:3055", BinDir: "C:/HQbird/Firebird50"}},
+		Instances: []config.FBInstance{{ID: "fb5", Addr: addr, BinDir: binDir}},
 		Databases: []config.Database{{
 			ID: "fuse", Instance: "fb5", Path: dbFile,
 			ROUser: "SYSDBA", ROSecretEnv: "FBMCP_FUSE_PW",

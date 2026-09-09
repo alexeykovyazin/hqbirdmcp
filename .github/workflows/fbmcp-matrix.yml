@@ -43,7 +43,10 @@ jobs:
         ports:
           - 3050:3050
         env:
+          # jacobalberty (2.5) reads ISC_PASSWORD; firebirdsql (3/4/5) reads
+          # FIREBIRD_ROOT_PASSWORD — each image ignores the other's var
           ISC_PASSWORD: masterkey
+          FIREBIRD_ROOT_PASSWORD: masterkey
           FIREBIRD_PASSWORD: masterkey
           # newer image builds resolve this relative to /firebird/data
           FIREBIRD_DATABASE: employee.fdb
@@ -62,6 +65,9 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq firebird3.0-utils || sudo apt-get install -y -qq firebird-utils
+      - name: create fuse-test DB inside the container
+        run: |
+          echo "create database 'localhost/3050:/var/lib/firebird/data/fuse.fdb' user SYSDBA password 'masterkey';" | isql -q
       - name: generate matrix config
         env:
           FBMCP_MATRIX_INSTANCE: fb-${{ matrix.fb }}
@@ -73,6 +79,8 @@ jobs:
         env:
           FBMCP_DEV_PW: masterkey
           FBMCP_REQUIRE_FIREBIRD: "1"
+          FBMCP_FUSE_DB: /var/lib/firebird/data/fuse.fdb
+          FBMCP_FUSE_ADDR: localhost:3050
           FBMCP_QUERY_LIVE: "1"
           FBMCP_GSTAT_LIVE: "1"
           FBMCP_ADVICE_LIVE: "1"
