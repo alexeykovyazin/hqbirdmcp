@@ -2,6 +2,7 @@ package schedule
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -272,5 +273,123 @@ func TestClockJumpBackwardNoRefire(t *testing.T) {
 	tick.Tick(context.Background())
 	if fired != 0 {
 		t.Fatal("backward clock jump re-fired an already-fired minute")
+	}
+}
+
+// The exactly-once dispatch contract (test_plan P3, decision 2026-09-09):
+// the due slot is consumed by the durable LastFiredAt marker BEFORE the
+// fire callback runs. A crash between marker and fire therefore skips that
+// slot's run instead of dispatching nightly_verify twice.
+func TestDispatchMarkerDurableBeforeFire(t *testing.T) {
+	st, _ := state.Open(t.TempDir())
+	args := CanonicalJSON(nil)
+	if err := st.PutSchedule(state.Schedule{
+		ID: "s1", Database: "spike5", Target: "nightly_verify", Kind: "workflow",
+		ArgsJSON: args, ArgHash: HashArgs(args), MaxTier: 1,
+		Cron: "* * * * *", Timezone: "UTC", Enabled: true, MissedRun: "skip",
+		Overlap: "skip", CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 9, 2, 30, 0, 0, time.UTC)
+	tick := New(st, func(ctx context.Context, s state.Schedule) (string, error) {
+		for _, cur := range st.Schedules() {
+			if cur.ID == "s1" && !cur.LastFiredAt.Equal(now) {
+				t.Fatalf("fire ran before the dispatch marker was durable: LastFiredAt=%v", cur.LastFiredAt)
+			}
+		}
+		return "j1", nil
+	}).WithNow(func() time.Time { return now })
+	tick.Tick(context.Background())
+	if tick.Fired() != 1 {
+		t.Fatalf("fired=%d", tick.Fired())
+	}
+}
+
+// Simulated crash mid-dispatch: the marker for the killed slot is already
+// persisted, so a restarted ticker must not re-fire that slot; the next
+// slot dispatches normally.
+func TestDispatchExactlyOnceAcrossRestart(t *testing.T) {
+	st, _ := state.Open(t.TempDir())
+	args := CanonicalJSON(nil)
+	if err := st.PutSchedule(state.Schedule{
+		ID: "s1", Database: "spike5", Target: "nightly_verify", Kind: "workflow",
+		ArgsJSON: args, ArgHash: HashArgs(args), MaxTier: 1,
+		Cron: "* * * * *", Timezone: "UTC", Enabled: true, MissedRun: "skip",
+		Overlap: "skip", CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	killedSlot := time.Date(2026, 9, 9, 2, 30, 0, 0, time.UTC)
+	// "kernel": marker written (consider does it), then killed before fire —
+	// reproduce by persisting the marker the way consider now does.
+	sched := st.Schedules()[0]
+	sched.LastFiredAt = killedSlot
+	if err := st.PutSchedule(sched); err != nil {
+		t.Fatal(err)
+	}
+	// restarted kernel, same minute: the consumed slot must not re-fire
+	fired := 0
+	tick := New(st, func(ctx context.Context, s state.Schedule) (string, error) {
+		fired++
+		return "j2", nil
+	}).WithNow(func() time.Time { return killedSlot })
+	tick.Tick(context.Background())
+	if fired != 0 {
+		t.Fatal("restarted ticker re-fired a slot whose dispatch marker was durable")
+	}
+	// next slot fires normally, exactly once
+	fired = 0
+	tick = New(st, func(ctx context.Context, s state.Schedule) (string, error) {
+		fired++
+		return "j3", nil
+	}).WithNow(func() time.Time { return killedSlot.Add(time.Minute) })
+	tick.Tick(context.Background())
+	if fired != 1 {
+		t.Fatalf("next slot fired=%d, want 1", fired)
+	}
+	// the killed slot left no run record (fire never happened); the new slot did
+	var firedRuns int
+	for _, r := range st.ScheduleRuns() {
+		if r.Result == "fired" {
+			firedRuns++
+		}
+	}
+	if firedRuns != 1 {
+		t.Fatalf("fired run records=%d, want 1", firedRuns)
+	}
+}
+
+// A synchronous fire refusal is not a dispatch: the slot must be released
+// so the next tick retries it.
+func TestFireErrorReleasesSlot(t *testing.T) {
+	st, _ := state.Open(t.TempDir())
+	args := CanonicalJSON(nil)
+	if err := st.PutSchedule(state.Schedule{
+		ID: "s1", Database: "spike5", Target: "nightly_verify", Kind: "workflow",
+		ArgsJSON: args, ArgHash: HashArgs(args), MaxTier: 1,
+		Cron: "* * * * *", Timezone: "UTC", Enabled: true, MissedRun: "skip",
+		Overlap: "skip", CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 9, 2, 30, 0, 0, time.UTC)
+	attempts := 0
+	tick := New(st, func(ctx context.Context, s state.Schedule) (string, error) {
+		attempts++
+		if attempts == 1 {
+			return "", fmt.Errorf("submission refused")
+		}
+		return "j1", nil
+	}).WithNow(func() time.Time { return now })
+	tick.Tick(context.Background())
+	tick.Tick(context.Background())
+	if attempts != 2 {
+		t.Fatalf("attempts=%d, want 2 (refused dispatch must release the slot)", attempts)
+	}
+	for _, s := range st.Schedules() {
+		if s.ID == "s1" && !s.LastFiredAt.Equal(now) {
+			t.Fatalf("successful retry did not consume the slot: LastFiredAt=%v", s.LastFiredAt)
+		}
 	}
 }

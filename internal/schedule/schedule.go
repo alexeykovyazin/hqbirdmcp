@@ -14,6 +14,7 @@ import (
 
 	_ "time/tzdata"
 
+	"github.com/aleks/fbmcp/internal/killpoint"
 	"github.com/aleks/fbmcp/internal/state"
 )
 
@@ -101,21 +102,33 @@ func (t *Ticker) consider(ctx context.Context, s state.Schedule, now time.Time) 
 		t.skip(s, "unknown database", now)
 		return
 	}
+	// Dispatch marker BEFORE firing: the due slot is consumed when the
+	// marker is durable, so a hard kill between marker and fire skips that
+	// slot's run instead of ever dispatching it twice (exactly-once per due
+	// slot; decided 2026-09-09, test_plan P3 — a nightly_verify must never
+	// re-run because of a crash). The sync fire error below rolls the
+	// marker back: a refused submission is not a dispatch.
+	s.LastFiredAt = now
+	s.LastSkipReason = ""
+	if err := t.st.PutSchedule(s); err != nil {
+		t.skip(s, "dispatch marker not persisted: "+err.Error(), now)
+		return
+	}
+	killpoint.Hit("schedule.mid-dispatch") // chaos harness: kill with the slot consumed, dispatch not yet started
 	jobID, err := t.fire(ctx, s)
 	result := "fired"
 	msg := ""
 	if err != nil {
 		result = "skipped"
 		msg = err.Error()
+		s.LastFiredAt = time.Time{} // release the slot — retry next tick
 		s.LastSkipReason = msg
 		_ = t.st.PutSchedule(s)
 		t.mu.Lock()
 		t.skips++
 		t.mu.Unlock()
 	} else {
-		s.LastFiredAt = now
-		s.LastSkipReason = ""
-		_ = t.st.PutSchedule(s)
+		// marker (LastFiredAt) already persisted above
 		t.mu.Lock()
 		t.fired++
 		t.mu.Unlock()

@@ -102,8 +102,8 @@ pending replay, single-dispatch) rather than "no crash".
    `restore.finished`, `exec.pre-commit`, `exec.post-commit`. The executor
    points already cover migration mid-batch and the atomic-vs-per-statement
    commit contract — they need scenarios, not new product code. Also
-   missing: a killpoint in the scheduler tick (dispatch is at-least-once by
-   construction — see P3), one mid-audit-append, a kill during
+   missing: a killpoint in the scheduler tick (dispatch was at-least-once by
+   construction — now exactly-once, see P3), one mid-audit-append, a kill during
    restart/reconcile (double-kill), and a two-client scenario with one
    client dying mid-confirm.
 
@@ -190,11 +190,11 @@ Highest value: these packages gate every write and every restart.
    RDB$ tables; DiffData's row-cap refusal and sample streaming are the
    assertions). Lane: unit + live.
 7. `internal/schedule` (added in rev 2): the Ticker already has seams
-   (`WithNow`, `OnSkip`, `WithGateProbe`, `WithDBExists`). Add a unit test
-   that pins the consider() ordering — `fire` runs BEFORE
-   `LastFiredAt`/`PutSchedule`/`AddScheduleRun` (schedule.go:96-118) —
-   because that ordering IS the at-least-once dispatch contract that P3's
-   schedule scenario exercises. Lane: unit.
+   (`WithNow`, `OnSkip`, `WithGateProbe`, `WithDBExists`). Unit tests pin
+   the exactly-once dispatch contract: `consider` persists the slot's
+   `LastFiredAt` marker BEFORE the fire call, releases the slot on a
+   synchronous fire error, and never re-fires a consumed slot after a
+   restart. Landed with the product change — see P3. Lane: unit.
 
 ### P2 — kernel wiring (≈2 days)
 
@@ -239,14 +239,15 @@ unexercised ones first; each scenario reuses the existing C7a/C7b skeleton.
     - `backup.finished` (C7b extension): kill after the backup, before
       catalog/job bookkeeping — catalog has no phantom verified backup,
       job interrupted, source bytes unchanged.
-    - `schedule.mid-dispatch` (new killpoint, scheduler tick): the source
-      fires FIRST and persists `LastFiredAt` afterwards, so the honest
-      invariant is **at-least-once**: grant survives, the next tick
-      re-fires, both runs appear in AddScheduleRun history. Rev 1 claimed
-      "exactly once" — that would fail against this code. If exactly-once
-      is desired for nightly_verify, that is a PRODUCT change (write the
-      dispatch marker before fire, or dedupe on a schedule-run id) — decide
-      explicitly, then test the chosen semantics.
+    - `schedule.mid-dispatch` (new killpoint, scheduler tick): **decision
+      made and implemented 2026-09-09 — exactly-once per due slot.**
+      `consider` persists the slot's `LastFiredAt` marker BEFORE the fire
+      call, so a kill in that window consumes the slot without dispatching;
+      a synchronous fire refusal rolls the marker back (a refused
+      submission is not a dispatch, the next tick retries). Pinned by
+      `TestDispatchMarkerDurableBeforeFire`, `TestDispatchExactlyOnceAcrossRestart`,
+      `TestFireErrorReleasesSlot` (unit) and `TestKillScheduleMidDispatch`
+      (harness).
     - `audit.mid-append` (new killpoint): kill between the log-line write
       and the head-sidecar update — proves the real torn-write behaves like
       TestCorruptAuditTailRefusesStart's synthetic truncation (fail-closed
@@ -304,7 +305,7 @@ Checked line-by-line; each of these was wrong or incomplete in rev 1:
 | # | Rev 1 claim | Source says | Resolution |
 |---|---|---|---|
 | C1 | "11 scenarios" | 12 test functions (10 chaos + 2 live) | corrected §2 |
-| C2 | schedule kill ⇒ "re-dispatches exactly once" | `consider()` fires first, persists `LastFiredAt` after (schedule.go:96-118) ⇒ at-least-once | invariant reworded; exactly-once flagged as a product decision |
+| C2 | schedule kill ⇒ "re-dispatches exactly once" | `consider()` fired first, persisted `LastFiredAt` after ⇒ at-least-once | fixed by product change 2026-09-09: marker persists before fire (see P3) |
 | C3 | new `migrate.batch-mid` killpoint needed | apply routes through the executor; `exec.pre-commit`/`exec.post-commit` already exist | scenario on existing points |
 | C4 | `audit.rotate` killpoint | no rotation exists (append-only + head sidecar) | replaced with `audit.mid-append` |
 | C5 | OOB approval watcher in `cmd/fbmcpctl/gate.go` | it is `startApprovalWatcher` in `cmd/fbmcp/p3tools.go:453` | retargeted |

@@ -940,3 +940,101 @@ func TestSurfacesAndWaitLive(t *testing.T) {
 		t.Fatalf("fb_job_status has no structuredContent: %v", st)
 	}
 }
+
+// TestKillScheduleMidDispatch pins the exactly-once dispatch contract
+// (test_plan P3, decision 2026-09-09): the ticker persists the slot's
+// LastFiredAt marker BEFORE firing (schedule.mid-dispatch checkpoint), so a
+// hard kill in that window consumes the slot without dispatching — the
+// grant survives, the killed slot leaves no fired run record, and the NEXT
+// slot dispatches exactly once. The source database is never touched.
+func TestKillScheduleMidDispatch(t *testing.T) {
+	requireHarness(t)
+	requireFirebird(t)
+	bin := buildServer(t)
+	stateDir := t.TempDir()
+	kpDir := filepath.Join(stateDir, "kp")
+	cfg := writeConfig(t, stateDir)
+
+	dbPath := func() string {
+		src, err := os.ReadFile(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return mustFind(t, string(src), `(?s)id: spike5.*?path: (\S+)`)
+	}()
+	before := fileHash(t, dbPath)
+
+	cmd, keep := startKernel(t, bin, cfg, "schedule.mid-dispatch", kpDir)
+	defer keep.Close()
+	c := dialMCP(t, stateDir)
+
+	out := c.callTool(t, "fb_schedule_create", map[string]any{
+		"db": "spike5", "target": "nightly_verify", "cron": "* * * * *", "timezone": "UTC",
+	})
+	rid := mustFind(t, out, `Request ID: ([0-9a-f]+)`)
+	tok := mustFind(t, out, `token \(Tier 1 only\): ([0-9a-f]+)`)
+	cout := c.callTool(t, "fb_confirm", map[string]any{"request_id": rid, "token": tok})
+	if !strings.Contains(cout, "confirmed") {
+		t.Fatalf("schedule confirm failed: %q", cout)
+	}
+
+	// the ticker ticked, consumed the slot (marker persisted), blocked at
+	// the checkpoint — the fire has NOT run
+	waitReady(t, kpDir, "schedule.mid-dispatch", 150*time.Second)
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Wait()
+
+	if after := fileHash(t, dbPath); after != before {
+		t.Fatalf("source database modified by the killed dispatch (C7b): %s != %s", before, after)
+	}
+
+	cmd2, keep2 := startKernel(t, bin, cfg, "", "")
+	defer func() {
+		cmd2.Process.Kill()
+		cmd2.Wait()
+		keep2.Close()
+	}()
+	c2 := dialMCP(t, stateDir)
+	if got := c2.callTool(t, "fb_schedule_list", map[string]any{"db": "spike5"}); !strings.Contains(got, "nightly_verify") {
+		t.Fatalf("schedule grant lost across the kill: %q", got)
+	}
+
+	// no run record for the killed slot: fire never ran
+	firedRuns := func() int {
+		st, err := state.Open(stateDir)
+		if err != nil {
+			t.Fatalf("state.json unreadable: %v", err)
+		}
+		n := 0
+		for _, r := range st.ScheduleRuns() {
+			if r.Result == "fired" {
+				n++
+			}
+		}
+		return n
+	}
+	if n := firedRuns(); n != 0 {
+		t.Fatalf("killed slot produced %d fired run records, want 0 (fire must not run before the kill)", n)
+	}
+
+	// cross a slot boundary: the next slot dispatches exactly once
+	deadline := time.Now().Add(150 * time.Second)
+	for {
+		if n := firedRuns(); n == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("next slot never dispatched exactly once: firedRuns=%d", firedRuns())
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	if _, err := audit.Verify(filepath.Join(stateDir, "audit.jsonl")); err != nil {
+		t.Fatalf("audit chain broken after kill (C5): %v", err)
+	}
+	if after := fileHash(t, dbPath); after != before {
+		t.Fatalf("source database modified after restart (C7b): %s != %s", before, after)
+	}
+}
