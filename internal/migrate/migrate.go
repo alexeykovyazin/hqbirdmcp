@@ -29,7 +29,9 @@ import (
 const (
 	Table    = "FBMCP_MIGRATIONS"
 	TableDDL = `CREATE TABLE FBMCP_MIGRATIONS (
-	ID VARCHAR(255) NOT NULL PRIMARY KEY,
+	-- 200, not 255: a UTF8 PK must stay under Firebird's 1/4-page index
+	-- key cap on 4K pages (oldest supported ODS, FB 2.5).
+	ID VARCHAR(200) NOT NULL PRIMARY KEY,
 	VERSION INTEGER NOT NULL UNIQUE,
 	CHECKSUM CHAR(64) NOT NULL,
 	DOWN_TEXT BLOB SUB_TYPE TEXT,

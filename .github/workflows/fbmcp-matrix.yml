@@ -68,10 +68,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Firebird client tools (isql/gstat for the subprocess routes)
+      - name: Firebird client tools (isql/gstat/gbak for the subprocess routes)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq firebird3.0-utils || sudo apt-get install -y -qq firebird-utils
+          sudo apt-get install -y -qq firebird3.0-utils firebird3.0-server-utils \
+            || sudo apt-get install -y -qq firebird-utils firebird3.0-server-utils
       - name: expose container tools at bin_dir (Debian renames isql/gstat to *-fb)
         run: |
           sudo mkdir -p /usr/local/firebird/bin
@@ -80,6 +81,15 @@ jobs:
             [ -n "$src" ] && sudo ln -sf "$(readlink -f "$src")" "/usr/local/firebird/bin/$b"
           done
           ls -la /usr/local/firebird/bin
+      - name: restore the employee sample over the empty container DB, then seed it
+        run: |
+          ISQL="$(command -v isql-fb || command -v isql)"
+          GBAK="$(command -v gbak-fb || command -v gbak)"
+          DSN="localhost/3050:${{ matrix.data }}/employee.fdb"
+          "$GBAK" -rep -user SYSDBA -password masterkey \
+            packaging/docker/testdata/employee.fbk "$DSN"
+          "$ISQL" -q -user SYSDBA -password masterkey "$DSN" \
+            -i packaging/docker/seed-employee.sql
       - name: mirror the container DB to the same host path (gstat reads files directly)
         run: |
           CID=$(docker ps -q --filter "ancestor=${{ matrix.image }}:${{ matrix.tag }}" | head -1)
@@ -103,6 +113,7 @@ jobs:
           FBMCP_REQUIRE_FIREBIRD: "1"
           FBMCP_FUSE_DB: ${{ matrix.data }}/employee.fdb
           FBMCP_FUSE_ADDR: localhost:3050
+          FBMCP_DIFF_WORK: /tmp/fbmcp-matrix/work
           FBMCP_QUERY_LIVE: "1"
           FBMCP_GSTAT_LIVE: "1"
           FBMCP_ADVICE_LIVE: "1"

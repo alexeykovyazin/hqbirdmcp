@@ -54,9 +54,16 @@ func TestDiffLiveMCP(t *testing.T) {
 	// this host). Seed divergence via the driver.
 	pw := pwFor(t)
 	client := backupsvc.NewClient(inst, "SYSDBA", pw)
-	fbk := `C:/HQbirdData/output/fbmcp-spike/work/fbmcp_diff_src.fbk`
-	pathA := `C:/HQbirdData/output/fbmcp-spike/work/fbmcp_diff_a.fdb`
-	pathB := `C:/HQbirdData/output/fbmcp-spike/work/fbmcp_diff_b.fdb`
+	// Work paths are server-side (the Services API writes them). Windows
+	// dev hosts keep the HQbird spike layout; CI points FBMCP_DIFF_WORK at
+	// a writable dir inside the container.
+	work := os.Getenv("FBMCP_DIFF_WORK")
+	if work == "" {
+		work = `C:/HQbirdData/output/fbmcp-spike/work`
+	}
+	fbk := work + "/fbmcp_diff_src.fbk"
+	pathA := work + "/fbmcp_diff_a.fdb"
+	pathB := work + "/fbmcp_diff_b.fdb"
 	removeLocal := func(p string) {
 		os.Remove(p)
 		os.Remove(filepath.FromSlash(p))

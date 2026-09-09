@@ -14,3 +14,6 @@ bin/
 # config rollbacks and local scratch
 *.prev
 spikes/scratch/
+
+# CI matrix test asset (the portable employee sample backup)
+!packaging/docker/testdata/*.fbk
