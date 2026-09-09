@@ -63,14 +63,14 @@ instances:
 databases:
     - id: employee
       instance: fb5
-      path: /firebird/data/employee.fdb
+      path: /var/lib/firebird/data/employee.fdb
       ro_user: SYSDBA
       ro_secret_env: FBMCP_DEV_PW
       admin_user: SYSDBA
       admin_secret_env: FBMCP_DEV_PW
     - id: spike3
       instance: fb3
-      path: /firebird/data/employee.fdb
+      path: /var/lib/firebird/data/employee.fdb
       ro_user: SYSDBA
       ro_secret_env: FBMCP_DEV_PW
       admin_user: SYSDBA
