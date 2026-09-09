@@ -47,9 +47,16 @@ finally { Pop-Location }
 
 $verdict = if ($code -eq 0) { 'GREEN' } else { 'RED' }
 Add-Content -Path $log -Value "$stamp count=$Count verdict=$verdict exit=$code"
-# keep the full output for post-mortem (outside docs/: test names are not phantom-lint-safe)
-$detail = Join-Path $env:TEMP 'fbmcp-chaos-last.log'
+# keep per-night detail for post-mortem (outside docs/: test names are not
+# phantom-lint-safe); prune to the last 14 nights so a RED's output survives
+# later green runs instead of being overwritten in place
+$detailDir = Join-Path $env:TEMP 'fbmcp-chaos'
+New-Item -ItemType Directory -Force -Path $detailDir | Out-Null
+$detail = Join-Path $detailDir ("fbmcp-chaos-{0}.log" -f (Get-Date -Format 'yyyyMMdd'))
 $out | Set-Content -Path $detail
+Get-ChildItem $detailDir -Filter 'fbmcp-chaos-*.log' |
+    Sort-Object Name -Descending | Select-Object -Skip 14 |
+    Remove-Item -Force -ErrorAction SilentlyContinue
 Write-Host "chaos run: $verdict (logged to $log; detail: $detail)"
 if ($code -ne 0) {
     $out | Select-Object -Last 40 | Write-Host

@@ -163,4 +163,8 @@ jobs:
           FBMCP_DEV_PW: masterkey
           FBMCP_REQUIRE_FIREBIRD: "1"
           FBMCP_KILLHARNESS: "1"
-        run: go test ./internal/killharness -count=1 -run 'TestKillGatePending|TestKillMidPersist' -timeout 20m
+        run: |
+          go test ./internal/killharness -count=1 -run 'TestKillAtGatePending$|TestKillAtStateMidPersist$' -v -timeout 20m 2>&1 | tee /tmp/chaos.log
+          # guard against a silently-empty -run (the old pattern matched none
+          # of the real test names, so this step ran nothing for months)
+          test "$(grep -c '^=== RUN' /tmp/chaos.log)" -gt 0
