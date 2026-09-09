@@ -71,15 +71,27 @@ jobs:
       - name: Firebird client tools (isql/gstat/gbak for the subprocess routes)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq firebird3.0-utils firebird3.0-server-utils \
-            || sudo apt-get install -y -qq firebird-utils firebird3.0-server-utils
-      - name: expose container tools at bin_dir (Debian renames isql/gstat to *-fb)
+          sudo apt-get install -y -qq firebird3.0-utils || sudo apt-get install -y -qq firebird-utils
+      - name: expose container tools at bin_dir (Debian renames isql→isql-fb, gstat→fbstat)
         run: |
           sudo mkdir -p /usr/local/firebird/bin
-          for b in isql gstat nbackup gbak fbsvcmgr gfix gsec; do
-            src="$(command -v "$b" 2>/dev/null || command -v "$b-fb" 2>/dev/null || ls /usr/lib/firebird/*/bin/"$b" 2>/dev/null | head -1)"
-            [ -n "$src" ] && sudo ln -sf "$(readlink -f "$src")" "/usr/local/firebird/bin/$b"
-          done
+          link_tool() { # target-name candidate...
+            local name="$1"; shift
+            for cand in "$@"; do
+              if src="$(command -v "$cand" 2>/dev/null)"; then
+                sudo ln -sf "$(readlink -f "$src")" "/usr/local/firebird/bin/$name"
+                return 0
+              fi
+            done
+            echo "warning: no candidate for $name" >&2
+          }
+          link_tool isql isql isql-fb
+          link_tool gstat gstat fbstat gstat-fb
+          link_tool gbak gbak gbak-fb
+          link_tool gfix gfix gfix-fb
+          link_tool nbackup nbackup nbackup-fb
+          link_tool fbsvcmgr fbsvcmgr fbsvcmgr-fb
+          link_tool gsec gsec gsec-fb
           ls -la /usr/local/firebird/bin
       - name: restore the employee sample over the empty container DB, then seed it
         run: |
