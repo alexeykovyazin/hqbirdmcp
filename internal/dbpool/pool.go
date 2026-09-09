@@ -18,6 +18,15 @@ import (
 	"github.com/aleks/fbmcp/internal/killpoint"
 )
 
+// driverName is the registered database/sql driver; a var so tests can
+// point the Manager at a fake driver.
+var driverName = "firebirdsql"
+
+// SetDriverName overrides the database/sql driver (tests only).
+func SetDriverName(name string) {
+	driverName = name
+}
+
 // Manager owns the pools for every registered database.
 type Manager struct {
 	cfg   registry
@@ -108,7 +117,7 @@ func (m *Manager) get(ctx context.Context, dbID string, admin bool) (*sql.DB, er
 	if err != nil {
 		return nil, fmt.Errorf("%s pool for %q: %w", role, dbID, err)
 	}
-	pool, err := sql.Open("firebirdsql", dsn(inst.Addr, rcfg.Path, user, pass))
+	pool, err := sql.Open(driverName, dsn(inst.Addr, rcfg.Path, user, pass))
 	if err != nil {
 		return nil, fmt.Errorf("%s pool open %q: %w", role, dbID, err)
 	}

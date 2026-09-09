@@ -15,6 +15,24 @@ import (
 
 const service = "fbmcp"
 
+// keyringStore is the minimal keyring surface, indirected so tests can
+// stub it (a real keyring needs a desktop daemon / user session).
+type keyringStoreT interface {
+	Get(service, user string) (string, error)
+	Set(service, user, password string) error
+	Delete(service, user string) error
+}
+
+type osKeyring struct{}
+
+func (osKeyring) Get(service, user string) (string, error) { return keyring.Get(service, user) }
+func (osKeyring) Set(service, user, password string) error {
+	return keyring.Set(service, user, password)
+}
+func (osKeyring) Delete(service, user string) error { return keyring.Delete(service, user) }
+
+var keyringStore keyringStoreT = osKeyring{}
+
 // Get returns the secret for envName: the environment variable if set,
 // otherwise the OS keyring entry "fbmcp/<envName>".
 func Get(envName string) (string, error) {
@@ -24,7 +42,7 @@ func Get(envName string) (string, error) {
 	if v := os.Getenv(envName); v != "" {
 		return v, nil
 	}
-	v, err := keyring.Get(service, envName)
+	v, err := keyringStore.Get(service, envName)
 	if err == nil && v != "" {
 		return v, nil
 	}
@@ -36,10 +54,10 @@ func Set(envName, value string) error {
 	if envName == "" || value == "" {
 		return fmt.Errorf("secret name and value are required")
 	}
-	return keyring.Set(service, envName, value)
+	return keyringStore.Set(service, envName, value)
 }
 
 // Drop removes the keyring entry (fbmcpctl secret drop).
 func Drop(envName string) error {
-	return keyring.Delete(service, envName)
+	return keyringStore.Delete(service, envName)
 }

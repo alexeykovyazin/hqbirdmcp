@@ -153,3 +153,124 @@ func TestVersionAtLeast(t *testing.T) {
 		t.Fatal("2.5 >= 3.0")
 	}
 }
+
+// --- P1.4 (test_plan): TierForRisk exhaustively, Tools listing, WithNow ---
+
+func TestTierForRiskExhaustive(t *testing.T) {
+	risks := []string{"Critical", "High", "Medium", "Low", "None", ""}
+	for _, risk := range risks {
+		for _, opType := range []string{"Read", "Write", ""} {
+			got := TierForRisk(V3Op{Risk: risk, OpType: opType})
+			if opType == "Read" {
+				if got != 0 {
+					t.Fatalf("Read/%s → tier %d, want 0", risk, got)
+				}
+				continue
+			}
+			switch risk {
+			case "Critical":
+				if got != 3 {
+					t.Fatalf("Write/%s → tier %d, want 3", risk, got)
+				}
+			case "High":
+				if got != 2 {
+					t.Fatalf("Write/%s → tier %d, want 2", risk, got)
+				}
+			default:
+				if got != 1 {
+					t.Fatalf("Write/%s → tier %d, want 1", risk, got)
+				}
+			}
+		}
+	}
+}
+
+// The frozen system surface must be tier-consistent with the v3 risk
+// mapping: every Tier-2+ tool is a High/Critical write, every Tier-0 tool
+// is a read. (Dynamic-tier tools fb_write/fb_migration_apply/fb_schedule_create
+// are Tier-1 placeholders and exempt.)
+func TestSystemToolsTierShape(t *testing.T) {
+	for _, m := range SystemTools() {
+		switch m.Tier {
+		case 3:
+			if m.Name != "fb_db_drop" {
+				t.Fatalf("%s: unexpected Tier-3 tool", m.Name)
+			}
+		case 2:
+			if m.Preconditions == nil && m.Scope != "instance" {
+				t.Fatalf("%s: Tier-2 database tool without preconditions", m.Name)
+			}
+		}
+		if m.Tier >= 2 && m.Name == "fb_write" {
+			t.Fatal("fb_write must stay a Tier-1 dynamic placeholder")
+		}
+	}
+}
+
+func TestEngineToolsSortedAndComplete(t *testing.T) {
+	st, _ := state.Open(t.TempDir())
+	e := New(SystemTools(), statetest.StubFacts{}, st)
+	tools := e.Tools()
+	if len(tools) != len(SystemTools()) {
+		t.Fatalf("Tools()=%d, SystemTools()=%d", len(tools), len(SystemTools()))
+	}
+	for i := 1; i < len(tools); i++ {
+		if tools[i-1].Name >= tools[i].Name {
+			t.Fatalf("Tools() not sorted at %d: %q >= %q", i, tools[i-1].Name, tools[i].Name)
+		}
+	}
+	seen := map[string]bool{}
+	for _, tl := range tools {
+		if seen[tl.Name] {
+			t.Fatalf("duplicate tool %q", tl.Name)
+		}
+		seen[tl.Name] = true
+	}
+	for _, want := range SystemTools() {
+		if !seen[want.Name] {
+			t.Fatalf("Tools() missing %q", want.Name)
+		}
+	}
+}
+
+func TestWithNowDrivesWindowCheck(t *testing.T) {
+	st, _ := state.Open(t.TempDir())
+	windowStart := time.Date(2026, 9, 9, 2, 0, 0, 0, time.UTC)
+	windowEnd := windowStart.Add(time.Hour)
+	if err := st.AddWindow(state.Window{Database: "spike5", From: windowStart, To: windowEnd}); err != nil {
+		t.Fatal(err)
+	}
+	e := New([]ToolMeta{{Name: "t2", Tier: 2, Scope: "database"}}, statetest.StubFacts{}, st)
+	id := Identity{Name: "op", MaxTier: 2}
+	inside := e.WithNow(func() time.Time { return windowStart.Add(10 * time.Minute) }).
+		Evaluate(id, "spike5", "t2")
+	if inside.Outcome != "pending" || !strings.Contains(inside.Reason, "human confirmation") {
+		t.Fatalf("inside window: %+v", inside)
+	}
+	later := e.WithNow(func() time.Time { return windowEnd.Add(time.Minute) }).
+		Evaluate(id, "spike5", "t2")
+	if later.Outcome != "deny" || !strings.Contains(later.Reason, "maintenance window") {
+		t.Fatalf("outside window: %+v", later)
+	}
+}
+
+func TestToFloatKinds(t *testing.T) {
+	cases := []struct {
+		v    any
+		want float64
+		ok   bool
+	}{
+		{7, 7, true},
+		{int64(9), 9, true},
+		{2.5, 2.5, true},
+		{90 * time.Minute, 1.5, true},
+		{"7", 0, false},
+		{nil, 0, false},
+	}
+	for _, c := range cases {
+		got, ok := toFloat(c.v)
+		if ok != c.ok || (ok && got != c.want) {
+			t.Fatalf("toFloat(%#v) = %v,%v want %v,%v", c.v, got, ok, c.want, c.ok)
+		}
+	}
+}

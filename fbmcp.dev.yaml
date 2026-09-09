@@ -2,7 +2,7 @@ state:
     dir: C:/HQbirdData/output/fbmcp-spike/state
 instances:
     - id: fb3
-      addr: localhost:3053
+      addr: 127.0.0.1:3053
       bin_dir: C:/HQbird/Firebird30
       service: FirebirdServerHQBirdInstanceFB3
       version: "3.0"
@@ -15,7 +15,7 @@ instances:
       default_backup_dir: C:/HQbirdData/output/fbmcp-spike/backup
       default_work_dir: C:/HQbirdData/output/fbmcp-spike/work
     - id: fb4
-      addr: localhost:3054
+      addr: 127.0.0.1:3054
       bin_dir: C:/HQbird/Firebird40
       service: FirebirdServerHQBirdInstanceFB4
       version: "4.0"
@@ -28,7 +28,7 @@ instances:
       default_backup_dir: C:/HQbirdData/output/fbmcp-spike/backup
       default_work_dir: C:/HQbirdData/output/fbmcp-spike/work
     - id: fb5
-      addr: localhost:3055
+      addr: 127.0.0.1:3055
       bin_dir: C:/HQbird/Firebird50
       service: FirebirdServerHQBirdInstanceFB5
       version: "5.0"
@@ -45,7 +45,7 @@ instances:
     # cannot connect (fb_gstat still works: header reads the file directly,
     # records attaches via the embedded engine).
     - id: fb5std
-      addr: localhost:3050
+      addr: 127.0.0.1:3050
       bin_dir: C:/Firebird5
       version: "5.0"
       service_user: SYSDBA

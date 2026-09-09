@@ -136,14 +136,14 @@ independently landable.
 
 - [x] F1: fix the matrix reduced-chaos `-run` pattern + empty-match guard.
 - [x] F2: chaos-nightly per-night detail retention (14 days).
-- [ ] F4: `fbmcp.dev.yaml` localhost → `127.0.0.1` (host soak shows ::1
-  refusals); consider kernel-side IPv4-preference for `localhost`.
+- [x] F4: `fbmcp.dev.yaml` localhost → `127.0.0.1` (host soak shows ::1
+  refusals); kernel-side IPv4-preference left as hardening, not needed now.
 
 ### P1 — unit tests for engine-free high-risk logic (≈2 days)
 
 Highest value: these packages gate every write and every restart.
 
-1. `internal/state`: full lifecycle table tests — jobs transitions
+1. [x] `internal/state`: full lifecycle table tests — LANDED — jobs transitions
    (running→interrupted reconcile), pending take/replay/drop semantics,
    window add/expire, catalog latest-verified selection, workflow state
    machine. The torn-persist atomicity is testable **in-process** (no
@@ -155,7 +155,7 @@ Highest value: these packages gate every write and every restart.
    another goroutine, asserts `state.json` is still the old snapshot and
    `state.json.tmp` exists, writes `<name>.release`, and asserts the rename
    completes. Lane: unit (hermetic).
-2. `internal/executor`: two distinct targets.
+2. [x] `internal/executor`: LANDED — both targets.
    - **Prepare/Prepared is pure** — classify-driven, no DB: tier refusals
      (Tier-0 "use fb_query" message, Tier-3 disabled), MinFB floor
      computation across statements, NeedsExclusive for non-CONCURRENTLY
@@ -169,22 +169,22 @@ Highest value: these packages gate every write and every restart.
      5m timeouts; `shortOf` truncation; killpoints exec.pre-commit /
      exec.post-commit (via the same arm-and-release trick as state).
      Lane: unit (fake driver) + one live case per branch in matrix.
-3. `internal/secrets`: source order is env → OS keyring → error (env always
+3. [x] `internal/secrets`: LANDED — seam added is env → OS keyring → error (env always
    wins, keyed by env-var NAME). `Get`'s env-first ordering and error text
    are testable as-is. `Set`/`Drop` call `go-keyring` package functions
    directly — on Linux CI there is no Secret Service daemon, so introduce a
    one-var seam (e.g. `var keyringStore = keyring`-style indirection) before
    unit-testing them; otherwise keep Set/Drop live-only. Lane: unit after
    seam; without the seam, Get-only.
-4. `internal/policy`: TierForRisk exhaustively over the ops_v3_gen table;
+4. [x] `internal/policy`: LANDED — TierForRisk exhaustive over the ops_v3_gen table;
    Tools() listing equals the registered tool surface (pairs with the code
    drift guard in P2.8); WithNow clock seam for expiry paths; toFloat edge
    cases. Lane: unit.
-5. `internal/configedit`: golden-file round-trips for firebird.conf /
+5. [x] `internal/configedit`: LANDED — round-trips for firebird.conf /
    databases.conf fixtures (parse → edit → render → re-parse; fixtures from
    the real configs in packaging/ or dev hosts), AppendJournal format,
    ConfPath/DatabasesConfPath resolution. Lane: unit.
-6. `internal/schemadiff`: pure helpers first (canonicalType, quotedList,
+6. [x] `internal/schemadiff`: LANDED — helper table tests (canonicalType, quotedList,
    firstLine, contains, tableShape) as table tests; Capture/DiffData one
    live case each in the matrix lane (they are SQL-heavy against
    RDB$ tables; DiffData's row-cap refusal and sample streaming are the
@@ -194,21 +194,21 @@ Highest value: these packages gate every write and every restart.
    the exactly-once dispatch contract: `consider` persists the slot's
    `LastFiredAt` marker BEFORE the fire call, releases the slot on a
    synchronous fire error, and never re-fires a consumed slot after a
-   restart. Landed with the product change — see P3. Lane: unit.
+   restart. LANDED with the product change — see P3. Lane: unit.
 
 ### P2 — kernel wiring (≈2 days)
 
-7. `cmd/fbmcp/http.go`: attach-socket server lifecycle (Start/ReplaceAuth/
+7. [x] `cmd/fbmcp/http.go`: LANDED — lifecycle guards (Start/ReplaceAuth/
    Replace/Stop/Close/Wait) over net.Pipe — auth replacement mid-flight,
    double-start refusal. Lane: unit.
-8. `cmd/fbmcp` tool registry drift (code level): `TestToolSurfaceDrift`
+8. [x] `cmd/fbmcp` tool registry drift (code level): LANDED — `TestToolSurfaceDrift`
    already pins toolMeta against README + docs/tool-reference.md; the
    missing direction is runtime vs policy — drive `registerP4Tools` (and
    siblings) on an in-process MCP server over net.Pipe, call `tools/list`
    (registration touches no pools, so this is hermetic), and assert the
    name set equals `toolMeta` keys and `policy.Tools()` — three-way
    agreement. Lane: unit.
-9. `cmd/fbmcp` OOB approval watcher (`startApprovalWatcher`, p3tools.go:453
+9. [x] `cmd/fbmcp` OOB approval watcher — LANDED (`startApprovalWatcher`, p3tools.go:453
    — rev 1 wrongly attributed this to fbmcpctl): approval/denial marker
    appears → pending resolves; stale marker; malformed marker; marker for
    an unknown request id. Needs a poll-interval seam or a short poll tick
@@ -221,10 +221,10 @@ already has 13 armed points and the harness uses only 7. Cover the
 unexercised ones first; each scenario reuses the existing C7a/C7b skeleton.
 
 10. New scenarios (existing killpoints unless noted):
-    - `exec.pre-commit` on an atomic script: after restart the effects are
+    - [x] `exec.pre-commit` on an atomic script: LANDED — after restart the effects are
       ABSENT (rolled back) and the job is interrupted — proves the atomic
       path's rollback invariant under a real kill, not just engine RO-tx.
-    - `exec.post-commit`: effects are PRESENT (commit durable) and the job
+    - [x] `exec.post-commit`: LANDED — effects are PRESENT (commit durable) and the job
       is interrupted — documents the at-least-once outcome honestly (the
       restartAndVerify "succeeded/failed despite kill" check must be
       adjusted for this scenario; the commit deliberately wins).
@@ -233,10 +233,10 @@ unexercised ones first; each scenario reuses the existing C7a/C7b skeleton.
       migration (ADR-030 per-migration atomicity); re-apply completes and
       is idempotent. No new killpoint required — apply routes through the
       executor (rev 1 wrongly proposed a new `migrate.batch-mid` point).
-    - `gate.confirmed`: kill after consume, before dispatch — the pending
+    - [x] `gate.confirmed`: LANDED — kill after consume, before dispatch — the pending
       action must NOT replay (it was consumed) and no job may exist
       (no orphan dispatch); the client can re-request cleanly.
-    - `backup.finished` (C7b extension): kill after the backup, before
+    - [x] `backup.finished` (C7b extension): LANDED — kill after the backup, before
       catalog/job bookkeeping — catalog has no phantom verified backup,
       job interrupted, source bytes unchanged.
     - `schedule.mid-dispatch` (new killpoint, scheduler tick): **decision
@@ -270,7 +270,7 @@ unexercised ones first; each scenario reuses the existing C7a/C7b skeleton.
 ### P4 — soak (M2) and guardrails
 
 14. F4 fix verified by one full soak night without `[::1]` refusals.
-15. Coverage ratchet: security lane uploads `go test -coverprofile` and
+15. [x] Coverage ratchet: LANDED — security lane fails only on a drop `go test -coverprofile` and
     fails only when total coverage drops (start at 45.5%, ratchet up per
     phase: P1 → ~55%, P2 → ~60%). Advisory comment first, gate later.
 

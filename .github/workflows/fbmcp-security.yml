@@ -29,7 +29,13 @@ jobs:
       - name: go vet
         run: go vet ./...
       - name: go test
-        run: go test ./...
+        run: go test ./... -coverprofile=coverage.out
+      - name: coverage ratchet (fail only on a drop; floor moves up per test_plan P4)
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub("%","",$3); print $3}')
+          echo "total coverage: ${total}%"
+          floor=45.5
+          awk -v t="$total" -v f="$floor" 'BEGIN { exit (t+0 >= f-0.05) ? 0 : 1 }'             || { echo "coverage ${total}% dropped below the ${floor}% ratchet floor (test_plan.md P4)"; exit 1; }
       - name: govulncheck
         run: |
           # pinned: @latest (v1.8+) requires go >= 1.26, GOTOOLCHAIN=local below

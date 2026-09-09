@@ -1038,3 +1038,172 @@ func TestKillScheduleMidDispatch(t *testing.T) {
 		t.Fatalf("source database modified after restart (C7b): %s != %s", before, after)
 	}
 }
+
+// TestKillAtGateConfirmed (config-independent, CI lane): kill after the gate
+// consumed the confirmation but before dispatch (gate.go gate.confirmed).
+// Invariants: the consumed pending action does NOT replay (TakePending was
+// atomic), no job is dispatched, the audit chain verifies, and the gate
+// accepts a fresh request afterwards.
+func TestKillAtGateConfirmed(t *testing.T) {
+	requireHarness(t)
+	bin := buildServer(t)
+	stateDir := t.TempDir()
+	kpDir := filepath.Join(stateDir, "kp")
+	cfg := writeConfig(t, stateDir)
+
+	cmd, keep := startKernel(t, bin, cfg, "gate.confirmed", kpDir)
+	defer keep.Close()
+	c := dialMCP(t, stateDir)
+
+	out := c.callTool(t, "fb_demo_write", map[string]any{"db": "spike5"})
+	requestID := mustFind(t, out, `Request ID: ([0-9a-f]+)`)
+	tok := mustFind(t, out, `token \(Tier 1 only\): ([0-9a-f]+)`)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = c.tryCallTool("fb_confirm", map[string]any{"request_id": requestID, "token": tok})
+	}()
+	waitReady(t, kpDir, "gate.confirmed", 90*time.Second)
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Wait()
+
+	restartAndVerify(t, bin, cfg, stateDir, "")
+	st, err := state.Open(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the consumed pending action must NOT replay (TakePending was atomic)
+	for _, p := range st.Pending() {
+		if p.ID == requestID {
+			t.Fatalf("consumed pending %s replayed after the kill", requestID)
+		}
+	}
+	if len(st.Jobs()) != 0 {
+		t.Fatalf("consumed confirm dispatched a job despite the kill: %+v", st.Jobs())
+	}
+
+	// the gate is healthy: a fresh request is served normally
+	cmd2, keep2 := startKernel(t, bin, cfg, "", "")
+	defer func() {
+		cmd2.Process.Kill()
+		cmd2.Wait()
+		keep2.Close()
+	}()
+	c2 := dialMCP(t, stateDir)
+	if out := c2.callTool(t, "fb_demo_write", map[string]any{"db": "spike5"}); !strings.Contains(out, "Request ID") {
+		t.Fatalf("gate wedged after the kill: %q", out)
+	}
+}
+
+// runExecKillScenario drives a fb_write UPDATE through the gate, kills the
+// kernel at the given executor checkpoint and verifies the commit boundary:
+//
+//	exec.pre-commit  → the effect is ABSENT after the restart (rolled back)
+//	exec.post-commit → the effect is PRESENT (commit durable), job interrupted
+func runExecKillScenario(t *testing.T, killpoint string, committed bool) {
+	bin := buildServer(t)
+	stateDir := t.TempDir()
+	kpDir := filepath.Join(stateDir, "kp")
+	cfg := writeConfig(t, stateDir)
+
+	cmd, keep := startKernel(t, bin, cfg, killpoint, kpDir)
+	defer keep.Close()
+	c := dialMCP(t, stateDir)
+
+	marker := fmt.Sprintf("K%08d", time.Now().UnixNano()%100000000)
+	sql := fmt.Sprintf("UPDATE PROJECT SET PROJ_NAME = '%s' WHERE PROJ_ID = 'VBASE'", marker)
+	out := c.callTool(t, "fb_write", map[string]any{"db": "spike5", "sql": sql, "mode": "execute"})
+	requestID := mustFind(t, out, `Request ID: ([0-9a-f]+)`)
+	tok := mustFind(t, out, `token \(Tier 1 only\): ([0-9a-f]+)`)
+	cout := c.callTool(t, "fb_confirm", map[string]any{"request_id": requestID, "token": tok})
+	jobID := mustFind(t, cout, `job ([a-z0-9]+)`)
+
+	waitReady(t, kpDir, killpoint, 90*time.Second)
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Wait()
+
+	restartAndVerify(t, bin, cfg, stateDir, jobID)
+
+	// verify the commit boundary on a fresh kernel
+	cmd2, keep2 := startKernel(t, bin, cfg, "", "")
+	defer func() {
+		cmd2.Process.Kill()
+		cmd2.Wait()
+		keep2.Close()
+	}()
+	c2 := dialMCP(t, stateDir)
+	q := c2.callTool(t, "fb_query", map[string]any{"db": "spike5",
+		"sql": fmt.Sprintf("SELECT COUNT(*) FROM PROJECT WHERE PROJ_ID = 'VBASE' AND PROJ_NAME = '%s'", marker)})
+	if committed && !strings.Contains(q, "\n1\n") {
+		t.Fatalf("post-commit kill lost a durable commit:\n%s", q)
+	}
+	if !committed && !strings.Contains(q, "\n0\n") {
+		t.Fatalf("pre-commit kill leaked an uncommitted effect:\n%s", q)
+	}
+}
+
+func TestKillAtExecPreCommit(t *testing.T) {
+	requireHarness(t)
+	requireFirebird(t)
+	runExecKillScenario(t, "exec.pre-commit", false)
+}
+
+func TestKillAtExecPostCommit(t *testing.T) {
+	requireHarness(t)
+	requireFirebird(t)
+	runExecKillScenario(t, "exec.post-commit", true)
+}
+
+// TestKillAtBackupFinished is the catalog-bookkeeping variant of C7b: the
+// backup file is complete on disk but the kill lands before the catalog
+// entry and terminal job state are written. The source DB is untouched, the
+// job reads back interrupted (never succeeded), and the chain verifies.
+func TestKillAtBackupFinished(t *testing.T) {
+	requireHarness(t)
+	requireFirebird(t)
+	bin := buildServer(t)
+	stateDir := t.TempDir()
+	kpDir := filepath.Join(stateDir, "kp")
+	cfg := writeConfig(t, stateDir)
+
+	src, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbPath := mustFind(t, string(src), `(?s)id: spike5.*?path: (\S+)`)
+	before := fileHash(t, dbPath)
+
+	cmd, keep := startKernel(t, bin, cfg, "backup.finished", kpDir)
+	defer keep.Close()
+	c := dialMCP(t, stateDir)
+
+	jobID := confirmTool(t, c, "fb_backup_start", map[string]any{"db": "spike5"})
+	waitReady(t, kpDir, "backup.finished", 180*time.Second)
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Wait()
+
+	if after := fileHash(t, dbPath); after != before {
+		t.Fatalf("source database modified by killed backup (C7b): %s != %s", before, after)
+	}
+
+	cmd2, keep2 := startKernel(t, bin, cfg, "", "")
+	defer func() {
+		cmd2.Process.Kill()
+		cmd2.Wait()
+		keep2.Close()
+	}()
+	c2 := dialMCP(t, stateDir)
+	if got := c2.callTool(t, "fb_job_status", map[string]any{"job_id": jobID}); strings.Contains(got, "succeeded") {
+		t.Fatalf("job recorded succeeded despite the kill before bookkeeping: %s", got)
+	}
+	if _, err := audit.Verify(filepath.Join(stateDir, "audit.jsonl")); err != nil {
+		t.Fatalf("audit chain broken after kill (C5): %v", err)
+	}
+}
