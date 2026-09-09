@@ -153,9 +153,11 @@ func TestQueryLiveMCP(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("SELECT failed:\n%s", out)
 	}
-	wants := []string{"EMP_NO | FULL_NAME", "rows: 92\n", "plan:", "EMPLOYEE_PROJECT", "EMPLOYEE", "stats:", "elapsed:"}
+	wants := []string{"EMP_NO | FULL_NAME", "rows: 92\n", "plan:", "stats:", "elapsed:"}
 	if fb5Plus {
-		wants = append(wants, "per-table:")
+		// FB5+: per-table stats section; pre-5.0 plans print join aliases
+		// ("E NATURAL, EP INDEX(...)") rather than table names.
+		wants = append(wants, "per-table:", "EMPLOYEE_PROJECT", "EMPLOYEE")
 	}
 	for _, want := range wants {
 		if !strings.Contains(out, want) {

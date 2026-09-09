@@ -102,22 +102,28 @@ jobs:
             packaging/docker/testdata/employee.fbk "$DSN"
           "$ISQL" -q -user SYSDBA -password masterkey "$DSN" \
             -i packaging/docker/seed-employee.sql
-      - name: container-side provisioning (work dir, employee5std copy)
+      - name: container-side provisioning (work dir, employee5std copy, host mirror)
         run: |
           CID=$(docker ps -q --filter "ancestor=${{ matrix.image }}:${{ matrix.tag }}" | head -1)
           test -n "$CID" || { echo "firebird service container not found" >&2; exit 1; }
           echo "FBMCP_CID=$CID" >> "$GITHUB_ENV"
-          docker exec "$CID" sh -c "mkdir -p /tmp/fbmcp-matrix/work && chmod 777 /tmp/fbmcp-matrix /tmp/fbmcp-matrix/work"
-          docker exec "$CID" cp "${{ matrix.data }}/employee.fdb" "${{ matrix.data }}/employee5std.fdb"
+          docker exec "$CID" sh -c "mkdir -p /tmp/fbmcp-matrix/work && chmod 777 /tmp/fbmcp-matrix /tmp/fbmcp-matrix/work && cp ${{ matrix.data }}/employee.fdb ${{ matrix.data }}/employee5std.fdb && chmod a+r ${{ matrix.data }}/employee.fdb ${{ matrix.data }}/employee5std.fdb"
+          # host-side mirror: trends sampling os.Stat()s the configured path
+          sudo mkdir -p "${{ matrix.data }}"
+          sudo docker cp "$CID":${{ matrix.data }}/employee.fdb "${{ matrix.data }}/employee.fdb"
+          sudo docker cp "$CID":${{ matrix.data }}/employee5std.fdb "${{ matrix.data }}/employee5std.fdb"
       - name: gstat wrapper (host gstat cannot read foreign ODS; run the container's own)
         run: |
+          GPATH="$(docker exec "$FBMCP_CID" sh -c 'command -v gstat 2>/dev/null || ls /opt/firebird/bin/gstat /usr/local/firebird/bin/gstat 2>/dev/null | head -1')"
+          test -n "$GPATH" || { echo "no gstat inside container" >&2; exit 1; }
+          echo "container gstat: $GPATH"
           cat <<WRAP | sudo tee /usr/local/firebird/bin/gstat > /dev/null
           #!/bin/sh
           # firebird 2.5 refuses to run gstat as root, prefer the firebird user
           if docker exec -u firebird "$FBMCP_CID" true 2>/dev/null; then
-            exec docker exec -u firebird "$FBMCP_CID" gstat "\$@"
+            exec docker exec -u firebird "$FBMCP_CID" "$GPATH" "\$@"
           else
-            exec docker exec "$FBMCP_CID" gstat "\$@"
+            exec docker exec "$FBMCP_CID" "$GPATH" "\$@"
           fi
           WRAP
           sudo chmod +x /usr/local/firebird/bin/gstat
