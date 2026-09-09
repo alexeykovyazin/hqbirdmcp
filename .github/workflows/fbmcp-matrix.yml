@@ -45,7 +45,8 @@ jobs:
         env:
           ISC_PASSWORD: masterkey
           FIREBIRD_PASSWORD: masterkey
-          FIREBIRD_DATABASE: /firebird/data/employee.fdb
+          # newer image builds resolve this relative to /firebird/data
+          FIREBIRD_DATABASE: employee.fdb
         options: >-
           --health-cmd "echo > /dev/tcp/localhost/3050"
           --health-interval 5s
