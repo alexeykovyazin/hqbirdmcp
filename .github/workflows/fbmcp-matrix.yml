@@ -25,18 +25,25 @@ jobs:
           # firebirdsql/firebird dropped the old "3.0"/"4.0"/"5.0" floating
           # tags and every 2.5 tag (2026-09); current aliases are 3/4/5 and
           # 2.5 lives only on the pre-rename jacobalberty/firebird image.
+          # `data` is each image's native DB dir — it is bind-mounted from
+          # the host at the SAME path so host-side gstat (which reads the
+          # files directly) and the server (attach strings) agree on paths.
           - fb: "2.5"
             image: "jacobalberty/firebird"
             tag: "2.5-ss"
+            data: "/firebird/data"
           - fb: "3.0"
             image: "firebirdsql/firebird"
             tag: "3"
+            data: "/var/lib/firebird/data"
           - fb: "4.0"
             image: "firebirdsql/firebird"
             tag: "4"
+            data: "/var/lib/firebird/data"
           - fb: "5.0"
             image: "firebirdsql/firebird"
             tag: "5"
+            data: "/var/lib/firebird/data"
     services:
       firebird:
         image: ${{ matrix.image }}:${{ matrix.tag }}
@@ -65,10 +72,28 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq firebird3.0-utils || sudo apt-get install -y -qq firebird-utils
+      - name: expose container tools at bin_dir (Debian renames isql/gstat to *-fb)
+        run: |
+          sudo mkdir -p /usr/local/firebird/bin
+          for b in isql gstat nbackup gbak fbsvcmgr gfix gsec; do
+            src="$(command -v "$b" 2>/dev/null || command -v "$b-fb" 2>/dev/null || ls /usr/lib/firebird/*/bin/"$b" 2>/dev/null | head -1)"
+            [ -n "$src" ] && sudo ln -sf "$(readlink -f "$src")" "/usr/local/firebird/bin/$b"
+          done
+          ls -la /usr/local/firebird/bin
+      - name: mirror the container DB to the same host path (gstat reads files directly)
+        run: |
+          CID=$(docker ps -q --filter "ancestor=${{ matrix.image }}:${{ matrix.tag }}" | head -1)
+          test -n "$CID" || { echo "firebird service container not found" >&2; exit 1; }
+          sudo mkdir -p "${{ matrix.data }}"
+          sudo docker cp "$CID":${{ matrix.data }}/employee.fdb "${{ matrix.data }}/employee.fdb"
+          sudo cp "${{ matrix.data }}/employee.fdb" "${{ matrix.data }}/employee5std.fdb"
+          sudo chmod a+r "${{ matrix.data }}/employee.fdb" "${{ matrix.data }}/employee5std.fdb"
+          ls -la "${{ matrix.data }}"
       - name: generate matrix config
         env:
           FBMCP_MATRIX_INSTANCE: fb-${{ matrix.fb }}
           FBMCP_MATRIX_HOST: localhost
+          FBMCP_MATRIX_DBPATH: ${{ matrix.data }}
         shell: bash
         run: |
           bash packaging/docker/matrix-config.sh
@@ -76,7 +101,7 @@ jobs:
         env:
           FBMCP_DEV_PW: masterkey
           FBMCP_REQUIRE_FIREBIRD: "1"
-          FBMCP_FUSE_DB: /var/lib/firebird/data/employee.fdb
+          FBMCP_FUSE_DB: ${{ matrix.data }}/employee.fdb
           FBMCP_FUSE_ADDR: localhost:3050
           FBMCP_QUERY_LIVE: "1"
           FBMCP_GSTAT_LIVE: "1"

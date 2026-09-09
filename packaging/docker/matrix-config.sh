@@ -13,6 +13,7 @@ cd "$(dirname "$0")/../.."   # repo root (fbmcp/)
 INSTANCE="${FBMCP_MATRIX_INSTANCE:-fb50}"
 HOST="${FBMCP_MATRIX_HOST:-fb50}"   # compose service name (runner network)
 PORT="${FBMCP_MATRIX_PORT:-3050}"
+DBPATH="${FBMCP_MATRIX_DBPATH:-/var/lib/firebird/data}"
 PW="masterkey"
 
 wait_for() { # host port label
@@ -60,17 +61,32 @@ instances:
       default_admin_secret_env: FBMCP_DEV_PW
       default_backup_dir: /tmp/fbmcp-matrix/backup
       default_work_dir: /tmp/fbmcp-matrix/work
+    - id: fbstd
+      addr: localhost:13050
+      bin_dir: /usr/local/firebird/bin
+      version: "3.0"
+      default_backup_dir: /tmp/fbmcp-matrix/backup
+      default_work_dir: /tmp/fbmcp-matrix/work
 databases:
     - id: employee
       instance: fb5
-      path: /var/lib/firebird/data/employee.fdb
+      path: ${DBPATH}/employee.fdb
       ro_user: SYSDBA
       ro_secret_env: FBMCP_DEV_PW
       admin_user: SYSDBA
       admin_secret_env: FBMCP_DEV_PW
     - id: spike3
       instance: fb3
-      path: /var/lib/firebird/data/employee.fdb
+      path: ${DBPATH}/employee.fdb
+      ro_user: SYSDBA
+      ro_secret_env: FBMCP_DEV_PW
+      admin_user: SYSDBA
+      admin_secret_env: FBMCP_DEV_PW
+    # stock-install employee: gstat reads the header page straight from the
+    # file; nothing listens on fbstd, so live pings correctly skip it.
+    - id: employee5std
+      instance: fbstd
+      path: ${DBPATH}/employee5std.fdb
       ro_user: SYSDBA
       ro_secret_env: FBMCP_DEV_PW
       admin_user: SYSDBA
