@@ -67,7 +67,8 @@ jobs:
           sudo apt-get install -y -qq firebird3.0-utils || sudo apt-get install -y -qq firebird-utils
       - name: create fuse-test DB inside the container
         run: |
-          echo "create database 'localhost/3050:/var/lib/firebird/data/fuse.fdb' user SYSDBA password 'masterkey';" | isql -q
+          ISQL="$(command -v isql-fb || command -v isql)"
+          echo "create database 'localhost/3050:/var/lib/firebird/data/fuse.fdb' user SYSDBA password 'masterkey';" | "$ISQL" -q
       - name: generate matrix config
         env:
           FBMCP_MATRIX_INSTANCE: fb-${{ matrix.fb }}
