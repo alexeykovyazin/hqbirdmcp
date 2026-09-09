@@ -1,8 +1,10 @@
-# fbmcp — project review & test implementation plan (2026-09-09)
+# fbmcp — project review & test implementation plan (2026-09-09, rev 2)
 
 Scope: full codebase review, nightly-chaos lane review, and a prioritized
 plan to close the test gaps. Measurements taken from `go test ./...
 -coverprofile` (unit suites, live suites skipped — CI runs those separately).
+Rev 2 corrections (vs rev 1) came from a line-by-line check of the plan
+against the source; they are listed inline and in §5.
 
 ## 1. Project review
 
@@ -45,7 +47,8 @@ govulncheck pin, actions bump to Node 24 targets.
 
 `internal/killharness` boots the real server binary on an isolated state
 dir, drives it over the attach socket, hard-kills at a deterministic
-killpoint, restarts, and asserts recovery invariants. 11 scenarios:
+killpoint, restarts, and asserts recovery invariants. 12 test functions:
+10 chaos scenarios plus 2 live-functional ones:
 
 | Scenario | Killpoint | Invariants checked |
 |---|---|---|
@@ -60,6 +63,13 @@ killpoint, restarts, and asserts recovery invariants. 11 scenarios:
 | TestDeadWebhookIsNonFatal | dead endpoint | jobs complete; kernel healthy |
 | TestKillAtStateMidPersist | state.mid-persist | state.json never torn |
 | TestSurfacesAndWaitLive / TestRestoreTestNoMatviewsLive | — | surfaces, structuredContent, -NO_MATVIEWS |
+
+The product has **13 armed killpoints** (gate.pending, gate.confirmed,
+job.running, job.done, backup.started, backup.finished, restore.started,
+restore.finished, exec.pre-commit, exec.post-commit, db.closedb, wf.replace,
+wf.shut, state.mid-persist). The harness exercises only 7 of them; 6 are
+unexercised (gate.confirmed, job.done, backup.finished, restore.started,
+restore.finished, exec.pre-commit, exec.post-commit — see P3).
 
 This is a genuinely good chaos suite: deterministic, isolated (per-run DB
 copies since a143950), and it asserts product invariants (audit chain,
@@ -87,12 +97,15 @@ pending replay, single-dispatch) rather than "no crash".
    `dial tcp [::1]:3050 refused` — the same IPv6-loopback flakiness that hit
    CI, on the host config. Recommend `fbmcp.dev.yaml` use `127.0.0.1` and/or
    the kernel prefer IPv4 for localhost addrs.
-5. **F5 — coverage gaps in the chaos surface itself** (see §3): killpoints
-   exist for gate/job/backup/restore/shutdown/persist, but not for
-   `fb_migration_apply` (batch mid-apply), `fb_diff_data` streaming, the
-   audit-rotate path, or schedule dispatch itself. Also nothing kills the
-   kernel *during* restart/reconcile (double-kill), and no scenario runs two
-   concurrent clients where one dies mid-confirm.
+5. **F5 — the harness uses 7 of the 13 armed killpoints.** Unexercised:
+   `gate.confirmed`, `job.done`, `backup.finished`, `restore.started`,
+   `restore.finished`, `exec.pre-commit`, `exec.post-commit`. The executor
+   points already cover migration mid-batch and the atomic-vs-per-statement
+   commit contract — they need scenarios, not new product code. Also
+   missing: a killpoint in the scheduler tick (dispatch is at-least-once by
+   construction — see P3), one mid-audit-append, a kill during
+   restart/reconcile (double-kill), and a two-client scenario with one
+   client dying mid-confirm.
 
 ## 3. Test coverage gaps (measured)
 
@@ -133,73 +146,172 @@ Highest value: these packages gate every write and every restart.
 1. `internal/state`: full lifecycle table tests — jobs transitions
    (running→interrupted reconcile), pending take/replay/drop semantics,
    window add/expire, catalog latest-verified selection, workflow state
-   machine; plus in-process torn-persist test arming `killpoint.SetEnabled`
-   ("state.mid-persist") to assert the temp+rename atomicity directly.
-   Lane: unit (hermetic).
-2. `internal/executor`: introduce a narrow `DB` interface seam (already
-   implicit via database/sql) or a fake `*sql.DB` driver; cover
-   execAtomic vs execPerStatement switching, statement-cap (`shortOf`),
-   estimate; error mapping. Lane: unit + one live case per branch in matrix.
-3. `internal/secrets`: resolution order env → file → missing, Set/Drop
-   idempotency. Lane: unit.
-4. `internal/policy`: TierForRisk exhaustively over ops_v3_gen; Tools()
-   listing equals the registered tool set (pairs with the existing
-   tool_surface_test); WithNow clock seam for expiry. Lane: unit.
+   machine. The torn-persist atomicity is testable **in-process** (no
+   subprocess needed): `state.persist` hits `killpoint.Hit("state.mid-persist")`
+   between the fsynced temp write and the rename (state.go:225), and
+   `killpoint.Hit` needs BOTH `killpoint.SetEnabled(map[string]bool{...:true})`
+   AND the `FBMCP_KILLPOINT_DIR` env var (Hit reads it directly and silently
+   no-ops when unset). The test arms the checkpoint, blocks persist on
+   another goroutine, asserts `state.json` is still the old snapshot and
+   `state.json.tmp` exists, writes `<name>.release`, and asserts the rename
+   completes. Lane: unit (hermetic).
+2. `internal/executor`: two distinct targets.
+   - **Prepare/Prepared is pure** — classify-driven, no DB: tier refusals
+     (Tier-0 "use fb_query" message, Tier-3 disabled), MinFB floor
+     computation across statements, NeedsExclusive for non-CONCURRENTLY
+     REFRESH, statement splitting. Instant table tests, no seam.
+   - **Exec paths** (`Exec`/`execAtomic`/`execPerStatement`) take `*sql.DB`
+     from `dbpool.Manager` — register a fake `database/sql` driver
+     (`sql.Register` + driver.Driver/Conn/Stmt/Tx) to assert: DDL-free
+     script ⇒ one atomic tx with rollback on statement N's error (message
+     "transaction rolled back"); DDL script ⇒ per-statement commits with
+     the "PARTIALLY APPLIED: i of n" message; per-statement 30s and total
+     5m timeouts; `shortOf` truncation; killpoints exec.pre-commit /
+     exec.post-commit (via the same arm-and-release trick as state).
+     Lane: unit (fake driver) + one live case per branch in matrix.
+3. `internal/secrets`: source order is env → OS keyring → error (env always
+   wins, keyed by env-var NAME). `Get`'s env-first ordering and error text
+   are testable as-is. `Set`/`Drop` call `go-keyring` package functions
+   directly — on Linux CI there is no Secret Service daemon, so introduce a
+   one-var seam (e.g. `var keyringStore = keyring`-style indirection) before
+   unit-testing them; otherwise keep Set/Drop live-only. Lane: unit after
+   seam; without the seam, Get-only.
+4. `internal/policy`: TierForRisk exhaustively over the ops_v3_gen table;
+   Tools() listing equals the registered tool surface (pairs with the code
+   drift guard in P2.8); WithNow clock seam for expiry paths; toFloat edge
+   cases. Lane: unit.
 5. `internal/configedit`: golden-file round-trips for firebird.conf /
-   databases.conf fixtures (parse → edit → render → re-parse), AppendJournal
-   format. Lane: unit.
-6. `internal/schemadiff`: extract pure helpers into testable form
-   (canonicalType, quotedList, firstLine, tableShape) with table tests;
-   Capture/DiffData one live case each in the matrix lane.
+   databases.conf fixtures (parse → edit → render → re-parse; fixtures from
+   the real configs in packaging/ or dev hosts), AppendJournal format,
+   ConfPath/DatabasesConfPath resolution. Lane: unit.
+6. `internal/schemadiff`: pure helpers first (canonicalType, quotedList,
+   firstLine, contains, tableShape) as table tests; Capture/DiffData one
+   live case each in the matrix lane (they are SQL-heavy against
+   RDB$ tables; DiffData's row-cap refusal and sample streaming are the
+   assertions). Lane: unit + live.
+7. `internal/schedule` (added in rev 2): the Ticker already has seams
+   (`WithNow`, `OnSkip`, `WithGateProbe`, `WithDBExists`). Add a unit test
+   that pins the consider() ordering — `fire` runs BEFORE
+   `LastFiredAt`/`PutSchedule`/`AddScheduleRun` (schedule.go:96-118) —
+   because that ordering IS the at-least-once dispatch contract that P3's
+   schedule scenario exercises. Lane: unit.
 
 ### P2 — kernel wiring (≈2 days)
 
 7. `cmd/fbmcp/http.go`: attach-socket server lifecycle (Start/ReplaceAuth/
    Replace/Stop/Close/Wait) over net.Pipe — auth replacement mid-flight,
    double-start refusal. Lane: unit.
-8. `cmd/fbmcp` tool registration: every register* function produces
-   name/tier/args metadata; assert registry == policy tool list (drift
-   guard), and that every Tier-1/2 tool has a killpoint-compatible path.
-   Lane: unit.
-9. `cmd/fbmcpctl/gate.go`: OOB approval file watcher — marker appears,
-   stale marker, malformed marker. Lane: unit (tempdir).
+8. `cmd/fbmcp` tool registry drift (code level): `TestToolSurfaceDrift`
+   already pins toolMeta against README + docs/tool-reference.md; the
+   missing direction is runtime vs policy — drive `registerP4Tools` (and
+   siblings) on an in-process MCP server over net.Pipe, call `tools/list`
+   (registration touches no pools, so this is hermetic), and assert the
+   name set equals `toolMeta` keys and `policy.Tools()` — three-way
+   agreement. Lane: unit.
+9. `cmd/fbmcp` OOB approval watcher (`startApprovalWatcher`, p3tools.go:453
+   — rev 1 wrongly attributed this to fbmcpctl): approval/denial marker
+   appears → pending resolves; stale marker; malformed marker; marker for
+   an unknown request id. Needs a poll-interval seam or a short poll tick
+   in tests. Lane: unit (temp dirs).
 
 ### P3 — chaos expansion (M3 continuation, 1 scenario/day)
 
-10. New killpoints + scenarios, one per PR, each with its invariant:
-    - `migrate.batch-mid`: kill between migrations of an apply batch →
-      history table shows all-or-nothing per migration (ADR-030 atomicity).
-    - `schedule.mid-dispatch`: kill inside the scheduler tick → grant
-      survives, next tick re-dispatches exactly once (no double nightly_verify).
-    - `audit.rotate`: kill during audit rotation/checkpoint → chain still
-      verifies.
-    - `wf.replace` double-kill: kill again *during* restart-reconcile →
-      invariants of C7a still hold after second restart.
-    - concurrent-client kill: client A killed mid-confirm, client B proceeds;
-      pending replays; B sees no duplicate dispatch.
-11. Run the two config-independent chaos scenarios on Linux nightly too
-    (now meaningful after F1) — chaos gains a second OS for free.
+Rev 2: no NEW killpoints are needed for the first three items — the source
+already has 13 armed points and the harness uses only 7. Cover the
+unexercised ones first; each scenario reuses the existing C7a/C7b skeleton.
+
+10. New scenarios (existing killpoints unless noted):
+    - `exec.pre-commit` on an atomic script: after restart the effects are
+      ABSENT (rolled back) and the job is interrupted — proves the atomic
+      path's rollback invariant under a real kill, not just engine RO-tx.
+    - `exec.post-commit`: effects are PRESENT (commit durable) and the job
+      is interrupted — documents the at-least-once outcome honestly (the
+      restartAndVerify "succeeded/failed despite kill" check must be
+      adjusted for this scenario; the commit deliberately wins).
+    - `fb_migration_apply` mid-batch via `exec.pre-commit` with a 2+
+      migration manifest: history table stops at the last fully applied
+      migration (ADR-030 per-migration atomicity); re-apply completes and
+      is idempotent. No new killpoint required — apply routes through the
+      executor (rev 1 wrongly proposed a new `migrate.batch-mid` point).
+    - `gate.confirmed`: kill after consume, before dispatch — the pending
+      action must NOT replay (it was consumed) and no job may exist
+      (no orphan dispatch); the client can re-request cleanly.
+    - `backup.finished` (C7b extension): kill after the backup, before
+      catalog/job bookkeeping — catalog has no phantom verified backup,
+      job interrupted, source bytes unchanged.
+    - `schedule.mid-dispatch` (new killpoint, scheduler tick): the source
+      fires FIRST and persists `LastFiredAt` afterwards, so the honest
+      invariant is **at-least-once**: grant survives, the next tick
+      re-fires, both runs appear in AddScheduleRun history. Rev 1 claimed
+      "exactly once" — that would fail against this code. If exactly-once
+      is desired for nightly_verify, that is a PRODUCT change (write the
+      dispatch marker before fire, or dedupe on a schedule-run id) — decide
+      explicitly, then test the chosen semantics.
+    - `audit.mid-append` (new killpoint): kill between the log-line write
+      and the head-sidecar update — proves the real torn-write behaves like
+      TestCorruptAuditTailRefusesStart's synthetic truncation (fail-closed
+      on restart). There is no audit rotation in the source (rev 1 proposed
+      an "audit.rotate" point that has nothing to hit).
+    - double-kill: kill again DURING restart-reconcile of C7a → invariants
+      still hold after the second restart.
+    - concurrent-client kill: client A killed mid-confirm, client B
+      proceeds; B sees no duplicate dispatch; A's pending replays.
+11. Linux coverage of the two config-independent scenarios: already true
+    after the F1 fix (the matrix reduced-chaos step runs them, once per FB
+    version). Optional cleanup: hoist them into a single dedicated job to
+    avoid the 4× duplication.
 12. Chaos logging: append scenario-level timing to the nightly detail file
     so slowdowns (like the 44-minute GREEN) are visible over time.
+13. Product nit (killpoint): `Hit` silently no-ops when the checkpoint is
+    armed but `FBMCP_KILLPOINT_DIR` is unset — a misarmed harness run would
+    test nothing and pass. Log once when that combination is seen.
 
 ### P4 — soak (M2) and guardrails
 
-13. F4 fix verified by one full soak night without `[::1]` refusals.
-14. Coverage ratchet: security lane uploads `go test -coverprofile` and
+14. F4 fix verified by one full soak night without `[::1]` refusals.
+15. Coverage ratchet: security lane uploads `go test -coverprofile` and
     fails only when total coverage drops (start at 45.5%, ratchet up per
     phase: P1 → ~55%, P2 → ~60%). Advisory comment first, gate later.
-15. `internal/statetest`: trivial unit test (it exists to test state files).
+
+(Rev 1 had a P4 item "test internal/statetest" — wrong: statetest is not
+state-file testing, it is the shared test-double package `StubFacts` for
+`state.FactsProvider` used by other packages' tests. It needs no tests of
+its own; the compile-time `var _ state.FactsProvider` assertion is the
+contract.)
 
 ### Acceptance criteria
 
 - P0: matrix reduced-chaos step actually runs 2 scenarios (visible `=== RUN`
   lines); next RED night leaves a readable per-night log.
 - P1: `go test ./internal/state ./internal/executor ./internal/secrets
-  ./internal/policy ./internal/configedit ./internal/schemadiff -cover` each
-  ≥70% statements; all hermetic (no FBMCP_* env needed).
-- P2: attach-server lifecycle and tool-registry drift guarded by unit tests;
-  `cmd/fbmcpctl` >60%.
-- P3: five new killpoint scenarios green on the host nightly; M3 streak of
-  ≥5 consecutive GREEN nights re-established and logged.
+  ./internal/policy ./internal/configedit ./internal/schemadiff
+  ./internal/schedule -cover` each ≥70% statements; all hermetic (no
+  FBMCP_* env, no engine, no keyring service).
+- P2: attach-server lifecycle and three-way tool-surface agreement guarded
+  by unit tests; approval watcher covered; `cmd/fbmcpctl` >60% or explicitly
+  descoped with a note (it is a thin wrapper).
+- P3: seven new scenarios green on the host nightly (exec pre/post-commit,
+  migration mid-batch, gate.confirmed, backup.finished, schedule
+  mid-dispatch, audit mid-append, double-kill, concurrent-client — count
+  flexible); M3 streak of ≥5 consecutive GREEN nights re-established.
 - P4: coverage ratchet active and non-regressing; soak week completes with
   zero unhandled panics and no `[::1]` errors in the report.
+
+## 5. Rev 2 corrections (plan vs source)
+
+Checked line-by-line; each of these was wrong or incomplete in rev 1:
+
+| # | Rev 1 claim | Source says | Resolution |
+|---|---|---|---|
+| C1 | "11 scenarios" | 12 test functions (10 chaos + 2 live) | corrected §2 |
+| C2 | schedule kill ⇒ "re-dispatches exactly once" | `consider()` fires first, persists `LastFiredAt` after (schedule.go:96-118) ⇒ at-least-once | invariant reworded; exactly-once flagged as a product decision |
+| C3 | new `migrate.batch-mid` killpoint needed | apply routes through the executor; `exec.pre-commit`/`exec.post-commit` already exist | scenario on existing points |
+| C4 | `audit.rotate` killpoint | no rotation exists (append-only + head sidecar) | replaced with `audit.mid-append` |
+| C5 | OOB approval watcher in `cmd/fbmcpctl/gate.go` | it is `startApprovalWatcher` in `cmd/fbmcp/p3tools.go:453` | retargeted |
+| C6 | `internal/statetest` "tests state files" | it is the shared `StubFacts` test-double package | item dropped |
+| C7 | in-process persist test = `SetEnabled` only | `Hit` also requires `FBMCP_KILLPOINT_DIR` env and blocks on `.release`; silently no-ops otherwise | full handshake documented; product nit added (P3.13) |
+| C8 | secrets "env → file → missing" | env → OS keyring → error; Set/Drop hit go-keyring directly (no seam, needs dbus on Linux CI) | corrected; seam proposed |
+| C9 | executor needs a seam first | `Prepare` is pure (no DB); `Exec` uses `*sql.DB` (fake driver works) | pure tests split out as the cheap win |
+| C10 | "run the 2 OS-free chaos scenarios on Linux nightly" | already true post-F1, ×4 (once per matrix job) | marked done; optional dedupe |
+| C11 | tool drift covered by tool_surface_test.go | that test covers docs only; runtime `tools/list` vs `toolMeta` vs `policy.Tools()` is untested | P2.8 three-way guard |
+| C12 | killpoint inventory not listed | 13 armed points, harness exercises 7 | inventory added; P3 prioritizes the 6 unexercised |
