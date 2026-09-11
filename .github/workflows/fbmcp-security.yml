@@ -5,16 +5,44 @@
 # Set FBMCP_REQUIRE_FIREBIRD=1 on the Windows HQbird host so those skips fail.
 name: fbmcp-security
 
+# Started by hand, and only by hand. This was a push-and-pull-request gate
+# until 2026-09-11; the owner asked for CI to be manual across every
+# repository.
+#
+# What that costs, written down rather than rediscovered: nothing here checks a
+# commit unless somebody remembers to start it. A branch can be merged red,
+# main can go red and stay red, and the run history stops being a record of
+# what was green, because most commits will have no run at all. The Dependabot
+# pull requests this repository now opens will arrive untested.
+#
+# To start one: Actions -> fbmcp-security -> Run workflow, and pick the branch. Or
+# `gh workflow run fbmcp-security.yml --ref <branch>` from a checkout.
+#
+# The schedule below is kept. It is not a gate on a commit - it runs against
+# whatever is on the branch at the time, unattended, which is the whole reason
+# it exists. Making it manual too would leave nothing to notice what it
+# watches for.
 on:
-  push:
-  pull_request:
   workflow_dispatch:
   schedule:
     - cron: "17 2 * * *" # nightly lane: longer fuzz budget (M6 gate)
 
+# Nothing here writes anything back.
+permissions:
+  contents: read
+
+# Two dispatches of the same branch would run the same tree twice. The second
+# waits rather than cancelling the first: every run here is now something a
+# person asked for on purpose, and cancelling one throws away the answer they
+# were waiting for.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -44,6 +72,7 @@ jobs:
 
   dist:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

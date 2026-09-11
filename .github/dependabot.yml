@@ -1,0 +1,35 @@
+# Tells us when the actions this repository uses have moved.
+#
+# It is here because nothing else did that job. The way a stale action is
+# normally noticed is a deprecation warning turning into a failure on a runner
+# image update - which lands on whoever started the next run, not on whoever
+# chose the version. That matters more now than it did: CI here is manual, so
+# the person who finds it will be the one who went looking for something else.
+#
+# Only github-actions. Go modules are left out for now: nothing here
+# pins a private sibling by path, but adding a second ecosystem at the same
+# time would make the first Dependabot pull request harder to judge. Turn
+# gomod on separately once these have landed.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    # "/" covers .github/workflows and any composite action in .github/actions.
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      # Off the hour and before the working day: scheduled work clusters at :00.
+      time: "06:20"
+      timezone: Etc/UTC
+    # One pull request for all of them rather than one each. They are always the
+    # same kind of change and they are reviewed together.
+    groups:
+      actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies
