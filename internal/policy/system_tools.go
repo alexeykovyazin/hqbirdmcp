@@ -79,5 +79,25 @@ func SystemTools() []ToolMeta {
 		{Name: "fb_service_start", Tier: 2, Scope: "instance"},
 		{Name: "fb_service_stop", Tier: 2, Scope: "instance"},
 		{Name: "fb_service_restart", Tier: 2, Scope: "instance"},
+		// Phase 9: fbagent Local API bridge (phase9_plan.md). Instance-scoped
+		// proxies to the co-located fbagent; Tier-2 tools key the maintenance
+		// window off the db argument exactly like fb_service_*.
+		{Name: "fb_agent_instances", Tier: 0, Scope: "instance"},
+		{Name: "fb_agent_status", Tier: 0, Scope: "instance"},
+		{Name: "fb_agent_databases", Tier: 0, Scope: "instance"},
+		{Name: "fb_agent_artifact_list", Tier: 0, Scope: "instance"},
+		{Name: "fb_agent_artifact_get", Tier: 0, Scope: "instance"},
+		{Name: "fb_agent_job_status", Tier: 0, Scope: "instance"},
+		{Name: "fb_agent_operation", Tier: 0, Scope: "instance"},
+		{Name: "fb_agent_dbaccess", Tier: 0, Scope: "instance"},
+		{Name: "fb_agent_dbaccess_check", Tier: 0, Scope: "instance"}, // POST but a pure policy evaluation
+		{Name: "fb_agent_update_status", Tier: 0, Scope: "instance"},
+		{Name: "fb_agent_job_run", Tier: 1, Scope: "instance"}, // dynamic: hot-list families classify Tier 2 via EvaluateMeta
+		{Name: "fb_agent_config_reload", Tier: 1, Scope: "instance"},
+		{Name: "fb_agent_pprof", Tier: 1, Scope: "instance"},
+		{Name: "fb_agent_restart", Tier: 2, Scope: "instance"},
+		{Name: "fb_agent_stop", Tier: 2, Scope: "instance"},
+		{Name: "fb_agent_start", Tier: 2, Scope: "instance"},
+		{Name: "fb_agent_update_apply", Tier: 2, Scope: "instance"},
 	}
 }

@@ -84,6 +84,13 @@ func writeConfig(t *testing.T, stateDir string) string {
 	// invariants measure the killed workflow, not sampler side effects.
 	body += "\ntrends:\n    disabled: true\n"
 
+	// The phase-9 agent bridge must never dial a live fbagent from a chaos
+	// run: strip any configured top-level agents: block and append an empty
+	// list (the bridge is then disabled; Validate() passes with zero agents).
+	agentsRe := regexp.MustCompile(`(?m)^agents:\n(?:[ \t]+.*\n?)*`)
+	body = agentsRe.ReplaceAllString(body, "")
+	body += "\nagents: []\n"
+
 	// Per-run database COPIES: the scenarios share the dev spike files with
 	// anything else running on the host (the soak kernel samples them every
 	// 5 minutes; its attachments change bytes and broke the C7a invariants

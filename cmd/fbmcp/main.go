@@ -109,7 +109,7 @@ func runForegroundCtx(ctx context.Context) {
 	allFacts := state.CompositeFacts{engFacts, backupsvc.NewCatalog(st)}
 	eng := policy.New(toolMeta, allFacts, st)
 
-	server := mcp.NewServer(&mcp.Implementation{Name: "fbmcp", Version: "0.1.0"}, nil)
+	server := mcp.NewServer(&mcp.Implementation{Name: "fbmcp", Version: "0.2.0"}, nil)
 
 	type noArgs struct{}
 	type dbArg struct {
@@ -180,6 +180,7 @@ func runForegroundCtx(ctx context.Context) {
 	gt.registerRestore(server)
 	registerP4Tools(server, gt)
 	registerP5Tools(server, gt)
+	registerAgentTools(server, gt)
 	// AutoReopen reconciliation must run AFTER all workflow types are
 	// registered above (C7a): a restore_replace interrupted by a kill is
 	// resumed from its .pre-restore snapshot — marking it failed here would

@@ -147,6 +147,22 @@ intact. A restart loop is a finding, not a bug — look at stderr.
 3. If another fbmcp is active: extra piped clients **attach** automatically;
    a second *kernel* fails fast by design — run one per state dir.
 
+### fbagent bridge down or failing (phase 9)
+
+The agent bridge tools proxy the co-located fbagent Local API. Full doc:
+[agent-bridge.md](agent-bridge.md).
+
+| Signal | Meaning / fix |
+|---|---|
+| `agent-unreachable` | Agent service not running, `local_api.enabled: false`, or wrong `base_url` (default listen `127.0.0.1:(10000 + firebird.port)` → 13050 for 3050). |
+| `agent-auth` on every call | Keyring/env token ≠ agent's `local_api.token`. Re-set: `fbmcpctl secret set FBMCP_AGENT_TOKEN`. |
+| Tier-2 bridge tool denied "no open maintenance window" | The window must be opened for the SAME registry `db` you pass to the tool (`fb_window_open`, then pass that `db`). |
+| `agent-timeout` on restarts | `agents[].timeout_seconds` (default 130) must exceed the agent's `restart_timeout_seconds` (default 120); raise it. |
+| `agent-payload-too-large` on artifacts | Over the 8 MiB decoded cap — retry with `tail=N` (db-scoped `*/latest`). |
+
+Governance reminder: the fbmcp gate approves the *request*; the job runs
+under the agent's own scheduler — check the agent's logs for execution.
+
 ## 8. Troubleshooting table
 
 | Symptom | Meaning / fix |
@@ -161,6 +177,7 @@ intact. A restart loop is a finding, not a bug — look at stderr.
 | Tools missing for one database only | That database is offline (`fb_db_health`) — tools degrade per-database by design. |
 | Raw `DROP INDEX` via `fb_write` denied: "no open maintenance window" | Statement classification puts bare `DROP INDEX` at Tier 2. Use `fb_index_drop` instead (Tier 1, in-band confirm; refuses indexes backing a constraint). Same for a script mixing e.g. `DROP` + `CREATE INDEX`: split it per tier. |
 | New index on a column never picked up by the optimizer | Two causes seen on FB 4/5: (1) fresh statistics — run `SET STATISTICS INDEX` (`fb_index_rebuild` action=statistics); (2) `ORDER BY <col> DESC` will not walk an ascending index on FB — create a `DESCENDING` index for it. |
+| A bridge tool fails with `agent-*` codes | See the fbagent bridge playbook above (§7); the bridge is disabled unless an `agents:` entry exists in `fbmcp.yaml`. |
 
 ## 9. State directory reference
 

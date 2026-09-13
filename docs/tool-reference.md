@@ -178,7 +178,62 @@ Fire path does **not** call the human gate. Creating a schedule is gated once. U
 
 ---
 
+## fbagent bridge (phase 9)
+
+Proxies to the co-located **fbagent** Local API (loopback HTTP, Bearer token) —
+see [agent-bridge.md](agent-bridge.md). Disabled unless an `agents:` entry
+exists in `fbmcp.yaml`:
+
+```yaml
+agents:
+  - id: fb1
+    base_url: http://127.0.0.1:13050   # loopback enforced
+    token_env: FBMCP_AGENT_TOKEN       # env var name; keyring fallback
+    instance_id: fb1                   # default
+    timeout_seconds: 130               # must exceed the agent's restart_timeout_seconds
+    tier2_jobs: []                     # optional extra Tier-2 job names
+```
+
+`agent` selects the target when several are configured. `db` is the audit
+key everywhere and the **maintenance-window key for every Tier-2 tool** —
+open the window against a co-located registry database (`fb_window_open`),
+exactly like `fb_service_restart`. Tier-1/2 tools take the generic gated shape
+(`db`, `args`, `mode=preview`).
+
+**Governance note:** the fbmcp gate approves the *request*; the job itself
+executes under the agent's own scheduler and policy, outside fbmcp's gate.
+
+| Want | Use |
+|---|---|
+| Agent artifacts (LWM, gstat-full, per-db metrics/index stats, traces, deadlocks, metadata) | bridge only |
+| Agent scheduler jobs (36 families) | `fb_agent_job_run` |
+| Service control | `fb_service_start`/`stop`/`restart` (direct SCM) or `fb_agent_restart`/`stop`/`start` (agent-supervised restart contract) |
+| SQL sweeps/backups on a registry db | native `fb_*` tools (governed end-to-end) |
+
+| Tool | Tier | Args | What it does |
+|---|---|---|---|
+| `fb_agent_instances` | 0 | `agent?`, `db?`, `instance_id?` | fbagent-managed instance(s): state, uptime, port |
+| `fb_agent_status` | 0 | `agent?`, `db?`, `section?` (backups\|upgrade), `view?` (health) | agent `server_status.json` (or one slice of it) |
+| `fb_agent_databases` | 0 | `agent?`, `db?` | latest active-databases artifact from the collector |
+| `fb_agent_artifact_list` | 0 | `agent?`, `db?`, `scope`, `glob` | glob listing under `server_level/` or a database folder (max 200) |
+| `fb_agent_artifact_get` | 0 | `agent?`, `db?`, `scope`, `path`, `tail?`/`date?`/`at?`/`limit?` | one artifact; query params are route-specific (validated client-side); over-cap → retry with `tail` |
+| `fb_agent_job_status` | 0 | `agent?`, `db?`, `job`, `db_filter?` | job family's persistent status document |
+| `fb_agent_operation` | 0 | `agent?`, `db?`, `operation_id` | poll an async operation (pruned ids → 404) |
+| `fb_agent_dbaccess` | 0 | `agent?`, `db?` | DatabaseAccess policy inventory (mode, roots, aliases) |
+| `fb_agent_dbaccess_check` | 0 | `agent?`, `db?`, `path` | evaluate a path against the policy (pure read despite the POST) |
+| `fb_agent_update_status` | 0 | `agent?`, `db?` | firebird-updater runtime state sidecar |
+| `fb_agent_job_run` | 1 (dynamic → 2) | `job`, `job_id?`, `db_keys?`, `params?`, `db?`, `agent?`, `mode?` | run one agent scheduler job and poll the operation. Hot list `restore`, `sql_script`, `vbackup`, `grpvbackup`, `nbackup_dump`, `grpnbackup_dump` (+ `tier2_jobs:`) escalates to Tier 2 (window on `db`, **OOB**) |
+| `fb_agent_config_reload` | 1 | `db`, `args.agent?` | hot-reload `agent_config.json` into the running scheduler |
+| `fb_agent_pprof` | 1 | `db`, `args.agent?`, `args.cpu_seconds?` (0–30) | synchronous profile of the agent process |
+| `fb_agent_restart` | 2 | `db` (window key), `args.agent?`, `args.reason?` | agent restart contract: stop → start → TCP readiness. **OOB** |
+| `fb_agent_stop` | 2 | same | stop the agent-supervised service. **OOB** |
+| `fb_agent_start` | 2 | same | start + wait for TCP readiness. **OOB** |
+| `fb_agent_update_apply` | 2 | same | apply the prepared Firebird update; the nested auto-restart is polled and reported. **OOB** |
+
+---
+
 ## Operator CLI (not MCP)
+
 
 These are host commands, not tools Claude can call:
 

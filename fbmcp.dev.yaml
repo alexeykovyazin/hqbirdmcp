@@ -117,6 +117,14 @@ databases:
 notify:
     webhook_url: ""
     webhook_secret_env: ""
+# Phase 9 fbagent bridge — disabled unless uncommented. Loopback only;
+# token via env/keyring (fbmcpctl secret set FBMCP_AGENT_TOKEN).
+# agents:
+#     - id: fb1
+#       base_url: http://127.0.0.1:13050
+#       token_env: FBMCP_AGENT_TOKEN
+#       instance_id: fb1
+#       timeout_seconds: 130
 listen: ""
 tls:
     cert: ""

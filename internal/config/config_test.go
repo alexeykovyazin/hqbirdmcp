@@ -191,3 +191,97 @@ databases:
 		t.Fatal("UNC path accepted")
 	}
 }
+
+// --- phase 9: agents: section (ADR-031) ---
+
+func TestAgentsValid(t *testing.T) {
+	yaml := validYAML + `
+agents:
+  - id: fb1
+    base_url: http://127.0.0.1:13050
+    token_env: FBMCP_AGENT_TOKEN
+`
+	c, err := Load(writeCfg(t, yaml))
+	if err != nil {
+		t.Fatalf("valid agents section rejected: %v", err)
+	}
+	if len(c.Agents) != 1 {
+		t.Fatalf("agents = %d", len(c.Agents))
+	}
+	a := c.Agents[0]
+	if got := a.TimeoutOrDefault(); got != 130 {
+		t.Fatalf("TimeoutOrDefault = %d, want default 130", got)
+	}
+	if got := a.InstanceIDOrDefault(); got != "fb1" {
+		t.Fatalf("InstanceIDOrDefault = %q", got)
+	}
+}
+
+func TestAgentsDefaults(t *testing.T) {
+	a := Agent{TimeoutSeconds: 45, InstanceID: "hq1"}
+	if a.TimeoutOrDefault() != 45 || a.InstanceIDOrDefault() != "hq1" {
+		t.Fatal("explicit values not honored")
+	}
+}
+
+func TestAgentsRejected(t *testing.T) {
+	cases := map[string]string{
+		"missing base_url": `
+agents:
+  - id: fb1
+    token_env: T`,
+		"missing token_env": `
+agents:
+  - id: fb1
+    base_url: http://127.0.0.1:13050`,
+		"non-loopback": `
+agents:
+  - id: fb1
+    base_url: http://10.0.0.5:13050
+    token_env: T`,
+		"bad scheme": `
+agents:
+  - id: fb1
+    base_url: ftp://127.0.0.1:13050
+    token_env: T`,
+		"bad id": `
+agents:
+  - id: 1bad
+    base_url: http://127.0.0.1:13050
+    token_env: T`,
+		"duplicate id": `
+agents:
+  - id: fb1
+    base_url: http://127.0.0.1:13050
+    token_env: T
+  - id: fb1
+    base_url: http://127.0.0.1:13051
+    token_env: T`,
+		"empty tier2 job": `
+agents:
+  - id: fb1
+    base_url: http://127.0.0.1:13050
+    token_env: T
+    tier2_jobs: [""]`,
+	}
+	for name, extra := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Load(writeCfg(t, validYAML+extra)); err == nil {
+				t.Fatalf("%s: accepted", name)
+			}
+		})
+	}
+}
+
+func TestAgentsNonLoopbackOverride(t *testing.T) {
+	yaml := validYAML + `
+agents:
+  - id: fb1
+    base_url: http://db-host:13050
+    token_env: T
+    allow_non_loopback: true
+`
+	if _, err := Load(writeCfg(t, yaml)); err != nil {
+		t.Fatalf("allow_non_loopback override rejected: %v", err)
+	}
+}

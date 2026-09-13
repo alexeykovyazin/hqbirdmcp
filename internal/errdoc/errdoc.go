@@ -22,6 +22,74 @@ var signals = []struct {
 	match string
 	doc   Doc
 }{
+	// fbagent Local API bridge (phase9_plan.md A1). These MUST stay at the
+	// top: the agent's free-form error messages can contain substrings that
+	// generic signals below would otherwise misclassify first (e.g. the job
+	// name find_deadlocks tripping the deadlock signal).
+	{
+		match: "fbagent transport",
+		doc: Doc{
+			Code:        "agent-unreachable",
+			Hint:        "The fbagent Local API endpoint could not be reached (not running, wrong base_url, or loopback blocked).",
+			Remediation: "Check the agent service is running with local_api.enabled and that agents[].base_url matches its listen address.",
+		},
+	},
+	{
+		match: "fbagent auth",
+		doc: Doc{
+			Code:        "agent-auth",
+			Hint:        "The agent rejected the Bearer token (401; the API denies every request without a valid token).",
+			Remediation: "Check agents[].token_env: the env var (or keyring entry fbmcp/<name>) must hold the agent's local_api.token.",
+		},
+	},
+	{
+		match: "fbagent not-found",
+		doc: Doc{
+			Code:        "agent-not-found",
+			Hint:        "The agent has no such route, job, instance, operation, or artifact (or a pruned operation id was polled).",
+			Remediation: "Check the job/operation/artifact name against the fbagent API reference for the deployed agent version.",
+		},
+	},
+	{
+		match: "fbagent bad-request",
+		doc: Doc{
+			Code:        "agent-remote-denied",
+			Hint:        "The agent refused the request parameters (400/405 denied).",
+			Remediation: "Fix the arguments (unknown job_id, missing sql_script scriptPath/scriptBody, invalid glob or path).",
+		},
+	},
+	{
+		match: "fbagent unavailable",
+		doc: Doc{
+			Code:        "agent-unavailable",
+			Hint:        "The requested feature is not wired on the agent (missing data_path, config, or install path; or a capture already in progress).",
+			Remediation: "Check the agent's agent_config.json covers the requested feature; retry later for in-progress captures.",
+		},
+	},
+	{
+		match: "fbagent service-error",
+		doc: Doc{
+			Code:        "agent-remote-error",
+			Hint:        "The agent's underlying operation failed (read error, SCM failure, validation surfaced by reload).",
+			Remediation: "Inspect the agent's own logs for the failing operation; the message carries the agent's error text.",
+		},
+	},
+	{
+		match: "fbagent op-timeout",
+		doc: Doc{
+			Code:        "agent-timeout",
+			Hint:        "The agent operation did not reach a terminal state within the bridge timeout (default agents[].timeout_seconds=130), or the agent reported readiness timeout.",
+			Remediation: "Poll later with fb_agent_operation using the returned operation_id; raise agents[].timeout_seconds above the agent's restart_timeout_seconds if this recurs.",
+		},
+	},
+	{
+		match: "fbagent payload-too-large",
+		doc: Doc{
+			Code:        "agent-payload-too-large",
+			Hint:        "The artifact exceeded the agent's decoded-response cap (default 8 MiB).",
+			Remediation: "Retry with tail=N (db-scoped */latest artifacts) or a narrower glob/date filter.",
+		},
+	},
 	{
 		match: "MySQLEngine",
 		doc: Doc{

@@ -6,8 +6,9 @@ databases as a DBA: monitoring, backups and verified restores, SQL/DDL/DCL,
 security, indexes, migrations and a scheduler, across Firebird 2.5–5.0.
 Every mutating call passes a tiered policy engine and a **human confirmation
 gate** before it touches the database, and every decision is written to a
-hash-chained audit log. 67 tools in total (32 read-only, 27 Tier 1, 7
-Tier 2, 1 disabled-by-design Tier 3).
+hash-chained audit log. 84 tools in total (42 read-only, 30 Tier 1, 11
+Tier 2, 1 disabled-by-design Tier 3; phase 9 added 17 fbagent bridge
+proxies — [docs/agent-bridge.md](fbmcp/docs/agent-bridge.md)).
 
 ## Quick start
 
@@ -46,9 +47,10 @@ Wire the server into an MCP client and configure `fbmcp.yaml`:
 [`docs/claude-desktop.md`](docs/claude-desktop.md). Then verify the host:
 `dist\fbmcpctl doctor <config>` must end `doctor: green`.
 
-## Status (v1.0 run-up, phase 8)
+## Status (v1.0 run-up, phase 8 + 9)
 
-Plans: [`../phase8_plan.md`](../phase8_plan.md) (operational),
+Plans: [`../phase8_plan.md`](../phase8_plan.md) and
+[`../phase9_plan.md`](../phase9_plan.md) (operational),
 [`../improvement_plan.md`](../improvement_plan.md) (workstreams).
 Claims register: [`docs/findings/claims-register.md`](docs/findings/claims-register.md)
 (23 verified-green, 1 accepted-residual, 0 open).
@@ -80,6 +82,23 @@ Claims register: [`docs/findings/claims-register.md`](docs/findings/claims-regis
   audit chain with `fbmcpctl verify`/`repair`, structured error envelopes,
   OS-keyring secret fallback, per-identity rate limits, fuzz corpus,
   `fbmcpctl gate` report. CI green.
+
+**Phase 9 — fbagent bridge (landed 2026-09-13, live-verified):**
+
+- 17 agent-bridge tools proxy the co-located fbagent Local API under the
+  same tiered policy / confirmation gate / audit discipline: Tier-0 reads
+  of the agent's artifact hub (LWM, gstat-full, per-database metrics,
+  index stats, traces, deadlock reports, metadata, backup snapshots), the
+  agent's 36-job scheduler (`fb_agent_job_run`, dynamic Tier 1→2 for the
+  heavy families), config reload, pprof, and the frozen engine-control
+  contract plus update apply (Tier 2, maintenance window on `db`).
+  Design: ADR-031/032/033; ops guide:
+  [`docs/agent-bridge.md`](docs/agent-bridge.md).
+- Live-lab suite green against the real agent on this host (port 13055,
+  instance `fb-master-3055`): full Tier-1 governed round trip, artifact
+  fixtures, error mapping, conditional negative fixtures; extended and
+  engine tiers opt-in via env gates. Tool surface now 84
+  (42 read-only / 30 Tier 1 / 11 Tier 2 / 1 Tier 3).
 
 **In progress** (manual validation phase 8M, running unattended):
 
@@ -326,7 +345,41 @@ once. Unknown database ids are skipped (no `Submit`).
 
 ---
 
+## fbagent bridge (phase 9)
+
+Proxies to the co-located **fbagent** Local API (loopback HTTP, Bearer
+token) — disabled unless an `agents:` entry exists in `fbmcp.yaml`; full
+config and governance notes in [docs/agent-bridge.md](docs/agent-bridge.md).
+`agent` selects the target when several are configured; `db` is the audit
+key everywhere and the **maintenance-window key for every Tier-2 tool**
+(open it against a co-located registry database, like `fb_service_restart`).
+**Governance note:** the fbmcp gate approves the *request*; the job
+executes under the agent's own scheduler and policy.
+
+| Tool | Tier | Args | What it does |
+|---|---|---|---|
+| `fb_agent_instances` | 0 | `agent?`, `db?`, `instance_id?` | fbagent-managed instance(s): state, uptime, port |
+| `fb_agent_status` | 0 | `agent?`, `db?`, `section?` (backups\|upgrade), `view?` (health) | agent `server_status.json` (or one slice of it) |
+| `fb_agent_databases` | 0 | `agent?`, `db?` | latest active-databases artifact from the collector |
+| `fb_agent_artifact_list` | 0 | `agent?`, `db?`, `scope`, `glob` | glob listing under `server_level/` or a database folder (max 200) |
+| `fb_agent_artifact_get` | 0 | `agent?`, `db?`, `scope`, `path`, `tail?`/`date?`/`at?`/`limit?` | one artifact; query params are route-specific; over-cap → retry with `tail` |
+| `fb_agent_job_status` | 0 | `agent?`, `db?`, `job`, `db_filter?` | job family's persistent status document |
+| `fb_agent_operation` | 0 | `agent?`, `db?`, `operation_id` | poll an async operation |
+| `fb_agent_dbaccess` | 0 | `agent?`, `db?` | DatabaseAccess policy inventory |
+| `fb_agent_dbaccess_check` | 0 | `agent?`, `db?`, `path` | evaluate a path against the policy (pure read) |
+| `fb_agent_update_status` | 0 | `agent?`, `db?` | firebird-updater runtime state |
+| `fb_agent_job_run` | 1 (dynamic → 2) | `job`, `job_id?`, `db_keys?`, `params?`, `db?`, `agent?`, `mode?` | run one agent scheduler job; hot-list families escalate to Tier 2 (**OOB**) |
+| `fb_agent_config_reload` | 1 | `db`, `args.agent?` | hot-reload `agent_config.json` |
+| `fb_agent_pprof` | 1 | `db`, `args.agent?`, `args.cpu_seconds?` (0–30) | profile the agent process |
+| `fb_agent_restart` | 2 | `db` (window key), `args.agent?`, `args.reason?` | agent restart contract (stop → start → TCP readiness). **OOB** |
+| `fb_agent_stop` | 2 | same | stop the agent-supervised service. **OOB** |
+| `fb_agent_start` | 2 | same | start + wait for TCP readiness. **OOB** |
+| `fb_agent_update_apply` | 2 | same | apply the prepared Firebird update; nested auto-restart polled. **OOB** |
+
+---
+
 ## Operator CLI and tray (not MCP)
+
 
 These are host-side surfaces, not tools Claude can call — they exist because
 Tier ≥ 2 actions require out-of-band confirmation the MCP client cannot reach.

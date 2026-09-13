@@ -4,10 +4,13 @@ package config
 
 import (
 	"fmt"
-	"github.com/aleks/fbmcp/internal/secrets"
+	"net"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/aleks/fbmcp/internal/secrets"
 
 	"gopkg.in/yaml.v3"
 )
@@ -34,7 +37,46 @@ type Config struct {
 	Limits       Limits    `yaml:"limits"`
 	Retention    Retention `yaml:"retention"`
 	Trends       Trends    `yaml:"trends"`
+	Agents       []Agent   `yaml:"agents"`
 	SourcePath   string    `yaml:"-"`
+}
+
+// Agent is one co-located fbagent Local API endpoint (phase9_plan.md /
+// ADR-031): the loopback HTTP surface of the HQBird agent service. The
+// bridge tools proxy it; base_url only ever comes from this config, never
+// from tool arguments (SSRF stance).
+type Agent struct {
+	ID         string `yaml:"id"`
+	BaseURL    string `yaml:"base_url"`    // e.g. http://127.0.0.1:13050
+	TokenEnv   string `yaml:"token_env"`   // env var name (keyring fallback) holding the Bearer token
+	InstanceID string `yaml:"instance_id"` // used in /v1/instances/{id} paths; default "fb1"
+	// TimeoutSeconds bounds bridge polling of async agent operations; it must
+	// exceed the agent's restart_timeout_seconds (default 120) or long
+	// restarts surface as client timeouts. 0 → 130.
+	TimeoutSeconds int `yaml:"timeout_seconds"`
+	// Tier2Jobs extends the hard-coded hot list of job names classified
+	// Tier 2 by fb_agent_job_run (ADR-032).
+	Tier2Jobs []string `yaml:"tier2_jobs"`
+	// AllowNonLoopback lifts the loopback-only base_url rule. Not
+	// recommended: the agent itself rejects non-loopback binds.
+	AllowNonLoopback bool `yaml:"allow_non_loopback"`
+}
+
+// TimeoutOrDefault fills the ADR-031 default (130s: agent restart timeout
+// 120s + headroom).
+func (a Agent) TimeoutOrDefault() int {
+	if a.TimeoutSeconds <= 0 {
+		return 130
+	}
+	return a.TimeoutSeconds
+}
+
+// InstanceIDOrDefault fills the agent's own default instance id.
+func (a Agent) InstanceIDOrDefault() string {
+	if a.InstanceID == "" {
+		return "fb1"
+	}
+	return a.InstanceID
 }
 
 // Trends configures the C.4 capacity sampler (periodic per-DB metrics
@@ -229,6 +271,43 @@ func (c *Config) Validate() error {
 			}
 			if strings.HasPrefix(p, `\\`) || strings.HasPrefix(p, "//") {
 				return fmt.Errorf("database %q: UNC paths are refused", db.ID)
+			}
+		}
+	}
+	seenAgent := map[string]bool{}
+	for _, ag := range c.Agents {
+		if !idRe.MatchString(ag.ID) {
+			return fmt.Errorf("agent id %q: must match %s", ag.ID, idRe)
+		}
+		if seenAgent[ag.ID] {
+			return fmt.Errorf("duplicate agent id %q", ag.ID)
+		}
+		seenAgent[ag.ID] = true
+		if ag.BaseURL == "" {
+			return fmt.Errorf("agent %q: base_url is required", ag.ID)
+		}
+		u, err := url.Parse(ag.BaseURL)
+		if err != nil {
+			return fmt.Errorf("agent %q: base_url: %v", ag.ID, err)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return fmt.Errorf("agent %q: base_url scheme must be http(s), got %q", ag.ID, u.Scheme)
+		}
+		if !ag.AllowNonLoopback {
+			host := u.Hostname()
+			loopback := host == "localhost"
+			if !loopback {
+				if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+					return fmt.Errorf("agent %q: base_url must be loopback (the agent API is loopback-only); use allow_non_loopback: true to override", ag.ID)
+				}
+			}
+		}
+		if ag.TokenEnv == "" {
+			return fmt.Errorf("agent %q: token_env is required (the agent API denies every request without a Bearer token)", ag.ID)
+		}
+		for _, j := range ag.Tier2Jobs {
+			if j == "" {
+				return fmt.Errorf("agent %q: tier2_jobs entries must be non-empty", ag.ID)
 			}
 		}
 	}
