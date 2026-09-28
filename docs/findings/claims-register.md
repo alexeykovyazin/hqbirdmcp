@@ -5,6 +5,7 @@ Binary M6 status only: **verified-green** | **accepted-residual**. Empty status 
 Test column tags: `seed` (exists from Phases 1–5) · `extend` (P6.1 added coverage) · `missing` (still open).
 
 Origin: live tree 2026-08-17 + [`phase6_plan_v2.md`](../../../phase6_plan_v2.md) §4.
+Refreshed 2026-09-28 (WS7 T7.3): phases 9/10 verified against the same fuses (addendum below); residual list reconciled.
 
 Fuse map: #1→C1 · #2→C2 · #3→C7a · #4→C22 · #5→C15 · #6→C4 · #7→C3.
 
@@ -42,9 +43,18 @@ Fuse map: #1→C1 · #2→C2 · #3→C7a · #4→C22 · #5→C15 · #6→C4 · #
 - C14: host with `state.dir` write can rewrite `ArgHash` (T-11).
 - (closed 2026-08-25, phase8_plan D4.3): OS keyring is a fallback for unset env vars (`fbmcpctl secret set|get|drop`, entry `fbmcp/<ENV_NAME>`; env still wins — ADR-009 contract).
 - Bitwise-identical PE/ELF not claimed (ADR-026).
-- Windows service Stop does not cancel `runForeground` (P5.2 stub) — P6.2 T6.
-- Linux container matrix deferred.
-- Soak / unattended week: P6.2 T5, not an M6 veto.
+- (closed, P6.2 T6): Windows service Stop cancels and bounded-waits the kernel (`stopAndWait`, winsvc path). Console-mode cancellation of the background loops remains open — WS10 T10.1.
+- (closed, 2026-09): Linux container matrix — `fbmcp-matrix.yml` runs the 4-way Firebird matrix nightly (Linux-only; the push/PR commit gate is WS8 T8.2).
+- Soak / unattended week (P6.2 T5 → 8M M2): **running** since 2026-08-30; the fb5std engine outage (connectex refused, 08-31…09-28) triaged and the engine service restored 2026-09-28 (T7.2, chaos-log triage summary).
+
+## Addendum: phases 9–10 (2026-09-28, WS7 T7.3)
+
+The table above predates phases 9/10; both were built against the same fuses:
+
+- **Phase 9 (fbagent bridge, 17 tools)**: C2 holds — bridge tools register in `SystemTools` and invoke policy; `fb_agent_job_run` re-classifies hot-list families to Tier 2 via `EvaluateMeta`. C15 covers the 85-tool surface (three-way drift). Known gaps are tracked, not silent: duplicated bridge gating path and fail-open unknown job families (WS9 T9.7), hardcoded `"local"` audit identity on legacy Tier-0 tools (WS9 T9.3).
+- **Phase 10 (result grid + fb_query_check)**: no new authority — Tier 0 (C2 unaffected); `fb_query_check` follows the Evaluate-even-at-Tier-0 convention; the uigrid registry is identity-scoped, in-memory, TTL'd (nothing new for C4 chaos kills); resource reads are audited into the C5 chain; C15 extended with `TestREADMEToolCounts` + `TestResourceSurfaceInventory`.
+
+Residuals newer than this register live in the improvement plan v3 ([project_review_2026-09-28.md](../../../project_review_2026-09-28.md)): notably F3 (Tier-1 in-band confirmability — owner decision T9.6) and F4 (EXECUTE BLOCK tier asymmetry — T9.1).
 
 ## CI policy (C1)
 

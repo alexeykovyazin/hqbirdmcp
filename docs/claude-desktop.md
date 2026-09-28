@@ -40,7 +40,7 @@ One-command rebuild + update + configure (see `packaging/rebuild-install.ps1`; d
 
 Spike/dev YAML (this machine): [`fbmcp.dev.yaml`](../fbmcp.dev.yaml). It points at the HQbird spike databases under `C:\HQbirdData\output\fbmcp-spike\` and reads the password from **`FBMCP_DEV_PW`**.
 
-That variable must be set in the MCP client `env` block (not in the YAML). For the spike DBs the password is `masterkey`. Do not use this against production databases.
+That variable must be set in the MCP client `env` block (not in the YAML) — set it to the spike databases' SYSDBA password (the local dev value on this machine; it is deliberately not committed here — C10 keeps secrets out of the repo). Alternative: `fbmcpctl secret set FBMCP_DEV_PW` stores it in the OS keyring (entry `fbmcp/FBMCP_DEV_PW`), and then the `env` block is unnecessary. Do not use this against production databases.
 
 Create the state directory once:
 
@@ -51,7 +51,7 @@ New-Item -ItemType Directory -Force -Path C:\HQbirdData\output\fbmcp-spike\state
 Optional check (from `fbmcp/`):
 
 ```powershell
-$env:FBMCP_DEV_PW = "masterkey"
+$env:FBMCP_DEV_PW = "<spike SYSDBA password>"
 .\dist\fbmcpctl.exe doctor .\fbmcp.dev.yaml
 ```
 
@@ -75,7 +75,7 @@ Merge this entry into `mcpServers` (keep any other servers you already have):
         "E:\\Projects_2026\\AIDBA\\fbmcp\\fbmcp.dev.yaml"
       ],
       "env": {
-        "FBMCP_DEV_PW": "masterkey"
+        "FBMCP_DEV_PW": "<spike SYSDBA password>"
       }
     }
   }
@@ -102,7 +102,7 @@ Same stdio binary. Project file `.mcp.json` (repo root or `fbmcp/`):
     "fbmcp": {
       "command": "E:\\Projects_2026\\AIDBA\\fbmcp\\dist\\fbmcp.exe",
       "args": ["-config", "E:\\Projects_2026\\AIDBA\\fbmcp\\fbmcp.dev.yaml"],
-      "env": { "FBMCP_DEV_PW": "masterkey" }
+      "env": { "FBMCP_DEV_PW": "<spike SYSDBA password>" }
     }
   }
 }

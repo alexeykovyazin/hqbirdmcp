@@ -126,3 +126,15 @@ Changes since §8 that alter the residual list:
 
 Sign-off: _pending — to be signed at M6 closure after P6.2/P6.3 complete._
 
+
+## 10. Addendum (2026-09-28, WS7 T7.3) — stale residuals reconciled
+
+- **Closed**: C11 rate limit + session cap + default-deny Origin (phase8 D4.1/E.1: `limits:` config, 429s, CheckRemote refuses an empty allowlist in remote mode).
+- **Closed**: D5 env-only secrets — the OS keyring is now a fallback for unset env vars (`fbmcpctl secret set|get|drop`, entry `fbmcp/<ENV_NAME>`; env still wins — phase8 D4.3 / ADR-009 contract).
+- **Closed**: Windows service Stop cancels and bounded-waits the kernel (`stopAndWait`, winsvc path) — the §8/§9 "does not cancel runForeground" residual is done; console-mode cancellation of the background loops remains open (WS10 T10.1).
+- **Closed**: Linux container matrix — `fbmcp-matrix.yml` runs the 4-way Firebird matrix nightly (Linux-only; the push/PR commit gate is WS8 T8.2).
+- Soak / unattended week (P6.2 T5 → 8M M2): running since 2026-08-30; the fb5std engine outage (connectex refused, 08-31…09-28) triaged and the engine service restored (T7.2).
+
+Sign-off: _still pending — to be signed at M6 closure; the 8M manual gate
+items (M1, M3 clean streak, M4, M5, M8, M9) and improvement plan v3
+WS8/WS9 remain (project_review_2026-09-28.md)._

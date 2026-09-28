@@ -7,7 +7,7 @@
         "E:\\Projects_2026\\AIDBA\\fbmcp\\fbmcp.dev.yaml"
       ],
       "env": {
-        "FBMCP_DEV_PW": "masterkey"
+        "FBMCP_DEV_PW": "<spike SYSDBA password>"
       }
     }
   }
