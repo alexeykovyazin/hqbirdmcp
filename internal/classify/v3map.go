@@ -143,6 +143,7 @@ func mapStatement(s fbparse.Statement) Result {
 		return Result{Statement: s, Tier: 0, TierKnown: true, V3Op: 0, Reason: "read-only statement"}
 	}
 	tier := 1
+	tierFinal := false
 	reason := fmt.Sprintf("%s %s %s", s.Verb, s.ObjectType, s.Object.Name)
 	if op, ok := v3Op(opN); ok {
 		tier = policy.TierForRisk(op)
@@ -160,6 +161,28 @@ func mapStatement(s fbparse.Statement) Result {
 		tier, reason = 3, "DROP DATABASE is Tier 3 (disabled)"
 	case s.Verb == fbparse.VerbCreate && strings.EqualFold(string(s.ObjectType), "database"):
 		tier, reason = 1, "CREATE DATABASE (template path) — Tier 1"
+	case s.Verb == fbparse.VerbExecuteBlock && bodyOpaque(s):
+		// T9.1 (review F4): the block body is the real mutation surface, and
+		// op 25 ("procedure-ish", Medium) would ride it in at Tier 1. DML in
+		// the body is the same mutation written top-level (Tier-2 class);
+		// EXECUTE PROCEDURE/BLOCK or dynamic EXECUTE STATEMENT inside the
+		// body is opaque — fail closed.
+		if tier < 2 {
+			tier = 2
+		}
+		tierFinal = true
+		reason = "EXECUTE BLOCK body has DML or an opaque EXECUTE — Tier 2 (window + out-of-band approval)"
+	case s.Verb == fbparse.VerbExecuteProc:
+		// T9.1 (review F4): the stored body lives in the database and is
+		// invisible to the classifier — read-only cannot be proven on the
+		// fb_write path (fb_query keeps its own Tier-0 path behind the
+		// engine-enforced read-only transaction, and a procedure it refuses
+		// lands here through the fallback).
+		if tier < 2 {
+			tier = 2
+		}
+		tierFinal = true
+		reason = "EXECUTE PROCEDURE — stored body opaque to the classifier; Tier 2 (window + out-of-band approval)"
 	case s.Verb == fbparse.VerbDrop:
 		if tier < 2 {
 			tier = 2
@@ -195,5 +218,25 @@ func mapStatement(s fbparse.Statement) Result {
 		tier, reason = 1, "SET TRANSACTION (lock timeout / isolation) — Tier 1"
 	}
 
-	return Result{Statement: s, Tier: tier, TierKnown: true, V3Op: opN, Reason: reason}
+	return Result{Statement: s, Tier: tier, TierKnown: true, V3Op: opN, Reason: reason, TierFinal: tierFinal}
+}
+
+// bodyOpaque reports whether an EXECUTE BLOCK body's effect cannot be
+// proven read-only at classify time: it performs row DML, calls into a
+// stored routine (body lives in the database), runs dynamic SQL, or was
+// not captured at all. Matching on Raw text for EXECUTE STATEMENT is
+// deliberately crude — a false positive only raises the tier.
+func bodyOpaque(s fbparse.Statement) bool {
+	if s.Body == nil {
+		return true
+	}
+	if s.Body.HasDML {
+		return true
+	}
+	for _, v := range s.Body.EmbeddedVerbs {
+		if v == fbparse.VerbExecuteProc || v == fbparse.VerbExecuteBlock {
+			return true
+		}
+	}
+	return strings.Contains(strings.ToUpper(s.Raw), "EXECUTE STATEMENT")
 }

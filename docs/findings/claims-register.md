@@ -54,7 +54,7 @@ The table above predates phases 9/10; both were built against the same fuses:
 - **Phase 9 (fbagent bridge, 17 tools)**: C2 holds — bridge tools register in `SystemTools` and invoke policy; `fb_agent_job_run` re-classifies hot-list families to Tier 2 via `EvaluateMeta`. C15 covers the 85-tool surface (three-way drift). Known gaps are tracked, not silent: duplicated bridge gating path and fail-open unknown job families (WS9 T9.7), hardcoded `"local"` audit identity on legacy Tier-0 tools (WS9 T9.3).
 - **Phase 10 (result grid + fb_query_check)**: no new authority — Tier 0 (C2 unaffected); `fb_query_check` follows the Evaluate-even-at-Tier-0 convention; the uigrid registry is identity-scoped, in-memory, TTL'd (nothing new for C4 chaos kills); resource reads are audited into the C5 chain; C15 extended with `TestREADMEToolCounts` + `TestResourceSurfaceInventory`.
 
-Residuals newer than this register live in the improvement plan v3 ([project_review_2026-09-28.md](../../../project_review_2026-09-28.md)): notably F3 (Tier-1 in-band confirmability — owner decision T9.6) and F4 (EXECUTE BLOCK tier asymmetry — T9.1).
+Residuals newer than this register live in the improvement plan v3 ([project_review_2026-09-28.md](../../../project_review_2026-09-28.md)). Status: **F4 closed 2026-09-28 (T9.1)** — EXECUTE BLOCK with a non-read-only body and EXECUTE PROCEDURE on the fb_write path are Tier 2 (window + verified backup + out-of-band; ADR-019 addendum, `p61_adversarial_test.go`). Still open: **F3** (Tier-1 in-band confirmability — owner decision T9.6) and the rest of WS8–WS12.
 
 ## CI policy (C1)
 

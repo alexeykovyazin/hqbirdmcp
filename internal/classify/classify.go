@@ -23,6 +23,10 @@ type Result struct {
 	TierKnown bool   // false ⇒ unclassifiable ⇒ the whole request is denied
 	V3Op      int    // v3 operations-table row (0 = none)
 	Reason    string // why the tier, for the preview
+	// TierFinal marks tiers set by an explicit documented rule (T9.1
+	// body-bearing escalation) rather than derived from op risk — the
+	// low-confidence bump must not stack on top of a deliberate decision.
+	TierFinal bool
 }
 
 // Classify maps a statement to a tier using the v3-style risk model
@@ -34,7 +38,7 @@ func Classify(s fbparse.Statement) Result {
 
 // escalate bumps low-confidence classifications one tier (max 3).
 func escalate(r Result) Result {
-	if r.Statement.Confidence == fbparse.ConfidenceLow && r.TierKnown && r.Tier < 3 {
+	if r.Statement.Confidence == fbparse.ConfidenceLow && r.TierKnown && !r.TierFinal && r.Tier < 3 {
 		r.Tier++
 		r.Reason += " (escalated: low parse confidence)"
 	}

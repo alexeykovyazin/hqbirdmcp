@@ -11,8 +11,16 @@ func TestP61AdversarialClassifier(t *testing.T) {
 		minTier  int
 		mustDeny bool
 	}{
-		{"EXECUTE BLOCK AS BEGIN DELETE FROM T; END", 1, false},
-		{"EXECUTE BLOCK (x INT = 1) AS BEGIN INSERT INTO T VALUES (x); END", 1, false},
+		// T9.1: body-bearing statements are Tier 2 when the body mutates or
+		// calls opaquely; a provably read-only body stays Tier 1.
+		{"EXECUTE BLOCK AS BEGIN DELETE FROM T; END", 2, false},
+		{"EXECUTE BLOCK (x INT = 1) AS BEGIN INSERT INTO T VALUES (x); END", 2, false},
+		{"EXECUTE PROCEDURE P", 2, false},
+		{"EXECUTE BLOCK AS BEGIN EXECUTE PROCEDURE log_it; END", 2, false},
+		{"EXECUTE BLOCK AS BEGIN EXECUTE STATEMENT 'DROP TABLE T'; END", 2, false},
+		{"EXECUTE BLOCK AS BEGIN BEGIN DELETE FROM T; END END", 2, false},
+		{"EXECUTE BLOCK AS BEGIN /* hidden */ DELETE FROM T; END", 2, false},
+		{"EXECUTE BLOCK RETURNS (N INT) AS BEGIN SELECT COUNT(*) FROM T INTO :N; SUSPEND; END", 1, false},
 		{"/* SELECT 1 */ DROP TABLE T", 2, false},
 		{"-- DROP TABLE\nSELECT 1 FROM T", 0, false},
 		{`UPDATE T SET A = 1 WHERE B = U&'\0041'`, 1, false},

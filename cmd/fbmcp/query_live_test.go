@@ -187,16 +187,20 @@ func TestQueryLiveMCP(t *testing.T) {
 	}
 
 	// 4. mutating procedure: engine refuses on the RO transaction, fb_query
-	//    routes it into the fb_write gated flow (Tier 1 → in-band token).
+	//    routes it into the fb_write gated flow. T9.1: the stored body is
+	//    opaque to the classifier → Tier 2 → the full Tier-2 contract
+	//    applies (verified backup + open maintenance window + out-of-band
+	//    approval); with no window open for this db the request is denied
+	//    outright — exactly what a top-level mutation would hit.
 	mark("step3 done")
 	res = call(map[string]any{"db": "employee", "sql": "EXECUTE PROCEDURE FBMCP_QTEST_RW_PROC"})
 	out = body(res)
-	if res.IsError {
-		t.Fatalf("fallback errored instead of routing to fb_write:\n%s", out)
+	if !res.IsError {
+		t.Fatalf("mutating-proc fallback must not execute without the Tier-2 contract:\n%s", out)
 	}
-	for _, want := range []string{"read-only execution failed", "routed to fb_write gated flow", "In-band token"} {
+	for _, want := range []string{"read-only execution failed", "DENIED", "maintenance window"} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("fallback output missing %q:\n%.600s", want, out)
+			t.Fatalf("fallback denial missing %q:\n%.600s", want, out)
 		}
 	}
 
