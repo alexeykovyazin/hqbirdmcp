@@ -24,3 +24,12 @@ Docker: [docker/Dockerfile](docker/Dockerfile) — Linux matrix is **best-effort
 Posture verify (no mutation): [posture/verify.ps1](posture/verify.ps1) / [posture/verify.sh](posture/verify.sh). After green: `fbmcpctl setup --write-posture`.
 
 Claude Desktop / Claude Code (stdio): [../docs/claude-desktop.md](../docs/claude-desktop.md) · example JSON: [claude_desktop_config.example.json](claude_desktop_config.example.json).
+
+## Names (module path vs GitHub repo, T7.4)
+
+Go module: `github.com/aleks/fbmcp` (go.mod). GitHub remote:
+`github.com/alexeykovyazin/hqbirdmcp` (git origin; the matrix rerun job's
+`--repo` flag matches it). The mismatch is cosmetic today — builds never
+fetch the module by path — but a repo rename or a public Go fetch would
+need `go.mod` + import-path rewrite in one commit. Renaming is an owner
+decision (deferred from WS7 T7.4).
