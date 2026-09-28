@@ -60,7 +60,8 @@ Refused: `state.dir` change; ADR-022 (loopback bind, missing cert/key, zero iden
 | `fb_transactions` | `db` | OIT / OAT / OST / Next and gap sizes |
 | `fb_analyze_query` | `db`, `query`, optional `explain` | Access plan (read-only; 60s / output cap) |
 | `fb_index_advice` | `db`, `query`, optional `recheck_of` (advisory id) | Plan analysis (C.2): finds **natural (full) table scans** with sargable predicates and proposes `CREATE INDEX` DDL with an estimate-only benefit (Firebird cannot simulate an uncreated index; assumed distinctness, labeled as such). Conservative: subqueries, `OR`, ambiguous columns and function-wrapped predicates yield "no advice" with a reason. **DDL is never applied here** — run it via `fb_write`. Existing indexes with the same leading columns suppress the advice. `recheck_of` re-plans a previously advised query and reports which scans were resolved |
-| `fb_query` | `db`, `sql`, optional `max_rows` (default 100, max 1000) | **Default for reads.** One `SELECT` / `WITH…SELECT` / `EXECUTE PROCEDURE` on an engine-enforced **read-only transaction** (RO-user pool) — no confirmation. Returns rows, the statement's access plan and execution statistics (per-table on FB 5+). An `EXECUTE PROCEDURE` the engine refuses on the RO transaction is routed into `fb_write`'s gated flow (confirmation still required). Every call — ok / error / fallback / denied — is logged to `<state.dir>/query-log.jsonl` (NDJSON: query, params, plan, stats, per-table stats) |
+| `fb_query` | `db`, `sql`, optional `max_rows` (default 100, max 1000) | **Default for reads.** One `SELECT` / `WITH…SELECT` / `EXECUTE PROCEDURE` on an engine-enforced **read-only transaction** (RO-user pool) — no confirmation. Returns rows, the statement's access plan and execution statistics (per-table on FB 5+). An `EXECUTE PROCEDURE` the engine refuses on the RO transaction is routed into `fb_write`'s gated flow (confirmation still required). Every call — ok / error / fallback / denied — is logged to `<state.dir>/query-log.jsonl` (NDJSON: query, params, plan, stats, per-table stats). Successful results additionally carry typed `columns` (`{name, type}`), a `result_id`, and `_meta.ui.resourceUri` → the **result grid** resource (see [grid.md](grid.md)) |
+| `fb_query_check` | `db`, `sql` | **Compile-only draft validation** (phase 10): prepares the statement on the read-only transaction and closes it — the statement is **never executed** (no rows touched, no procedure bodies run). Returns `kind` (select/procedure) + `bind_params`; compile errors carry a structured `{code, hint, remediation}` envelope (`sql-compile`, `sql-object-missing`). Column names/types are a post-execute fact — `fb_query` reports them. Validate AI-built drafts here before `fb_query` (query-builder playbook) |
 | `fb_index_stats` | `db` | Index stats + unused/duplicate advisories |
 | `fb_gstat` | `db`, optional `mode` (header\|records, default header), `tables` (records: restrict analysis), `system` | Raw `gstat` output (ADR-003 subprocess route): header page dump (`-h`, no auth, works without a running server) or record/index statistics (`-r`, authenticated), optionally limited to specific tables |
 | `fb_schema_list` | `db` | User tables / views / procedures / triggers |
@@ -247,3 +248,14 @@ fbmcpctl doctor [config]
 Spike state dir: `C:\HQbirdData\output\fbmcp-spike\state`.
 
 Playbooks (how to combine tools): [`prompts/`](../prompts/).
+
+## Result grid in the chat (phase 10)
+
+Successful `fb_query` calls with a result set additionally store a typed
+payload (schema 1, ADR-036) in an in-memory, identity-scoped registry
+(TTL default 30 min, ≤ 32 results per identity, nothing persisted) and
+return `_meta.ui.resourceUri: ui://fbmcp/results/<result_id>`. MCP-Apps
+clients fetch the resource and render a **sortable grid inside the chat**;
+clients without Apps support render the tool's `structuredContent` — the
+text view is byte-identical either way. Details, config (`grid:` block),
+and the client support matrix: [`grid.md`](grid.md).

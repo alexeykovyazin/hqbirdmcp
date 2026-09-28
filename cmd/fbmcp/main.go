@@ -38,6 +38,7 @@ import (
 	"github.com/aleks/fbmcp/internal/schedule"
 	"github.com/aleks/fbmcp/internal/state"
 	"github.com/aleks/fbmcp/internal/transport"
+	"github.com/aleks/fbmcp/internal/uigrid"
 	"github.com/aleks/fbmcp/internal/workflows"
 )
 
@@ -147,6 +148,14 @@ func runForegroundCtx(ctx context.Context) {
 	gt := &gatedTools{cfg: handle, pools: pools, eng: eng, g: g, runner: runner, aud: aud, qlog: ql, st: st,
 		execSvc: execSvc, wf: wfEng, execs: map[string]executor{}, args: map[string]map[string]any{},
 		traces: map[string]*backupsvc.LiveTrace{}, facts: engFacts}
+	// Result grid (phase10 uigrid): in-memory, identity-scoped, TTL'd; a
+	// restart loses grid results by design (the client re-runs the query).
+	gridCfg := cfg.Grid.OrDefault()
+	gt.grid = uigrid.New(uigrid.RegistryOpts{
+		Enabled: gridCfg.Enabled != nil && *gridCfg.Enabled,
+		TTL:     time.Duration(gridCfg.TTLMinutes) * time.Minute,
+		MaxLive: gridCfg.MaxLive,
+	})
 	hookSecret := ""
 	if cfg.Notify.WebhookSecretEnv != "" {
 		hookSecret, _ = config.SecretFromEnv(cfg.Notify.WebhookSecretEnv)
@@ -365,6 +374,7 @@ func runForegroundCtx(ctx context.Context) {
 	})
 
 	registerExtra(server, handle, pools, engFacts, aud, st)
+	uigrid.RegisterResource(server, gt.grid, aud) // phase10: ui://fbmcp/results/{id}, one audit line per read (no-op when grid disabled)
 	registerSurfaces(server, handle, st)
 	if err := serve(ctx, server, handle, gt, *serveMode); err != nil {
 		log.Fatalf("fbmcp: server: %v", err)

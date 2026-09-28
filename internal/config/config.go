@@ -38,6 +38,7 @@ type Config struct {
 	Retention    Retention `yaml:"retention"`
 	Trends       Trends    `yaml:"trends"`
 	Agents       []Agent   `yaml:"agents"`
+	Grid         Grid      `yaml:"grid"`
 	SourcePath   string    `yaml:"-"`
 }
 
@@ -123,6 +124,36 @@ func (l Limits) OrDefault() Limits {
 		l.RateBurst = 60
 	}
 	return l
+}
+
+// Grid configures the result-set grid resources (phase10_plan.md /
+// ADR-035): fb_query results additionally served as ui://fbmcp/results/{id}
+// HTML resources rendered by MCP-Apps clients in the chat. The grid adds no
+// authority (Tier-0 rendering of data the client already holds), so it is
+// enabled by default; `enabled: false` removes the resource template and
+// the _meta.ui references.
+type Grid struct {
+	// Enabled is a *bool so an absent key means the default (on).
+	Enabled *bool `yaml:"enabled"`
+	// TTLMinutes is how long a result stays fetchable (0 → 30).
+	TTLMinutes int `yaml:"ttl_minutes"`
+	// MaxLive caps stored results per identity, oldest evicted (0 → 32).
+	MaxLive int `yaml:"max_live"`
+}
+
+// OrDefault fills the grid defaults: enabled, 30 min TTL, 32 live results.
+func (g Grid) OrDefault() Grid {
+	if g.Enabled == nil {
+		t := true
+		g.Enabled = &t
+	}
+	if g.TTLMinutes <= 0 {
+		g.TTLMinutes = 30
+	}
+	if g.MaxLive <= 0 {
+		g.MaxLive = 32
+	}
+	return g
 }
 
 // Notify is K7 delivery (ADR-024). Empty webhook = local event log only.

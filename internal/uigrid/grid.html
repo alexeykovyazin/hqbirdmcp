@@ -1,0 +1,152 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>fbmcp result grid</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 13px/1.45 system-ui, sans-serif; margin: 0; padding: 10px 12px; }
+  h1 { font-size: 13px; font-weight: 600; margin: 0 0 8px; white-space: pre-wrap; word-break: break-all; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid color-mix(in srgb, currentColor 18%, transparent); padding: 3px 8px; text-align: left; vertical-align: top; max-width: 34em; overflow-wrap: anywhere; }
+  thead th { position: sticky; top: 0; background: color-mix(in srgb, CanvasText 8%, Canvas); cursor: pointer; user-select: none; }
+  th .t { font-weight: 400; opacity: .55; font-size: 11px; margin-left: 4px; }
+  th .a { opacity: .6; margin-left: 4px; font-size: 11px; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  td.null { opacity: .45; font-style: italic; }
+  td.blob { opacity: .6; font-family: monospace; font-size: 12px; }
+  td.bool { font-family: monospace; }
+  .banner { margin: 6px 0; padding: 5px 9px; border-left: 3px solid #d88; background: color-mix(in srgb, #d88 12%, Canvas); }
+  .foot { opacity: .7; font-size: 12px; margin-top: 6px; }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; font-weight: 600; }
+  pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; margin: 4px 0 0; }
+  table.stats td:first-child { font-weight: 600; }
+  .copied { color: #484; font-size: 11px; margin-left: 6px; }
+</style>
+</head>
+<body>
+<h1 id="t"></h1>
+<div id="banners"></div>
+<div id="tbl"></div>
+<div class="foot" id="foot"></div>
+<details id="planD"><summary>plan</summary><pre id="plan"></pre></details>
+<details id="statsD"><summary>stats</summary><table class="stats" id="stats"></table></details>
+<details id="ptD"><summary>per-table stats</summary><table class="stats" id="pt"></table></details>
+<script>
+'use strict';
+window.__GRID_DATA__ = {{.}};
+(function () {
+  var d = window.__GRID_DATA__ || {};
+  var TYPES = { integer: 1, decimal: 1, float: 1 };
+  var $ = function (id) { return document.getElementById(id); };
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  $('t').textContent = d.title || 'result';
+  var banners = $('banners');
+  if (d.clipped_rows > 0)
+    banners.appendChild(el('div', 'banner', 'payload clipped: ' + d.clipped_rows +
+      ' row(s) omitted to fit the inline cap — full rows stay in the tool result'));
+  if (d.truncated)
+    banners.appendChild(el('div', 'banner', 'query truncated at max_rows — raise max_rows (up to 1000) to see more'));
+
+  var cols = d.columns || [], rows = d.rows || [];
+  if (!cols.length) { $('tbl').appendChild(el('p', null, 'no result set')); return; }
+
+  var sortCol = -1, sortDir = 1;
+  function cmp(a, b) {
+    if (a === b) return 0;
+    if (a === null || a === undefined) return 1;   /* nulls last, both directions */
+    if (b === null || b === undefined) return -1;
+    var na = typeof a === 'number', nb = typeof b === 'number';
+    if (na && nb) return a < b ? -1 : (a > b ? 1 : 0);
+    return String(a) < String(b) ? -1 : (String(a) > String(b) ? 1 : 0);
+  }
+  function render() {
+    var data = rows;
+    if (sortCol >= 0)
+      data = rows.slice().sort(function (x, y) { return sortDir * cmp(x[sortCol], y[sortCol]); });
+    var table = el('table'), thead = el('thead'), tr = el('tr');
+    cols.forEach(function (c, i) {
+      var th = el('th', null, c.name || '');
+      th.appendChild(el('span', 't', c.type || ''));
+      var a = el('span', 'a', i === sortCol ? (sortDir > 0 ? '▲' : '▼') : '↕');
+      th.appendChild(a);
+      th.addEventListener('click', function () {
+        if (sortCol === i) { sortDir = -sortDir; } else { sortCol = i; sortDir = 1; }
+        render();
+      });
+      tr.appendChild(th);
+    });
+    thead.appendChild(tr);
+    table.appendChild(thead);
+    var tbody = el('tbody');
+    data.forEach(function (row) {
+      var r = el('tr');
+      cols.forEach(function (c, i) {
+        var v = row[i];
+        var cls = TYPES[c.type] ? 'n' : '';
+        var cell;
+        if (v === null || v === undefined) {
+          cell = el('td', (cls ? cls + ' ' : '') + 'null', '<null>');
+        } else if (typeof v === 'boolean') {
+          cell = el('td', (cls ? cls + ' ' : '') + 'bool', v ? 'true' : 'false');
+        } else if (c.type === 'blob' && typeof v === 'string' && v.indexOf('<blob ') === 0) {
+          cell = el('td', 'blob', v);
+        } else {
+          cell = el('td', cls, String(v));
+        }
+        cell.title = 'click to copy';
+        cell.addEventListener('click', function () {
+          var sel = window.getSelection(), range = document.createRange();
+          range.selectNodeContents(cell);
+          sel.removeAllRanges(); sel.addRange(range);
+          try { document.execCommand('copy'); } catch (e) { /* sandboxed: selection is enough */ }
+        });
+        r.appendChild(cell);
+      });
+      tbody.appendChild(r);
+    });
+    table.appendChild(tbody);
+    var host = $('tbl');
+    host.textContent = '';
+    host.appendChild(table);
+  }
+  render();
+
+  var f = [d.row_count + ' row(s)', cols.length + ' col(s)'];
+  if (d.elapsed_ms) f.push(d.elapsed_ms.toFixed(1) + ' ms');
+  $('foot').textContent = f.join(' · ');
+
+  if (d.plan) { $('plan').textContent = d.plan; } else { $('planD').remove(); }
+  if (d.stats && typeof d.stats === 'object') {
+    Object.keys(d.stats).forEach(function (k) {
+      var tr = el('tr');
+      tr.appendChild(el('td', null, k));
+      tr.appendChild(el('td', null, String(d.stats[k])));
+      $('stats').appendChild(tr);
+    });
+  } else { $('statsD').remove(); }
+  if (Array.isArray(d.per_table_stats) && d.per_table_stats.length) {
+    var ptHead = el('tr');
+    ['table', 'seq', 'idx', 'ins', 'upd', 'del'].forEach(function (h) {
+      ptHead.appendChild(el('td', null, h));
+    });
+    $('pt').appendChild(ptHead);
+    d.per_table_stats.forEach(function (t) {
+      var tr = el('tr');
+      ['table', 'seq_reads', 'idx_reads', 'inserts', 'updates', 'deletes'].forEach(function (k) {
+        tr.appendChild(el('td', k === 'table' ? null : 'n', t[k] === undefined ? '' : String(t[k])));
+      });
+      $('pt').appendChild(tr);
+    });
+  } else { $('ptD').remove(); }
+})();
+</script>
+</body>
+</html>

@@ -31,6 +31,7 @@ import (
 	"github.com/aleks/fbmcp/internal/qlog"
 	"github.com/aleks/fbmcp/internal/reload"
 	"github.com/aleks/fbmcp/internal/state"
+	"github.com/aleks/fbmcp/internal/uigrid"
 	"github.com/aleks/fbmcp/internal/workflows"
 )
 
@@ -60,6 +61,11 @@ type gatedTools struct {
 	// planCache memoizes isql plans for engines without MON$EXPLAINED_PLAN.
 	noPerTable map[string]bool
 	planCache  map[string]string
+
+	// grid is the result-set registry (phase10 uigrid): fb_query stores its
+	// payload here and the ui://fbmcp/results/{id} resource template reads
+	// it back, identity-scoped. Nil-safe: nil disables the grid entirely.
+	grid *uigrid.Registry
 
 	mu   sync.Mutex
 	args map[string]map[string]any // requestID -> tool args (in-memory; single instance per D8)

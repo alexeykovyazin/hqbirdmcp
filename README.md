@@ -6,9 +6,13 @@ databases as a DBA: monitoring, backups and verified restores, SQL/DDL/DCL,
 security, indexes, migrations and a scheduler, across Firebird 2.5–5.0.
 Every mutating call passes a tiered policy engine and a **human confirmation
 gate** before it touches the database, and every decision is written to a
-hash-chained audit log. 84 tools in total (42 read-only, 30 Tier 1, 11
+hash-chained audit log. 85 tools in total (43 read-only, 30 Tier 1, 11
 Tier 2, 1 disabled-by-design Tier 3; phase 9 added 17 fbagent bridge
-proxies — [docs/agent-bridge.md](fbmcp/docs/agent-bridge.md)).
+proxies — [docs/agent-bridge.md](fbmcp/docs/agent-bridge.md)). `fb_query`
+results also render as a **sortable grid inside the chat** on MCP-Apps
+clients (`ui://fbmcp/results/{id}` resources, phase 10 /
+[docs/grid.md](docs/grid.md)); `fb_query_check` compile-validates drafts
+before execution, and the `query-builder` playbook composes the loop.
 
 ## Quick start
 
@@ -97,8 +101,9 @@ Claims register: [`docs/findings/claims-register.md`](docs/findings/claims-regis
 - Live-lab suite green against the real agent on this host (port 13055,
   instance `fb-master-3055`): full Tier-1 governed round trip, artifact
   fixtures, error mapping, conditional negative fixtures; extended and
-  engine tiers opt-in via env gates. Tool surface now 84
-  (42 read-only / 30 Tier 1 / 11 Tier 2 / 1 Tier 3).
+  engine tiers opt-in via env gates. Tool surface at the phase-9
+  landing: 84 (42 read-only / 30 Tier 1 / 11 Tier 2 / 1 Tier 3) —
+  now 85/43 after phase 10 (see the count line at the top).
 
 **In progress** (manual validation phase 8M, running unattended):
 

@@ -186,6 +186,69 @@ var signals = []struct {
 			Remediation: "fb_query routes such calls into fb_write's gated flow — confirm the pending action (Tier 1 in-band token) or call fb_write directly.",
 		},
 	},
+	// SQL compile errors (phase10 fb_query_check). The object-missing
+	// matches MUST stay above the generic "Dynamic SQL Error": a prepare
+	// failure like "Dynamic SQL Error / Table unknown EMPLOYEE" contains
+	// both substrings and first hit wins.
+	{
+		match: "Table unknown",
+		doc: Doc{
+			Code:        "sql-object-missing",
+			Hint:        "The statement references a table that does not exist in this database (or the read-only user cannot see it).",
+			Remediation: "Check the name and case via the schema/describe tools; drafts come from the query-builder playbook.",
+		},
+	},
+	{
+		match: "Column unknown",
+		doc: Doc{
+			Code:        "sql-object-missing",
+			Hint:        "The statement references a column that does not exist on the queried objects.",
+			Remediation: "Describe the table and fix the column name (never invent one).",
+		},
+	},
+	{
+		match: "Procedure unknown",
+		doc: Doc{
+			Code:        "sql-object-missing",
+			Hint:        "The statement calls a stored procedure that does not exist in this database.",
+			Remediation: "Check the procedure name via the schema tools; selectable procedures run through SELECT.",
+		},
+	},
+	{
+		match: "Function unknown",
+		doc: Doc{
+			Code:        "sql-object-missing",
+			Hint:        "The statement calls a function that does not exist in this database.",
+			Remediation: "Check the function name via the schema tools.",
+		},
+	},
+	{
+		match: "Dynamic SQL Error",
+		doc: Doc{
+			Code:        "sql-compile",
+			Hint:        "The engine refused to compile the statement (syntax, token, or datatype error at prepare time).",
+			Remediation: "Fix the failing statement; validate drafts with fb_query_check — it compiles without executing.",
+		},
+	},
+	// Grid resource reads (phase10 uigrid). The codes also lead the raw
+	// error text of a resources/read, so clients see the stable code even
+	// though resource reads carry no structuredContent.
+	{
+		match: "result-expired",
+		doc: Doc{
+			Code:        "result-expired",
+			Hint:        "The grid result id is unknown or its TTL passed (in-memory registry only; a kernel restart clears it).",
+			Remediation: "Re-run the query; the fresh result carries a new ui resource reference.",
+		},
+	},
+	{
+		match: "result-forbidden",
+		doc: Doc{
+			Code:        "result-forbidden",
+			Hint:        "The grid result belongs to another MCP identity (registry reads are identity-scoped).",
+			Remediation: "Re-run the query under the identity that produced it.",
+		},
+	},
 }
 
 // Lookup classifies an error message; ok=false leaves the generic code.

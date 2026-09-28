@@ -43,6 +43,7 @@ func SystemTools() []ToolMeta {
 		{Name: "fb_migration_apply", Tier: 1, Scope: "database"},                       // C.1: ADR-030 batch gate; dynamic tier per batch
 		{Name: "fb_migration_rollback_plan", Tier: 0, Scope: "database", MinFB: "2.5"}, // C.1: renders recorded down sections
 		{Name: "fb_query", Tier: 0, Scope: "database", MinFB: "2.5"},                   // read-only tx; fallback into fb_write's gated flow for refused EXECUTE PROCEDURE
+		{Name: "fb_query_check", Tier: 0, Scope: "database", MinFB: "2.5"},             // phase10: compile-only draft validation (prepare on the RO pool, never executes)
 		{Name: "fb_index_rebuild", Tier: 1, Scope: "database"},
 		{Name: "fb_index_drop", Tier: 1, Scope: "database"},
 		{Name: "fb_session_kill", Tier: 1, Scope: "database"},

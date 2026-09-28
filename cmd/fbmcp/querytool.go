@@ -14,6 +14,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/aleks/fbmcp/internal/identity"
 	"github.com/aleks/fbmcp/internal/qlog"
 	"github.com/aleks/fbmcp/internal/queryplan"
+	"github.com/aleks/fbmcp/internal/uigrid"
 )
 
 const (
@@ -77,8 +79,12 @@ func clampQueryRows(n int) int {
 // queryResult carries everything one fb_query call produced, for both the
 // tool response and the query-log entry.
 type queryResult struct {
-	cols      []string
+	cols []string
+	// colsMeta is name + mapped grid type per column (driver ColumnTypes);
+	// it rides in structuredContent and drives the grid payload.
+	colsMeta  []uigrid.Col
 	rows      [][]string
+	typedRows [][]any // driver-typed cells for the grid payload (nil = NULL)
 	truncated bool
 	elapsedMS float64
 	engine    string
@@ -95,7 +101,7 @@ func registerQueryTool(server *mcp.Server, gt *gatedTools) {
 		SQL     string `json:"sql" jsonschema:"single SELECT / WITH-SELECT / EXECUTE PROCEDURE statement (no bind parameters)"`
 		MaxRows int    `json:"max_rows,omitempty" jsonschema:"row cap (default 100, max 1000)"`
 	}
-	mcp.AddTool(server, &mcp.Tool{Name: "fb_query", Description: "Tier 0: run one SELECT (or EXECUTE PROCEDURE) on an engine-enforced read-only transaction; returns rows, access plan and execution statistics (per-table on FB 5+); every call is logged to query-log.jsonl. A procedure the engine refuses on the RO transaction is routed to fb_write (confirmation required)"}, func(ctx context.Context, req *mcp.CallToolRequest, a queryArg) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_query", Description: "Tier 0: run one SELECT (or EXECUTE PROCEDURE) on an engine-enforced read-only transaction; returns rows, access plan and execution statistics (per-table on FB 5+); every call is logged to query-log.jsonl. A procedure the engine refuses on the RO transaction is routed to fb_write (confirmation required). Composing a new query? Validate drafts with fb_query_check first (compile-only, never executes)"}, func(ctx context.Context, req *mcp.CallToolRequest, a queryArg) (*mcp.CallToolResult, any, error) {
 		id := identity.Caller(ctx)
 		if _, err := gt.cfg.DB(a.Db); err != nil {
 			return errText("DENIED: " + err.Error())
@@ -148,10 +154,123 @@ func registerQueryTool(server *mcp.Server, gt *gatedTools) {
 		_ = gt.qlog.Log(entry)
 		gt.aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_query", Tier: 0, Decision: "allow"})
 		structured := map[string]any{
-			"columns": res.cols, "rows": res.rows, "row_count": len(res.rows), "truncated": res.truncated,
+			"columns": res.colsMeta, "rows": res.rows, "row_count": len(res.rows), "truncated": res.truncated,
 			"elapsed_ms": res.elapsedMS, "stats": res.stats, "per_table_stats": res.perTable, "plan": res.plan,
 		}
-		return text(formatQueryResult(res)), structured, nil
+		out := text(formatQueryResult(res))
+		// Grid (phase10 uigrid): store the typed payload for the
+		// ui://fbmcp/results/{id} resource and point Apps-capable clients
+		// at it via _meta.ui. Additive: the text and the rest of
+		// structuredContent are unchanged. Nil registry (grid disabled in
+		// config or in tests) simply skips both.
+		if gid, ok := gt.storeGrid(id.Name, a.Db, a.SQL, res); ok {
+			structured["result_id"] = gid
+			out.Meta = mcp.Meta(uigrid.MetaUI(uigrid.URI(gid)))
+		}
+		return out, structured, nil
+	})
+	registerQueryCheckTool(server, gt)
+}
+
+// storeGrid builds and stores the grid payload for a successful fb_query
+// result. ok=false when the grid is disabled or the result has no columns
+// (zero-column statements render no grid).
+func (gt *gatedTools) storeGrid(idName, dbID, sqlText string, res queryResult) (string, bool) {
+	p := uigrid.Gridify(gridTitle(dbID, sqlText), res.colsMeta, res.typedRows, uigrid.Options{
+		Truncated: res.truncated, ElapsedMS: res.elapsedMS, Plan: res.plan, Stats: res.stats, PerTable: res.perTable,
+	})
+	if p == nil {
+		return "", false
+	}
+	return gt.grid.Put(idName, p.Title, p)
+}
+
+// registerQueryCheckTool — fb_query_check (phase10): compile-only draft
+// validation for the prompt-driven query builder. The statement is prepared
+// on the read-only pool and closed — wire-verified, nakagami's prepare is
+// opAllocateStatement + opPrepareStatement only, so nothing executes (no
+// rows read, no selectable-procedure bodies run; QueryContext on an EXECUTE
+// PROCEDURE would run the body, which is exactly why this tool exists).
+// Column names/types are a post-execute fact (stdlib sql.Stmt exposes no
+// column metadata), so they come from fb_query on the real run.
+func registerQueryCheckTool(server *mcp.Server, gt *gatedTools) {
+	type checkArg struct {
+		Db  string `json:"db" jsonschema:"registry id of the database"`
+		SQL string `json:"sql" jsonschema:"single SELECT / WITH-SELECT / EXECUTE PROCEDURE statement to compile-validate (no bind parameters; never executed)"`
+	}
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_query_check", Description: "Tier 0: compile-validate one SELECT / WITH-SELECT / EXECUTE PROCEDURE draft — prepares it on the engine-enforced read-only transaction and reports kind + bind-parameter count; the statement is NEVER executed (no rows touched, no procedure bodies run). Compile errors come back with a structured {code, hint, remediation} envelope. Column names/types are reported by fb_query once executed. Run drafts here before fb_query"}, func(ctx context.Context, req *mcp.CallToolRequest, a checkArg) (*mcp.CallToolResult, any, error) {
+		id := identity.Caller(ctx)
+		if _, err := gt.cfg.DB(a.Db); err != nil {
+			return errText("DENIED: " + err.Error())
+		}
+		entry := qlog.Entry{Tool: "fb_query_check", Identity: id.Name, Database: a.Db, Query: a.SQL}
+		kind, why := classifyRead(a.SQL)
+		if kind == readNone {
+			entry.Outcome, entry.Error = "denied", why
+			_ = gt.qlog.Log(entry)
+			gt.aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_query_check", Tier: 0, Decision: "denied",
+				Detail: map[string]interface{}{"reason": why}})
+			return errText("DENIED: " + why)
+		}
+		// Phase-9 convention: Evaluate even at Tier 0 (MaxTier ceiling +
+		// unknown-tool guard). Denials are audited like the gated path.
+		if d := gt.eng.Evaluate(id, a.Db, "fb_query_check"); d.Outcome == "deny" {
+			entry.Outcome, entry.Error = "denied", d.Reason
+			_ = gt.qlog.Log(entry)
+			gt.aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_query_check", Tier: 0, Decision: "denied",
+				Detail: map[string]interface{}{"reason": d.Reason}})
+			return errText("DENIED: " + d.Reason)
+		}
+
+		tx, err := gt.pools.ReadOnly(ctx, a.Db)
+		if err != nil {
+			entry.Outcome, entry.Error = "error", err.Error()
+			_ = gt.qlog.Log(entry)
+			return errText("error: " + err.Error())
+		}
+		defer tx.Rollback()
+		pctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		start := time.Now()
+		stmt, err := tx.PrepareContext(pctx, a.SQL)
+		if err != nil {
+			entry.Outcome, entry.Error = "error", err.Error()
+			entry.ElapsedMS = elapsedMS(time.Since(start))
+			_ = gt.qlog.Log(entry)
+			gt.aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_query_check", Tier: 0, Decision: "error",
+				Detail: map[string]interface{}{"error": err.Error()}})
+			// errText maps the driver message (which embeds the engine's
+			// text + SQLCODE) onto the sql-compile / sql-object-missing seeds.
+			return errText("compile error: " + err.Error())
+		}
+		stmt.Close()                // explicit drop (DSQL_drop): a failed-later prepare must not pin metadata locks
+		n := countBindParams(a.SQL) // stdlib sql.Stmt exposes no NumInput; count '?' outside literals
+		kindStr := "select"
+		if kind == readProc {
+			kindStr = "procedure"
+		}
+		notes := []string{
+			"compile-only: prepared on the read-only transaction and never executed (no rows touched, no procedure bodies run)",
+			"column names and types are reported by fb_query once the statement runs",
+		}
+		if n > 0 {
+			notes = append(notes, "statement carries bind parameters — fb_query accepts none; inline literal values instead")
+		}
+		if n < 0 { // driver could not report; do not claim zero
+			n = 0
+			notes = append(notes, "bind-parameter count unavailable from the driver")
+		}
+		entry.Outcome = "ok"
+		entry.ElapsedMS = elapsedMS(time.Since(start))
+		_ = gt.qlog.Log(entry)
+		gt.aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_query_check", Tier: 0, Decision: "allow"})
+		structured := map[string]any{"kind": kindStr, "bind_params": n, "notes": notes}
+		var b strings.Builder
+		fmt.Fprintf(&b, "ok: compiles on %s (prepare-only — never executed)\nkind: %s\nbind_params: %d\n", a.Db, kindStr, n)
+		for _, nt := range notes {
+			fmt.Fprintf(&b, "note: %s\n", nt)
+		}
+		return text(b.String()), structured, nil
 	})
 }
 
@@ -196,6 +315,8 @@ func (gt *gatedTools) runReadQuery(ctx context.Context, dbID, sqlText string, ma
 		return res
 	}
 	res.cols, _ = rows.Columns()
+	colTypes, _ := rows.ColumnTypes() // the driver (IBSurgeon fork of nakagami v0.9.19) implements the RowsColumnType* set
+	res.colsMeta = gridCols(colTypes)
 	scanAny := make([]any, len(res.cols))
 	scanPtr := make([]any, len(res.cols))
 	for i := range scanAny {
@@ -218,6 +339,7 @@ func (gt *gatedTools) runReadQuery(ctx context.Context, dbID, sqlText string, ma
 			break
 		}
 		res.rows = append(res.rows, stringifyRow(scanAny))
+		res.typedRows = append(res.typedRows, typedRow(scanAny, colTypes))
 		if len(res.rows) == 1 {
 			capture()
 		}
@@ -255,6 +377,112 @@ func stringifyRow(vals []any) []string {
 		}
 	}
 	return out
+}
+
+// gridCols maps driver column metadata onto the grid type vocabulary
+// (uigrid.MapType). Runs on the executing path only — column metadata
+// needs an open cursor (stdlib sql.Stmt exposes none).
+func gridCols(colTypes []*sql.ColumnType) []uigrid.Col {
+	if len(colTypes) == 0 {
+		return nil
+	}
+	out := make([]uigrid.Col, len(colTypes))
+	for i, ct := range colTypes {
+		_, scale, hasScale := ct.DecimalSize()
+		out[i] = uigrid.Col{Name: ct.Name(), Type: uigrid.MapType(ct.DatabaseTypeName(), scale, hasScale)}
+	}
+	return out
+}
+
+// typedRow converts one row of scanned driver values to grid cells: nil →
+// nil (JSON null), numerics/bools pass through, time formatted per the
+// declared column type, BLOB bytes as a size marker. NUMERIC/DECIMAL stay
+// strings (the driver scans them as strings; the column type drives
+// rendering only). Cell clipping to the payload cap happens in uigrid.
+func typedRow(vals []any, colTypes []*sql.ColumnType) []any {
+	out := make([]any, len(vals))
+	for i, v := range vals {
+		if v == nil {
+			continue // out[i] is already nil = NULL
+		}
+		tn := ""
+		if i < len(colTypes) && colTypes[i] != nil {
+			tn = strings.ToUpper(colTypes[i].DatabaseTypeName())
+		}
+		switch x := v.(type) {
+		case string:
+			out[i] = x
+		case []byte:
+			if tn == "BLOB" {
+				out[i] = "<blob " + strconv.Itoa(len(x)) + " bytes>"
+			} else {
+				out[i] = string(x)
+			}
+		case time.Time:
+			switch tn {
+			case "DATE":
+				out[i] = x.Format("2006-01-02")
+			case "TIME", "TIME WITH TIMEZONE":
+				out[i] = x.Format("15:04:05")
+			default:
+				out[i] = x.Format("2006-01-02 15:04:05.000")
+			}
+		default:
+			out[i] = x // int64/int32/float64/bool and the rare rest as-is
+		}
+	}
+	return out
+}
+
+// gridTitle is the payload title: "<db>: <sql, 120 chars>".
+func gridTitle(dbID, sqlText string) string {
+	s := strings.TrimSpace(sqlText)
+	if len(s) > 120 {
+		s = s[:120] + "…"
+	}
+	return dbID + ": " + s
+}
+
+// countBindParams counts '?' bind markers outside string literals (single
+// or double quoted; ” inside a string is an escaped quote). db_statement
+// dialect-1 double quotes are identifiers, not strings, but a '?' inside
+// either quoting is never a bind marker, so both are skipped uniformly.
+func countBindParams(sqlText string) int {
+	n, inQuote, q := 0, false, byte(0)
+	for i := 0; i < len(sqlText); i++ {
+		c := sqlText[i]
+		if inQuote {
+			if c == q {
+				if i+1 < len(sqlText) && sqlText[i+1] == q { // '' escape
+					i++
+				} else {
+					inQuote = false
+				}
+			}
+			continue
+		}
+		switch c {
+		case '\'', '"':
+			inQuote, q = true, c
+		case '?':
+			n++
+		case '-':
+			if i+1 < len(sqlText) && sqlText[i+1] == '-' { // line comment
+				for i < len(sqlText) && sqlText[i] != '\n' {
+					i++
+				}
+			}
+		case '/':
+			if i+1 < len(sqlText) && sqlText[i+1] == '*' { // block comment
+				i += 2
+				for i+1 < len(sqlText) && !(sqlText[i] == '*' && sqlText[i+1] == '/') {
+					i++
+				}
+				i++
+			}
+		}
+	}
+	return n
 }
 
 func truncateVal(s string) string {
