@@ -60,7 +60,7 @@ grid:
 | Client | `_meta.ui` fetch + iframe render | Fallback |
 |---|---|---|
 | Claude Desktop | to verify (phase 0 spike, manual) | structuredContent table |
-| ZCode | to verify (phase 0 spike, manual) | structuredContent table |
+| ZCode | partial: `fb_query` returns `result_id` + `_meta.ui` over the ZCode stdio session (verified 2026-09-28, grid enabled by default); visual iframe rendering not verifiable in-session — phase 0 spike | structuredContent table |
 | VS Code | to verify (tertiary) | structuredContent table |
 
 The fallback path is the tool's existing `structuredContent`; the grid is
