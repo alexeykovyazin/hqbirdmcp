@@ -223,13 +223,20 @@ executes under the agent's own scheduler and policy, outside fbmcp's gate.
 | `fb_agent_dbaccess` | 0 | `agent?`, `db?` | DatabaseAccess policy inventory (mode, roots, aliases) |
 | `fb_agent_dbaccess_check` | 0 | `agent?`, `db?`, `path` | evaluate a path against the policy (pure read despite the POST) |
 | `fb_agent_update_status` | 0 | `agent?`, `db?` | firebird-updater runtime state sidecar |
-| `fb_agent_job_run` | 1 (dynamic → 2) | `job`, `job_id?`, `db_keys?`, `params?`, `db?`, `agent?`, `mode?` | run one agent scheduler job and poll the operation. Hot list `restore`, `sql_script`, `vbackup`, `grpvbackup`, `nbackup_dump`, `grpnbackup_dump` (+ `tier2_jobs:`) escalates to Tier 2 (window on `db`, **OOB**) |
+| `fb_agent_job_run` | 1 (dynamic → 2) | `job`, `job_id?`, `db_keys?`, `params?`, `request_id?`/`expires_at?` (run-now), `db?`, `agent?`, `mode?` | run one agent scheduler job and poll the operation. Hot list `restore`, `sql_script`, `vbackup`, `grpvbackup`, `nbackup_dump`, `grpnbackup_dump` (+ `tier2_jobs:`) escalates to Tier 2 (window on `db`, **OOB**) |
 | `fb_agent_config_reload` | 1 | `db`, `args.agent?` | hot-reload `agent_config.json` into the running scheduler |
 | `fb_agent_pprof` | 1 | `db`, `args.agent?`, `args.cpu_seconds?` (0–30) | synchronous profile of the agent process |
 | `fb_agent_restart` | 2 | `db` (window key), `args.agent?`, `args.reason?` | agent restart contract: stop → start → TCP readiness. **OOB** |
 | `fb_agent_stop` | 2 | same | stop the agent-supervised service. **OOB** |
 | `fb_agent_start` | 2 | same | start + wait for TCP readiness. **OOB** |
 | `fb_agent_update_apply` | 2 | same | apply the prepared Firebird update; the nested auto-restart is polled and reported. **OOB** |
+| `fb_agent_runs` | 0 | `agent?`, `db?`, `run_id?`, `job?`, `job_id?`, `active?`, `limit?` | run-now documents (API 2.60+): one run (`run_id`) or a filtered list, newest first; finished runs kept 7 days (200 max) |
+| `fb_agent_license` | 0 | `agent?`, `db?` | verified license entitlements + the status line the agent writes to `server_level/license` |
+| `fb_agent_license_request` | 0 | `agent?`, `db?` | the activation request a vendor needs to issue a host-bound license (holds no secret) |
+| `fb_agent_product_update_status` | 0 | `agent?`, `db?`, `product` (hqmonitor\|hqclusternode\|hqbirdrcm) | `{product}`-update-state.json from the agent config dir (404 until the first check) |
+| `fb_agent_run_cancel` | 1 | `db`, `args.agent?`, `args.run_id` | cancel a queued/waiting run-now run; **409 conflict** once it runs |
+| `fb_agent_license_set` | 1 | `db`, `args.agent?`, `args.license` | install the vendor license document as `license.json` (agent verifies before writing; 400 `license_invalid`) |
+| `fb_agent_product_update_apply` | 2 | `db` (window key), `args.agent?`, `args.product`, `args.reason?` | queue job `{product}_update`: release check → stop / single-file swap / start / health-check, revert on failure; result carries `action` and per-install outcomes. **OOB** |
 
 ---
 

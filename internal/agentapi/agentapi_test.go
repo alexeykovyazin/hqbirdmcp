@@ -3,6 +3,7 @@ package agentapi
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -266,5 +267,130 @@ func TestRestartOpIDExtraction(t *testing.T) {
 	}
 	if direct.RestartOpID() != "re-2" {
 		t.Fatalf("RestartOpID = %q", direct.RestartOpID())
+	}
+}
+
+// --- 2.60+ run-now / license / product-update additions (API 2.67) ---
+
+func TestConflictMapping(t *testing.T) {
+	cl, _ := newTestAgent(t, "t", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"code":"conflict","message":"run rn-1 already started"}}`))
+	}))
+	_, err := cl.CancelRun(context.Background(), "rn-1")
+	if err == nil || !strings.HasPrefix(err.Error(), "fbagent conflict (409, conflict): run rn-1 already started") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRunNowEndpoints(t *testing.T) {
+	var gotQuery, gotMethod string
+	cl, _ := newTestAgent(t, "t", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotQuery = r.Method, r.URL.RawQuery
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/rn-1":
+			_, _ = w.Write([]byte(`{"run_id":"rn-1","state":"waiting","state_reason":"db lock"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs":
+			_, _ = w.Write([]byte(`{"runs":[{"run_id":"rn-2","state":"queued"}]}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/runs/rn-2":
+			_, _ = w.Write([]byte(`{"run_id":"rn-2","state":"cancelled"}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(404)
+		}
+	}))
+	raw, err := cl.GetRun(context.Background(), "rn-1")
+	if err != nil || !strings.Contains(string(raw), `"waiting"`) {
+		t.Fatalf("GetRun: %v %s", err, raw)
+	}
+	if _, err := cl.GetRuns(context.Background(), "vbackup", "job-7", true, 5); err != nil {
+		t.Fatal(err)
+	}
+	if gotQuery != "active=1&job=vbackup&job_id=job-7&limit=5" {
+		t.Fatalf("list query = %q", gotQuery)
+	}
+	raw, err = cl.CancelRun(context.Background(), "rn-2")
+	if err != nil || gotMethod != http.MethodDelete || !strings.Contains(string(raw), "cancelled") {
+		t.Fatalf("CancelRun: %v %s %s", err, gotMethod, raw)
+	}
+}
+
+func TestRunJobRunNowResponse(t *testing.T) {
+	cl, _ := newTestAgent(t, "t", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req JobRunRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.RequestID != "req-12345678" || req.ExpiresAt != "2026-10-18T12:00:00Z" {
+			t.Errorf("run-now body fields = %q %q", req.RequestID, req.ExpiresAt)
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"operation_id":"op-1","job":"vbackup","status_url":"/v1/jobs/vbackup/status","warnings":[],"run_id":"rn-3f","run_url":"/v1/runs/rn-3f","run":{"state":"queued"}}`))
+	}))
+	resp, err := cl.RunJob(context.Background(), "vbackup", JobRunRequest{RequestID: "req-12345678", ExpiresAt: "2026-10-18T12:00:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.RunID != "rn-3f" || resp.RunURL != "/v1/runs/rn-3f" || len(resp.Run) == 0 {
+		t.Fatalf("run-now resp = %+v", resp)
+	}
+}
+
+func TestLicenseEndpoints(t *testing.T) {
+	var gotBody string
+	cl, _ := newTestAgent(t, "t", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody = ""
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/license":
+			_, _ = w.Write([]byte(`{"entitlements":{"state":"licensed"},"status":{"enforce":false}}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/license":
+			b, _ := io.ReadAll(r.Body)
+			gotBody = string(b)
+			_, _ = w.Write([]byte(`{"entitlements":{"state":"licensed","license_id":"L-1"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/license/request":
+			_, _ = w.Write([]byte(`{"schema":1,"install_id":"inst","id_source":"machine-guid"}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(404)
+		}
+	}))
+	raw, err := cl.GetLicense(context.Background())
+	if err != nil || !strings.Contains(string(raw), "licensed") {
+		t.Fatalf("GetLicense: %v %s", err, raw)
+	}
+	doc := json.RawMessage(`{"license":"doc"}`)
+	if _, err := cl.SetLicense(context.Background(), doc); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody != `{"license":"doc"}` {
+		t.Fatalf("PUT body = %q", gotBody)
+	}
+	if _, err := cl.GetLicenseRequest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProductUpdateRoutes(t *testing.T) {
+	var gotPath string
+	cl, _ := newTestAgent(t, "t", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/instances/fb1/products/hqmonitor/update/status":
+			_, _ = w.Write([]byte(`{"product":"hqmonitor","action":"up_to_date"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/instances/fb1/products/hqclusternode/update/apply":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"operation_id":"p9-7","job":"hqclusternode_update"}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(404)
+		}
+	}))
+	if _, err := cl.GetProductUpdateStatus(context.Background(), "fb1", "hqmonitor"); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := cl.ApplyProductUpdate(context.Background(), "fb1", "hqclusternode", "tester", "test")
+	if err != nil || resp.OperationID != "p9-7" {
+		t.Fatalf("ApplyProductUpdate: %v %+v", err, resp)
+	}
+	if gotPath != "/v1/instances/fb1/products/hqclusternode/update/apply" {
+		t.Fatalf("apply path = %q", gotPath)
 	}
 }

@@ -59,6 +59,14 @@ var signals = []struct {
 		},
 	},
 	{
+		match: "fbagent conflict",
+		doc: Doc{
+			Code:        "agent-conflict",
+			Hint:        "The agent refused the request because of the current state (409): canceling a run that already started, a replconf/databases-root helper refusal, or an update apply on a license_only agent.",
+			Remediation: "Re-read the resource first (fb_agent_runs / fb_agent_update_status) and retry only what is still queued; for license_only, switch goafts.mode back to full.",
+		},
+	},
+	{
 		match: "fbagent unavailable",
 		doc: Doc{
 			Code:        "agent-unavailable",

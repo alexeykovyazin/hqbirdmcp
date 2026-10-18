@@ -252,6 +252,8 @@ func (gt *gatedTools) runAgentJob(ctx context.Context, dbID string, args map[str
 		JobID:       agentStr(args["job_id"]),
 		DBKeys:      agentStrSlice(args["db_keys"]),
 		Params:      agentParams(args["params"]),
+		RequestID:   agentStr(args["request_id"]),
+		ExpiresAt:   agentStr(args["expires_at"]),
 	}
 	resp, err := cl.RunJob(ctx, job, req)
 	if err != nil {
@@ -264,6 +266,13 @@ func (gt *gatedTools) runAgentJob(ctx context.Context, dbID string, args map[str
 	}
 	if resp.StatusURL != "" {
 		fmt.Fprintf(&b, "\nstatus_url: %s", resp.StatusURL)
+	}
+	if resp.RunID != "" {
+		// Run-now family (2.60+): the operation is already done ("request
+		// accepted"); the actual run starts when the scheduler's gates
+		// allow. Report the run handle instead of polling.
+		fmt.Fprintf(&b, "\nrun-now family: run %s queued (track with fb_agent_runs, cancel with fb_agent_run_cancel)", resp.RunID)
+		return b.String(), nil
 	}
 	op, err := gt.agentWaitOp(ctx, cl, acfg, resp.OperationID, prog)
 	if err != nil {
@@ -289,7 +298,10 @@ type agentJobRunArg struct {
 	DBKeys []string       `json:"db_keys,omitempty" jsonschema:"restrict the run to these agent-side database keys"`
 	Reason string         `json:"reason,omitempty"`
 	Params map[string]any `json:"params,omitempty" jsonschema:"per-family params: level (nbackup), scriptPath/scriptBody (sql_script), sync/force_outside_window (sweep)"`
-	Mode   string         `json:"mode,omitempty" jsonschema:"preview or execute (default execute)"`
+	// Run-now (2.60+) idempotency/TTL, forwarded verbatim.
+	RequestID string `json:"request_id,omitempty" jsonschema:"run-now idempotency key ^[A-Za-z0-9._:-]{8,64}$ (run-now families)"`
+	ExpiresAt string `json:"expires_at,omitempty" jsonschema:"run-now expiry, RFC 3339, at most 24h ahead (default now + run_now.ttl_minutes)"`
+	Mode      string `json:"mode,omitempty" jsonschema:"preview or execute (default execute)"`
 }
 
 // requestAgentJobRun is the pre-gate body of fb_agent_job_run: validation,
@@ -318,7 +330,7 @@ func (gt *gatedTools) requestAgentJobRun(ctx context.Context, a agentJobRunArg) 
 	}
 	impact := fmt.Sprintf("Run fbagent scheduler job %q on agent %q (instance %s).\njob_id: %q\ndb_keys: %v\nparams keys: %v\nrequested_by will record the confirming identity.\nDynamic tier: %d%s.",
 		a.Job, acfg.ID, acfg.InstanceIDOrDefault(), a.JobID, a.DBKeys, paramKeys, tier, tierNote)
-	argsMap := map[string]any{"agent": a.Agent, "job": a.Job, "job_id": a.JobID, "db_keys": a.DBKeys, "reason": a.Reason, "params": a.Params}
+	argsMap := map[string]any{"agent": a.Agent, "job": a.Job, "job_id": a.JobID, "db_keys": a.DBKeys, "reason": a.Reason, "params": a.Params, "request_id": a.RequestID, "expires_at": a.ExpiresAt}
 	return gt.requestGatedMeta(ctx, policy.ToolMeta{Name: "fb_agent_job_run", Tier: tier, Scope: "instance"}, impact, a.Db, argsMap, a.Mode)
 }
 
@@ -519,6 +531,64 @@ func registerAgentTools(server *mcp.Server, gt *gatedTools) {
 		return prettyJSON(raw), nil
 	})
 
+	// --- 2.60+ run-now surface ---
+
+	type runsArg struct {
+		agentArg
+		RunID  string `json:"run_id,omitempty" jsonschema:"one run document (takes precedence over the filters)"`
+		Job    string `json:"job,omitempty" jsonschema:"filter: job family (e.g. vbackup, nbackup_dump)"`
+		JobID  string `json:"job_id,omitempty" jsonschema:"filter: configured job id"`
+		Active bool   `json:"active,omitempty" jsonschema:"only queued/waiting/running runs"`
+		Limit  int    `json:"limit,omitempty" jsonschema:"max runs returned (newest first; finished runs kept 7 days, 200 max)"`
+	}
+	registerAgentRead(server, gt, "fb_agent_runs", "run-now documents: one run (run_id) or a filtered list, newest first — the runs behind a run-now job acceptance", func(ctx context.Context, cl *agentapi.Client, acfg config.Agent, a runsArg) (string, error) {
+		if a.RunID != "" {
+			raw, err := cl.GetRun(ctx, a.RunID)
+			if err != nil {
+				return "", err
+			}
+			return prettyJSON(raw), nil
+		}
+		raw, err := cl.GetRuns(ctx, a.Job, a.JobID, a.Active, a.Limit)
+		if err != nil {
+			return "", err
+		}
+		return prettyJSON(raw), nil
+	})
+
+	// --- 2.6x license surface ---
+
+	registerAgentRead(server, gt, "fb_agent_license", "verified license entitlements + the status line the agent writes to server_level/license (re-reads license.json)", func(ctx context.Context, cl *agentapi.Client, acfg config.Agent, a agentArg) (string, error) {
+		raw, err := cl.GetLicense(ctx)
+		if err != nil {
+			return "", err
+		}
+		return prettyJSON(raw), nil
+	})
+
+	registerAgentRead(server, gt, "fb_agent_license_request", "activation request for the vendor (install_id, id_source, host/agent/firebird versions; holds no secret)", func(ctx context.Context, cl *agentapi.Client, acfg config.Agent, a agentArg) (string, error) {
+		raw, err := cl.GetLicenseRequest(ctx)
+		if err != nil {
+			return "", err
+		}
+		return prettyJSON(raw), nil
+	})
+
+	type productStatusArg struct {
+		agentArg
+		Product string `json:"product" jsonschema:"product the agent manages: hqmonitor, hqclusternode or hqbirdrcm"`
+	}
+	registerAgentRead(server, gt, "fb_agent_product_update_status", "read {product}-update-state.json from the agent config directory (404 until the first check)", func(ctx context.Context, cl *agentapi.Client, acfg config.Agent, a productStatusArg) (string, error) {
+		if a.Product == "" {
+			return "", fmt.Errorf("fbagent bad-request: product is required (hqmonitor, hqclusternode, hqbirdrcm)")
+		}
+		raw, err := cl.GetProductUpdateStatus(ctx, acfg.InstanceIDOrDefault(), a.Product)
+		if err != nil {
+			return "", err
+		}
+		return prettyJSON(raw), nil
+	})
+
 	// --- Tier 1: gated ---
 
 	gt.registerToolEx(server, policy.ToolMeta{Name: "fb_agent_config_reload", Tier: 1, Scope: "instance"},
@@ -568,6 +638,47 @@ func registerAgentTools(server *mcp.Server, gt *gatedTools) {
 	})
 	gt.execs["fb_agent_job_run"] = gt.runAgentJob
 
+	// fb_agent_run_cancel — Tier 1: DELETE a queued/waiting run-now run.
+	gt.registerToolEx(server, policy.ToolMeta{Name: "fb_agent_run_cancel", Tier: 1, Scope: "instance"},
+		"Cancel a queued/waiting fbagent run-now run (agent of %s). A run that already started answers 409 conflict.",
+		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
+			cl, acfg, err := gt.agentClient(agentStr(args["agent"]))
+			if err != nil {
+				return "", err
+			}
+			runID := agentStr(args["run_id"])
+			if runID == "" {
+				return "", fmt.Errorf("run_id is required")
+			}
+			raw, err := cl.CancelRun(ctx, runID)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("agent %q run %s cancelled:\n%s", acfg.ID, runID, prettyJSON(raw)), nil
+		}, nil)
+
+	// fb_agent_license_set — Tier 1: install the vendor license document.
+	gt.registerToolEx(server, policy.ToolMeta{Name: "fb_agent_license_set", Tier: 1, Scope: "instance"},
+		"Install the vendor license document as the agent's license.json (agent of %s). The agent verifies before writing; an invalid document is refused and nothing changes.",
+		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
+			cl, acfg, err := gt.agentClient(agentStr(args["agent"]))
+			if err != nil {
+				return "", err
+			}
+			doc := agentStr(args["license"])
+			if strings.TrimSpace(doc) == "" {
+				return "", fmt.Errorf("license is required (the vendor-sent JSON document, verbatim)")
+			}
+			if !json.Valid([]byte(doc)) {
+				return "", fmt.Errorf("license must be the JSON document as sent by the vendor")
+			}
+			raw, err := cl.SetLicense(ctx, json.RawMessage(doc))
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("agent %q license installed:\n%s", acfg.ID, prettyJSON(raw)), nil
+		}, nil)
+
 	// --- Tier 2: engine control + update apply (window keyed on db, like
 	// fb_service_*) ---
 
@@ -581,4 +692,39 @@ func registerAgentTools(server *mcp.Server, gt *gatedTools) {
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_agent_update_apply", Tier: 2, Scope: "instance"},
 		"Apply the prepared Firebird update via fbagent (agent of %s). The agent auto-enqueues a restart when the engine stays stopped; the nested operation is polled and reported. Tier 2; out-of-band approval.",
 		gt.agentUpdateApplyExec())
+	gt.registerTool(server, policy.ToolMeta{Name: "fb_agent_product_update_apply", Tier: 2, Scope: "instance"},
+		"Queue a product update (check goafts, then stop / single-file swap / start / health-check with revert) for hqmonitor, hqclusternode or hqbirdrcm via fbagent (agent of %s). The operation result carries action and per-install outcomes. Tier 2; out-of-band approval.",
+		gt.agentProductUpdateExec())
+}
+
+// agentProductUpdateExec drives POST products/{product}/update/apply and
+// polls the operation; the result's action/reason/installs ride along.
+func (gt *gatedTools) agentProductUpdateExec() executor {
+	return func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
+		cl, acfg, err := gt.agentClient(agentStr(args["agent"]))
+		if err != nil {
+			return "", err
+		}
+		product := agentStr(args["product"])
+		if product == "" {
+			return "", fmt.Errorf("product is required (hqmonitor, hqclusternode, hqbirdrcm)")
+		}
+		resp, err := cl.ApplyProductUpdate(ctx, acfg.InstanceIDOrDefault(), product, agentStr(args["_grant_identity"]), agentStr(args["reason"]))
+		if err != nil {
+			return "", err
+		}
+		prog(0.1, fmt.Sprintf("%s update operation %s accepted", product, resp.OperationID))
+		op, err := gt.agentWaitOp(ctx, cl, acfg, resp.OperationID, prog)
+		if err != nil {
+			return "", err
+		}
+		out := fmt.Sprintf("%s update via agent %q:\n%s", product, acfg.ID, agentapi.FormatOperation(op))
+		if len(op.Result) > 0 {
+			out += "\nresult: " + prettyJSON(op.Result)
+		}
+		if op.State == "failed" {
+			return "", fmt.Errorf("%s update failed: %s", product, out)
+		}
+		return out, nil
+	}
 }

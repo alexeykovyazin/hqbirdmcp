@@ -93,12 +93,19 @@ func SystemTools() []ToolMeta {
 		{Name: "fb_agent_dbaccess", Tier: 0, Scope: "instance"},
 		{Name: "fb_agent_dbaccess_check", Tier: 0, Scope: "instance"}, // POST but a pure policy evaluation
 		{Name: "fb_agent_update_status", Tier: 0, Scope: "instance"},
-		{Name: "fb_agent_job_run", Tier: 1, Scope: "instance"}, // dynamic: hot-list families classify Tier 2 via EvaluateMeta
+		{Name: "fb_agent_runs", Tier: 0, Scope: "instance"},                  // run-now documents (2.60+)
+		{Name: "fb_agent_license", Tier: 0, Scope: "instance"},               // entitlements + status line
+		{Name: "fb_agent_license_request", Tier: 0, Scope: "instance"},       // vendor activation request
+		{Name: "fb_agent_product_update_status", Tier: 0, Scope: "instance"}, // hqmonitor/hqclusternode/hqbirdrcm state
+		{Name: "fb_agent_job_run", Tier: 1, Scope: "instance"},               // dynamic: hot-list families classify Tier 2 via EvaluateMeta
+		{Name: "fb_agent_run_cancel", Tier: 1, Scope: "instance"},            // DELETE a queued/waiting run-now run
+		{Name: "fb_agent_license_set", Tier: 1, Scope: "instance"},           // install the vendor license document
 		{Name: "fb_agent_config_reload", Tier: 1, Scope: "instance"},
 		{Name: "fb_agent_pprof", Tier: 1, Scope: "instance"},
 		{Name: "fb_agent_restart", Tier: 2, Scope: "instance"},
 		{Name: "fb_agent_stop", Tier: 2, Scope: "instance"},
 		{Name: "fb_agent_start", Tier: 2, Scope: "instance"},
 		{Name: "fb_agent_update_apply", Tier: 2, Scope: "instance"},
+		{Name: "fb_agent_product_update_apply", Tier: 2, Scope: "instance"}, // product stop/swap/start, same window key
 	}
 }

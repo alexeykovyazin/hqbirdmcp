@@ -1,5 +1,6 @@
 // Package agentapi is the HTTP client for the co-located fbagent Local API
-// (phase9_plan.md, ADR-031; API reference: fbagent 2.21.0). Loopback +
+// (phase9_plan.md, ADR-031; API reference: fbagent 2.67.0, LOCAL_API.md
+// route manifest). Loopback +
 // Bearer only. Every failure is surfaced as an error whose text starts with
 // an "fbagent <code>" marker — the errdoc classifier (seeded with the same
 // markers) turns those into structured {code, hint, remediation} envelopes.
@@ -111,6 +112,10 @@ func apiError(status int, body []byte) error {
 		return fmt.Errorf("fbagent auth (%d, %s): %s", status, code, msg)
 	case code == "not_found" || status == 404:
 		return fmt.Errorf("fbagent not-found (%d, %s): %s", status, code, msg)
+	case status == 409:
+		// run-now cancel after the run started, replconf/databases-root
+		// refusals, update apply on a license_only agent.
+		return fmt.Errorf("fbagent conflict (%d, %s): %s", status, code, msg)
 	case code == "payload_too_large" || status == 413:
 		return fmt.Errorf("fbagent payload-too-large (%d, %s): %s", status, code, msg)
 	case code == "unavailable" || status == 503:
@@ -164,20 +169,28 @@ type EngineOpRequest struct {
 // runResponse is the 202 shape shared by engine ops, job runs and update
 // apply.
 type runResponse struct {
-	OperationID        string   `json:"operation_id"`
-	Job                string   `json:"job"`
-	StatusURL          string   `json:"status_url"`
-	Warnings           []string `json:"warnings"`
-	RestartOperationID string   `json:"restart_operation_id"`
+	OperationID        string          `json:"operation_id"`
+	Job                string          `json:"job"`
+	StatusURL          string          `json:"status_url"`
+	Warnings           []string        `json:"warnings"`
+	RestartOperationID string          `json:"restart_operation_id"`
+	RunID              string          `json:"run_id"` // run-now families (2.60+)
+	RunURL             string          `json:"run_url"`
+	Run                json.RawMessage `json:"run"`
 }
 
-// JobRunRequest is the unified POST /v1/jobs/{job}/run body.
+// JobRunRequest is the unified POST /v1/jobs/{job}/run body. RequestID and
+// ExpiresAt apply to the run-now families (2.60+): request_id is the
+// idempotency key (^[A-Za-z0-9._:-]{8,64}$), expires_at an RFC 3339 instant
+// at most 24h ahead.
 type JobRunRequest struct {
 	RequestedBy string         `json:"requested_by,omitempty"`
 	Reason      string         `json:"reason,omitempty"`
 	JobID       string         `json:"job_id,omitempty"`
 	DBKeys      []string       `json:"db_keys,omitempty"`
 	Params      map[string]any `json:"params,omitempty"`
+	RequestID   string         `json:"request_id,omitempty"`
+	ExpiresAt   string         `json:"expires_at,omitempty"`
 }
 
 // --- endpoint methods ---
@@ -372,6 +385,86 @@ func (c *Client) ApplyUpdate(ctx context.Context, instID, requestedBy, reason st
 func (c *Client) Pprof(ctx context.Context, cpuSeconds int) (json.RawMessage, error) {
 	var out json.RawMessage
 	return out, c.do(ctx, http.MethodPost, "/v1/diagnostics/pprof", nil, map[string]int{"cpu_seconds": cpuSeconds}, &out)
+}
+
+// --- run-now (2.60+): run documents behind the 202 ---
+
+// GetRun reads one run document (404 for an unknown run_id).
+func (c *Client) GetRun(ctx context.Context, runID string) (json.RawMessage, error) {
+	var out json.RawMessage
+	return out, c.do(ctx, http.MethodGet, "/v1/runs/"+url.PathEscape(runID), nil, nil, &out)
+}
+
+// GetRuns lists run documents, newest first (finished runs are kept 7 days,
+// 200 max). Empty job/jobID lists across families; active restricts to
+// queued/waiting/running.
+func (c *Client) GetRuns(ctx context.Context, job, jobID string, active bool, limit int) (json.RawMessage, error) {
+	q := url.Values{}
+	if job != "" {
+		q.Set("job", job)
+	}
+	if jobID != "" {
+		q.Set("job_id", jobID)
+	}
+	if active {
+		q.Set("active", "1")
+	}
+	if limit > 0 {
+		q.Set("limit", fmt.Sprint(limit))
+	}
+	var out json.RawMessage
+	return out, c.do(ctx, http.MethodGet, "/v1/runs", q, nil, &out)
+}
+
+// CancelRun cancels a queued/waiting run (409 conflict once it runs).
+func (c *Client) CancelRun(ctx context.Context, runID string) (json.RawMessage, error) {
+	var out json.RawMessage
+	return out, c.do(ctx, http.MethodDelete, "/v1/runs/"+url.PathEscape(runID), nil, nil, &out)
+}
+
+// --- license (on every platform; 404 from an agent older than licensing) ---
+
+// GetLicense returns the verified entitlements and the license status line.
+func (c *Client) GetLicense(ctx context.Context) (json.RawMessage, error) {
+	var out json.RawMessage
+	return out, c.do(ctx, http.MethodGet, "/v1/license", nil, nil, &out)
+}
+
+// SetLicense installs the license document (the vendor-sent JSON, verbatim)
+// as license.json. The agent verifies before writing; a bad document is a
+// 400 license_invalid.
+func (c *Client) SetLicense(ctx context.Context, doc json.RawMessage) (json.RawMessage, error) {
+	var out json.RawMessage
+	return out, c.do(ctx, http.MethodPut, "/v1/license", nil, doc, &out)
+}
+
+// GetLicenseRequest returns the activation request a vendor needs to issue
+// a host-bound license.
+func (c *Client) GetLicenseRequest(ctx context.Context) (json.RawMessage, error) {
+	var out json.RawMessage
+	return out, c.do(ctx, http.MethodGet, "/v1/license/request", nil, nil, &out)
+}
+
+// --- product updates (hqmonitor / hqclusternode / hqbirdrcm; the
+// firebird-update routes keep their dedicated methods above) ---
+
+// GetProductUpdateStatus reads {product}-update-state.json (404 until the
+// first check).
+func (c *Client) GetProductUpdateStatus(ctx context.Context, instID, product string) (json.RawMessage, error) {
+	p := "/v1/instances/" + url.PathEscape(instID) + "/products/" + url.PathEscape(product) + "/update/status"
+	var out json.RawMessage
+	return out, c.do(ctx, http.MethodGet, p, nil, nil, &out)
+}
+
+// ApplyProductUpdate queues job {product}_update (release check → stop /
+// single-file swap / start / health-check, revert on failure). Async; the
+// operation result carries action ∈ up_to_date|applied|reverted|installed|
+// refused|deferred|blocked|failed.
+func (c *Client) ApplyProductUpdate(ctx context.Context, instID, product, requestedBy, reason string) (runResponse, error) {
+	var out runResponse
+	p := "/v1/instances/" + url.PathEscape(instID) + "/products/" + url.PathEscape(product) + "/update/apply"
+	body := EngineOpRequest{RequestedBy: requestedBy, Reason: reason}
+	return out, c.do(ctx, http.MethodPost, p, nil, body, &out)
 }
 
 // PollOperation polls an async operation to a terminal state, emitting prog

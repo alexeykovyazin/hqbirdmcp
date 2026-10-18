@@ -14,7 +14,15 @@ otherwise:
 - the agent's **36-job scheduler** (`sweep`, `collect_metadata`,
   `process_traces`, `find_deadlocks`, `sql_script`, …);
 - the **frozen engine-control contract** (stop → start → TCP readiness with
-  async operations and coalescing) and the Firebird **update** pipeline.
+  async operations and coalescing) and the Firebird **update** pipeline;
+- the API 2.60+ additions: **run-now** documents (`/v1/runs` — list, get,
+  cancel behind a run-now job acceptance), the **license** surface
+  (GET/PUT `/v1/license`, `/v1/license/request`) and the generic
+  **product update** routes (`hqmonitor`, `hqclusternode`, `hqbirdrcm`).
+
+Not bridged (host-dependent, no fbmcp use today): the Linux-only
+`replconf/install` and `databases-root` routes (404 on Windows), and the
+deprecated `hqmonitor-update/*` aliases (use `products/hqmonitor/update/*`).
 
 The bridge is **additive**: native `fb_*` tools stay; where the two overlap,
 the tables below say which side to prefer.
@@ -46,9 +54,9 @@ Per-tool reference (args, tiers, confirmation channels):
 
 | Tier | Tools |
 |---|---|
-| 0 (10) | `fb_agent_instances`, `fb_agent_status`, `fb_agent_databases`, `fb_agent_artifact_list`, `fb_agent_artifact_get`, `fb_agent_job_status`, `fb_agent_operation`, `fb_agent_dbaccess`, `fb_agent_dbaccess_check`, `fb_agent_update_status` |
-| 1 (3) | `fb_agent_job_run` (dynamic), `fb_agent_config_reload`, `fb_agent_pprof` |
-| 2 (4) | `fb_agent_restart`, `fb_agent_stop`, `fb_agent_start`, `fb_agent_update_apply` |
+| 0 (14) | `fb_agent_instances`, `fb_agent_status`, `fb_agent_databases`, `fb_agent_artifact_list`, `fb_agent_artifact_get`, `fb_agent_job_status`, `fb_agent_operation`, `fb_agent_dbaccess`, `fb_agent_dbaccess_check`, `fb_agent_update_status`, `fb_agent_runs`, `fb_agent_license`, `fb_agent_license_request`, `fb_agent_product_update_status` |
+| 1 (5) | `fb_agent_job_run` (dynamic), `fb_agent_run_cancel`, `fb_agent_license_set`, `fb_agent_config_reload`, `fb_agent_pprof` |
+| 2 (5) | `fb_agent_restart`, `fb_agent_stop`, `fb_agent_start`, `fb_agent_update_apply`, `fb_agent_product_update_apply` |
 
 Async agent operations (202 → `operation_id`) are polled internally
 (~2 s ticks, bounded by `timeout_seconds`, progress via the job runner);

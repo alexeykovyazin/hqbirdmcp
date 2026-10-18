@@ -49,6 +49,29 @@ func (s *agentStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"operation_id":"p9-3","kind":"job_inline","state":"succeeded","result":{"restart_operation_id":"p9-4"}}`))
 	case r.URL.Path == "/v1/operations/p9-4":
 		_, _ = w.Write([]byte(`{"operation_id":"p9-4","kind":"restart","state":"succeeded"}`))
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/jobs/vbackup/run":
+		// run-now family (2.60+): op already done, run queued behind it.
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"operation_id":"p9-5","job":"vbackup","status_url":"/v1/jobs/vbackup/status","warnings":[],"run_id":"rn-9","run_url":"/v1/runs/rn-9","run":{"state":"queued"}}`))
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/rn-9":
+		_, _ = w.Write([]byte(`{"run_id":"rn-9","state":"waiting","state_reason":"long-task slot"}`))
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/runs":
+		_, _ = w.Write([]byte(`{"runs":[{"run_id":"rn-9","state":"waiting"}]}`))
+	case r.Method == http.MethodDelete && r.URL.Path == "/v1/runs/rn-9":
+		_, _ = w.Write([]byte(`{"run_id":"rn-9","state":"cancelled"}`))
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/license":
+		_, _ = w.Write([]byte(`{"entitlements":{"state":"licensed"},"status":{"enforce":false,"mode":"full"}}`))
+	case r.Method == http.MethodPut && r.URL.Path == "/v1/license":
+		_, _ = w.Write([]byte(`{"entitlements":{"state":"licensed","license_id":"L-9"}}`))
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/license/request":
+		_, _ = w.Write([]byte(`{"schema":1,"install_id":"inst-9","id_source":"machine-guid"}`))
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/instances/fb1/products/hqmonitor/update/status":
+		_, _ = w.Write([]byte(`{"product":"hqmonitor","action":"up_to_date"}`))
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/instances/fb1/products/hqmonitor/update/apply":
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"operation_id":"p9-6","job":"hqmonitor_update"}`))
+	case r.URL.Path == "/v1/operations/p9-6":
+		_, _ = w.Write([]byte(`{"operation_id":"p9-6","kind":"job_inline","state":"succeeded","result":{"product":"hqmonitor","action":"applied"}}`))
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/instances/fb1":
 		_, _ = w.Write([]byte(`{"instance_id":"fb1","service_name":"FirebirdServerDefaultInstance","state":"running","uptime_sec":3600,"port":3050}`))
 	default:
@@ -179,6 +202,51 @@ func TestAgentExecutors(t *testing.T) {
 	}
 }
 
+func TestAgentNewSurfaceExecutors(t *testing.T) {
+	gt, _ := newAgentGT(t, nil)
+	ctx := context.Background()
+	prog := func(float64, string) {}
+
+	// Run-now job acceptance reports the run handle instead of polling.
+	out, err := gt.execs["fb_agent_job_run"](ctx, "", map[string]any{
+		"job": "vbackup", "_grant_identity": "tester",
+	}, prog)
+	if err != nil {
+		t.Fatalf("run-now job_run executor: %v", err)
+	}
+	if !contains(out, "run-now family") || !contains(out, "rn-9") {
+		t.Fatalf("run-now job_run out = %q", out)
+	}
+
+	out, err = gt.execs["fb_agent_run_cancel"](ctx, "", map[string]any{"run_id": "rn-9"}, prog)
+	if err != nil || !contains(out, "cancelled") {
+		t.Fatalf("run_cancel: %v %q", err, out)
+	}
+	if _, err := gt.execs["fb_agent_run_cancel"](ctx, "", map[string]any{}, prog); err == nil {
+		t.Fatal("run_cancel without run_id accepted")
+	}
+
+	out, err = gt.execs["fb_agent_license_set"](ctx, "", map[string]any{"license": `{"license":"doc"}`}, prog)
+	if err != nil || !contains(out, "L-9") {
+		t.Fatalf("license_set: %v %q", err, out)
+	}
+	if _, err := gt.execs["fb_agent_license_set"](ctx, "", map[string]any{"license": "not json"}, prog); err == nil {
+		t.Fatal("license_set accepted non-JSON body")
+	}
+
+	out, err = gt.execs["fb_agent_product_update_apply"](ctx, "spike5", map[string]any{
+		"product": "hqmonitor", "_grant_identity": "tester",
+	}, prog)
+	if err != nil || !contains(out, "applied") {
+		t.Fatalf("product_update_apply: %v %q", err, out)
+	}
+	if _, err := gt.execs["fb_agent_product_update_apply"](ctx, "spike5", map[string]any{
+		"_grant_identity": "tester",
+	}, prog); err == nil {
+		t.Fatal("product_update_apply without product accepted")
+	}
+}
+
 func TestAgentReadToolOverMCP(t *testing.T) {
 	_, server := newAgentGT(t, nil)
 	srvConn, cliConn := net.Pipe()
@@ -212,6 +280,27 @@ func TestAgentReadToolOverMCP(t *testing.T) {
 	}
 	if !res.IsError {
 		t.Fatal("unknown agent accepted")
+	}
+
+	// New 2.67 surface read over MCP: runs list and license status.
+	res, err = sess.CallTool(ctx, &mcp.CallToolParams{Name: "fb_agent_runs", Arguments: map[string]any{"active": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("runs call errored: %+v", res.Content)
+	}
+	tc, ok = res.Content[0].(*mcp.TextContent)
+	if !ok || !contains(tc.Text, "rn-9") {
+		t.Fatalf("runs text = %+v", res.Content)
+	}
+	res, err = sess.CallTool(ctx, &mcp.CallToolParams{Name: "fb_agent_license", Arguments: map[string]any{}})
+	if err != nil || res.IsError {
+		t.Fatalf("license call: %v %+v", err, res.Content)
+	}
+	tc, ok = res.Content[0].(*mcp.TextContent)
+	if !ok || !contains(tc.Text, "licensed") {
+		t.Fatalf("license text = %+v", res.Content)
 	}
 }
 

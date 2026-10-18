@@ -6,8 +6,8 @@ databases as a DBA: monitoring, backups and verified restores, SQL/DDL/DCL,
 security, indexes, migrations and a scheduler, across Firebird 2.5–5.0.
 Every mutating call passes a tiered policy engine and a **human confirmation
 gate** before it touches the database, and every decision is written to a
-hash-chained audit log. 85 tools in total (43 read-only, 30 Tier 1, 11
-Tier 2, 1 disabled-by-design Tier 3; phase 9 added 17 fbagent bridge
+hash-chained audit log. 92 tools in total (47 read-only, 32 Tier 1, 12
+Tier 2, 1 disabled-by-design Tier 3; phase 9 added 24 fbagent bridge
 proxies — [docs/agent-bridge.md](fbmcp/docs/agent-bridge.md)). `fb_query`
 results also render as a **sortable grid inside the chat** on MCP-Apps
 clients (`ui://fbmcp/results/{id}` resources, phase 10 /
@@ -380,6 +380,13 @@ executes under the agent's own scheduler and policy.
 | `fb_agent_stop` | 2 | same | stop the agent-supervised service. **OOB** |
 | `fb_agent_start` | 2 | same | start + wait for TCP readiness. **OOB** |
 | `fb_agent_update_apply` | 2 | same | apply the prepared Firebird update; nested auto-restart polled. **OOB** |
+| `fb_agent_runs` | 0 | `agent?`, `db?`, `run_id?`, `job?`, `job_id?`, `active?`, `limit?` | run-now documents (2.60+): one run or a filtered list, newest first |
+| `fb_agent_license` | 0 | `agent?`, `db?` | verified license entitlements + status line |
+| `fb_agent_license_request` | 0 | `agent?`, `db?` | vendor activation request (no secret) |
+| `fb_agent_product_update_status` | 0 | `agent?`, `db?`, `product` | `{product}`-update-state.json (hqmonitor / hqclusternode / hqbirdrcm) |
+| `fb_agent_run_cancel` | 1 | `db`, `args.agent?`, `args.run_id` | cancel a queued/waiting run-now run (409 once it runs) |
+| `fb_agent_license_set` | 1 | `db`, `args.agent?`, `args.license` | install the vendor license document (agent verifies first) |
+| `fb_agent_product_update_apply` | 2 | `db` (window key), `args.agent?`, `args.product`, `args.reason?` | queue a product update (stop / swap / start, revert on failure). **OOB** |
 
 ---
 
