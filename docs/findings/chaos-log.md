@@ -61,3 +61,30 @@ online. The next 06:00 nightly_verify is the end-to-end confirmation.
 
 Detail logs per night: %TEMP%/fbmcp-chaos/fbmcp-chaos-YYYYMMDD.log
 (14-night rolling retention).
+2026-09-29 02:30:05 count=50 verdict=RED exit=1
+2026-09-29 02:30:05 triage(auto): harness-failure - failing: TestKillScheduleMidDispatch
+2026-09-30 02:30:04 count=50 verdict=GREEN exit=0
+2026-10-01 02:30:04 count=50 verdict=GREEN exit=0
+2026-10-02 02:30:02 count=50 verdict=GREEN exit=0
+2026-10-04 02:30:03 count=50 verdict=GREEN exit=0
+2026-10-05 02:30:03 count=50 verdict=RED exit=1
+2026-10-05 02:30:03 triage(auto): harness-failure - failing: TestKillAtExecPostCommit
+2026-10-06 02:30:04 count=50 verdict=GREEN exit=0
+2026-10-07 02:30:03 count=50 verdict=GREEN exit=0
+2026-10-08 02:30:03 count=50 verdict=RED exit=1
+2026-10-08 02:30:03 triage(auto): harness-failure - failing: TestKillAtExecPreCommit
+2026-10-09 02:30:03 count=50 verdict=GREEN exit=0
+2026-10-10 02:30:04 count=50 verdict=RED exit=1
+2026-10-10 02:30:04 triage(auto): harness-failure - failing: TestKillAtExecPreCommit
+2026-10-11 02:30:03 count=50 verdict=RED exit=1
+2026-10-11 02:30:03 triage(auto): harness-failure - failing: TestKillScheduleMidDispatch
+ALERT: 2 consecutive RED nights - triage now (M3 clean streak is blocked)
+2026-10-13 02:30:04 count=50 verdict=GREEN exit=0
+2026-10-14 02:30:04 count=50 verdict=GREEN exit=0
+2026-10-15 02:30:04 count=50 verdict=RED exit=1
+2026-10-15 02:30:04 triage(auto): harness-failure - failing: TestKillScheduleMidDispatch
+2026-10-16 02:30:02 count=50 verdict=RED exit=1
+2026-10-16 02:30:02 triage(auto): harness-failure - failing: TestKillScheduleMidDispatch
+ALERT: 2 consecutive RED nights - triage now (M3 clean streak is blocked)
+2026-10-17 02:30:02 count=50 verdict=GREEN exit=0
+2026-10-18 02:30:06 count=50 verdict=GREEN exit=0
