@@ -138,6 +138,10 @@ type Operation struct {
 	Error       *struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
+		// WorkContinues: the agent's deadline fired but the work it could
+		// not call off is still running (a start on its way up). Callers
+		// must poll the instance, never re-issue the operation.
+		WorkContinues bool `json:"work_continues,omitempty"`
 	} `json:"error"`
 	Warnings           []string        `json:"warnings"`
 	StatusURL          string          `json:"status_url"`
@@ -164,6 +168,18 @@ type EngineOpRequest struct {
 	RequestedBy string `json:"requested_by,omitempty"`
 	Reason      string `json:"reason,omitempty"`
 	Coalesce    *bool  `json:"coalesce,omitempty"`
+	// TimeoutSec is the caller's budget for the whole operation; the agent
+	// clamps it to restart_timeout_max and echoes the effective value.
+	TimeoutSec int `json:"timeout_sec,omitempty"`
+}
+
+// Instance is the GET /v1/instances/{id} document (fields fbmcp acts on).
+type Instance struct {
+	InstanceID  string `json:"instance_id"`
+	Version     string `json:"version"`
+	ServiceName string `json:"service_name"`
+	State       string `json:"state"` // running|stopped|starting|stopping|unknown
+	Port        int    `json:"port"`
 }
 
 // runResponse is the 202 shape shared by engine ops, job runs and update
@@ -202,6 +218,12 @@ func (c *Client) GetInstances(ctx context.Context, id string) (json.RawMessage, 
 		return out, c.do(ctx, http.MethodGet, "/v1/instances", nil, nil, &out)
 	}
 	var out json.RawMessage
+	return out, c.do(ctx, http.MethodGet, "/v1/instances/"+url.PathEscape(id), nil, nil, &out)
+}
+
+// GetInstance reads one instance document, typed.
+func (c *Client) GetInstance(ctx context.Context, id string) (Instance, error) {
+	var out Instance
 	return out, c.do(ctx, http.MethodGet, "/v1/instances/"+url.PathEscape(id), nil, nil, &out)
 }
 
@@ -327,6 +349,19 @@ func (c *Client) GetArtifactList(ctx context.Context, scope, glob string) (json.
 	v := url.Values{"glob": {glob}}
 	var out json.RawMessage
 	return out, c.do(ctx, http.MethodGet, "/v1/artifacts/"+scope, v, nil, &out)
+}
+
+// GetWatchedFiles lists the agent's rotated firebird.log / conf-change
+// copies (server_level/{conf_changes,log_files}). Listing only: the Local
+// API serves no content route for these files (phase 11 D3), so log BODIES
+// come from the engine's Services API instead (facts.FirebirdLog).
+func (c *Client) GetWatchedFiles(ctx context.Context, glob string) (json.RawMessage, error) {
+	v := url.Values{}
+	if glob != "" {
+		v.Set("glob", glob)
+	}
+	var out json.RawMessage
+	return out, c.do(ctx, http.MethodGet, "/v1/artifacts/server/firebird/files/watched", v, nil, &out)
 }
 
 // GetJobStatus reads a job family's persistent status document.

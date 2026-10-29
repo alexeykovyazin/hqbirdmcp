@@ -8,6 +8,7 @@ import (
 type serviceClient interface {
 	Version() (string, error)
 	ConnectedDBInfo() (*fb.SrvDbInfo, error)
+	FbLog() (string, error)
 	Close() error
 }
 
@@ -31,7 +32,31 @@ func (m *svcMgr) Version() (string, error) { return m.s.GetServerVersionString()
 func (m *svcMgr) ConnectedDBInfo() (*fb.SrvDbInfo, error) {
 	return m.s.GetSvrDbInfo()
 }
-func (m *svcMgr) Close() error { return m.s.Close() }
+func (m *svcMgr) FbLog() (string, error) { return m.s.GetFbLogString() }
+func (m *svcMgr) Close() error           { return m.s.Close() }
+
+// FirebirdLog fetches the instance's live firebird.log through the Services
+// API (isc_action_svc_get_fb_log) — the engine serves its own log, so this
+// works with or without a co-located fbagent (phase 11 D3).
+func FirebirdLog(cfg *config.Config, instID string) (string, error) {
+	inst, err := cfg.Instance(instID)
+	if err != nil {
+		return "", err
+	}
+	if err := inst.ValidateDiscoveryDefaults(); err != nil {
+		return "", err
+	}
+	pass, err := config.SecretFromEnv(inst.ServiceSecretEnv)
+	if err != nil {
+		return "", err
+	}
+	svc, err := openSvc(inst.Addr, inst.ServiceUser, pass)
+	if err != nil {
+		return "", err
+	}
+	defer svc.Close()
+	return svc.FbLog()
+}
 
 type ConnectedDB struct {
 	Path        string

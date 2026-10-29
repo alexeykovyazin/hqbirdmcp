@@ -61,6 +61,10 @@ type Agent struct {
 	// AllowNonLoopback lifts the loopback-only base_url rule. Not
 	// recommended: the agent itself rejects non-loopback binds.
 	AllowNonLoopback bool `yaml:"allow_non_loopback"`
+	// ConfigPath is the agent's own agent_config.json on this host
+	// (phase 11: recorded by fb_agent_register from discovery; used by the
+	// candidate-file config write path). Optional.
+	ConfigPath string `yaml:"config_path,omitempty"`
 }
 
 // TimeoutOrDefault fills the ADR-031 default (130s: agent restart timeout

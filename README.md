@@ -6,7 +6,7 @@ databases as a DBA: monitoring, backups and verified restores, SQL/DDL/DCL,
 security, indexes, migrations and a scheduler, across Firebird 2.5–5.0.
 Every mutating call passes a tiered policy engine and a **human confirmation
 gate** before it touches the database, and every decision is written to a
-hash-chained audit log. 92 tools in total (47 read-only, 32 Tier 1, 12
+hash-chained audit log. 98 tools in total (51 read-only, 32 Tier 1, 14
 Tier 2, 1 disabled-by-design Tier 3; phase 9 added 24 fbagent bridge
 proxies — [docs/agent-bridge.md](fbmcp/docs/agent-bridge.md)). `fb_query`
 results also render as a **sortable grid inside the chat** on MCP-Apps
@@ -376,7 +376,7 @@ executes under the agent's own scheduler and policy.
 | `fb_agent_job_run` | 1 (dynamic → 2) | `job`, `job_id?`, `db_keys?`, `params?`, `db?`, `agent?`, `mode?` | run one agent scheduler job; hot-list families escalate to Tier 2 (**OOB**) |
 | `fb_agent_config_reload` | 1 | `db`, `args.agent?` | hot-reload `agent_config.json` |
 | `fb_agent_pprof` | 1 | `db`, `args.agent?`, `args.cpu_seconds?` (0–30) | profile the agent process |
-| `fb_agent_restart` | 2 | `db` (window key), `args.agent?`, `args.reason?` | agent restart contract (stop → start → TCP readiness). **OOB** |
+| `fb_agent_restart` | 2 | `db` (window key), `args.agent?`, `args.reason?`, `args.cluster_override?` | RCM contract: preflight → restart → state + TCP post-check; 1056 retry, `work_continues` honoured. **OOB** |
 | `fb_agent_stop` | 2 | same | stop the agent-supervised service. **OOB** |
 | `fb_agent_start` | 2 | same | start + wait for TCP readiness. **OOB** |
 | `fb_agent_update_apply` | 2 | same | apply the prepared Firebird update; nested auto-restart polled. **OOB** |
@@ -387,6 +387,12 @@ executes under the agent's own scheduler and policy.
 | `fb_agent_run_cancel` | 1 | `db`, `args.agent?`, `args.run_id` | cancel a queued/waiting run-now run (409 once it runs) |
 | `fb_agent_license_set` | 1 | `db`, `args.agent?`, `args.license` | install the vendor license document (agent verifies first) |
 | `fb_agent_product_update_apply` | 2 | `db` (window key), `args.agent?`, `args.product`, `args.reason?` | queue a product update (stop / swap / start, revert on failure). **OOB** |
+| `fb_agent_discover` | 0 | `db?` | find co-located fbagent Local APIs (service registry + files; no HTTP, no token access) with register follow-ups |
+| `fb_agent_register` | 2 | `db?`, `id`, `base_url`, `token_env`, `instance_id?`, `config_path?`, `mode?` | persist a discovered fbagent into `agents:`; verifies identity after apply. **OOB** |
+| `fb_firebird_log` | 0 | `instance`, `tail?`, `archived?`, `glob?`, `agent?` | live `firebird.log` via the Services API (tail, default 100); `archived=true` lists the agent's rotated copies |
+| `fb_agent_perf_report` | 0 | `agent?`, `db?`, `report?` | newest trace performance report (`perf`) or deadlock report (`deadlocks`) |
+| `fb_agent_backup_config` | 0 | `agent?`, `db?`, `family?` | backup/restore/sweep job-family settings from the newest config snapshot (secrets redacted) |
+| `fb_agent_config_set` | 2 | `agent?`, `db?`, `family`, `job_id?`, `task?`, `patch`, `mode?` | change existing job settings via the agent's candidate file + reload; credentials, ids, commands refused. **OOB** |
 
 ---
 

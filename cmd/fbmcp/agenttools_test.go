@@ -94,6 +94,11 @@ func newAgentGT(t *testing.T, mutate func(a *config.Agent)) (*gatedTools, *mcp.S
 		mutate(&cfg.Agents[0])
 	}
 	gt.cfg = config.NewHandle(cfg)
+	// Engine-op seams (agent_engine.go): no host registry, no real port.
+	oldC, oldT := clusterNodePresent, tcpProbe
+	clusterNodePresent = func() bool { return false }
+	tcpProbe = func(context.Context, int) error { return nil }
+	t.Cleanup(func() { clusterNodePresent, tcpProbe = oldC, oldT })
 	server := mcp.NewServer(&mcp.Implementation{Name: "agent-test", Version: "0"}, nil)
 	registerAgentTools(server, gt)
 	return gt, server

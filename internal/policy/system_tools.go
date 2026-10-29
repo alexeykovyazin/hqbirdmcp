@@ -107,5 +107,17 @@ func SystemTools() []ToolMeta {
 		{Name: "fb_agent_start", Tier: 2, Scope: "instance"},
 		{Name: "fb_agent_update_apply", Tier: 2, Scope: "instance"},
 		{Name: "fb_agent_product_update_apply", Tier: 2, Scope: "instance"}, // product stop/swap/start, same window key
+		// Phase 11: discovery + registration of co-located fbagents
+		// (phase11, D1/D2). Discover is a pure local read (SCM registry +
+		// files, no HTTP, no tokens); register persists a credentialed
+		// local target into fbmcp.yaml → out-of-band Tier 2.
+		{Name: "fb_agent_discover", Tier: 0, Scope: "instance"},
+		{Name: "fb_agent_register", Tier: 2, Scope: "instance"},
+		{Name: "fb_firebird_log", Tier: 0, Scope: "instance"},
+		{Name: "fb_agent_perf_report", Tier: 0, Scope: "instance"},
+		{Name: "fb_agent_backup_config", Tier: 0, Scope: "instance"},
+		// ADR-037: candidate file + /v1/config/reload; rewrites the agent's
+		// job configuration → out-of-band Tier 2.
+		{Name: "fb_agent_config_set", Tier: 2, Scope: "instance"},
 	}
 }

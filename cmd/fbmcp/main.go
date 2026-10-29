@@ -190,6 +190,8 @@ func runForegroundCtx(ctx context.Context) {
 	registerP4Tools(server, gt)
 	registerP5Tools(server, gt)
 	registerAgentTools(server, gt)
+	registerAgentDiscoverTools(server, gt)
+	registerPhase11Tools(server, gt)
 	// AutoReopen reconciliation must run AFTER all workflow types are
 	// registered above (C7a): a restore_replace interrupted by a kill is
 	// resumed from its .pre-restore snapshot — marking it failed here would

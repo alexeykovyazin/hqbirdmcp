@@ -175,36 +175,8 @@ func registerAgentRead[A any](server *mcp.Server, gt *gatedTools, name, desc str
 
 // --- Tier 1/2 gated executors ---
 
-// agentEngineExec builds the executor for restart/stop/start: 202 → poll →
-// report (ADR-033).
-func (gt *gatedTools) agentEngineExec(action string) executor {
-	return func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
-		cl, acfg, err := gt.agentClient(agentStr(args["agent"]))
-		if err != nil {
-			return "", err
-		}
-		req := agentapi.EngineOpRequest{
-			RequestedBy: agentStr(args["_grant_identity"]),
-			Reason:      agentStr(args["reason"]),
-		}
-		if b, ok := args["coalesce"].(bool); ok {
-			req.Coalesce = &b
-		}
-		resp, err := cl.EngineOp(ctx, acfg.InstanceIDOrDefault(), action, req)
-		if err != nil {
-			return "", err
-		}
-		prog(0.1, fmt.Sprintf("operation %s accepted", resp.OperationID))
-		op, err := gt.agentWaitOp(ctx, cl, acfg, resp.OperationID, prog)
-		if err != nil {
-			return "", err
-		}
-		if op.State == "failed" {
-			return "", fmt.Errorf("agent %s failed: %s", action, agentapi.FormatOperation(op))
-		}
-		return fmt.Sprintf("agent %s via agent %q:\n%s", action, acfg.ID, agentapi.FormatOperation(op)), nil
-	}
-}
+// agentEngineExec (restart/stop/start) lives in agent_engine.go (phase 11
+// D6: RCM contract).
 
 // agentUpdateApplyExec applies a prepared Firebird update and, when the
 // agent enqueued the nested restart, polls that too (ADR-033).
@@ -683,11 +655,11 @@ func registerAgentTools(server *mcp.Server, gt *gatedTools) {
 	// fb_service_*) ---
 
 	for _, spec := range []struct{ name, action, impact string }{
-		{"fb_agent_restart", "restart", "Restart the Firebird service supervised by fbagent (stop → start → TCP readiness; agent of %s). Tier 2; out-of-band approval."},
-		{"fb_agent_stop", "stop", "Stop the Firebird service supervised by fbagent (agent of %s). Tier 2; out-of-band approval."},
-		{"fb_agent_start", "start", "Start the Firebird service supervised by fbagent and wait for TCP readiness (agent of %s). Tier 2; out-of-band approval."},
+		{"fb_agent_restart", "restart", "Restart the Firebird service supervised by fbagent (preflight → stop → start → state + TCP post-check; agent of %s). Refused when hqclusternode manages the host unless args.cluster_override=true. Tier 2; out-of-band approval."},
+		{"fb_agent_stop", "stop", "Stop the Firebird service supervised by fbagent (preflight → stop → state post-check; agent of %s). Refused when hqclusternode manages the host unless args.cluster_override=true. Tier 2; out-of-band approval."},
+		{"fb_agent_start", "start", "Start the Firebird service supervised by fbagent (preflight → start → state + TCP post-check; agent of %s). Refused when hqclusternode manages the host unless args.cluster_override=true. Tier 2; out-of-band approval."},
 	} {
-		gt.registerTool(server, policy.ToolMeta{Name: spec.name, Tier: 2, Scope: "instance"}, spec.impact, gt.agentEngineExec(spec.action))
+		gt.registerToolEx(server, policy.ToolMeta{Name: spec.name, Tier: 2, Scope: "instance"}, spec.impact, gt.agentEngineExec(spec.action), gt.enginePreview)
 	}
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_agent_update_apply", Tier: 2, Scope: "instance"},
 		"Apply the prepared Firebird update via fbagent (agent of %s). The agent auto-enqueues a restart when the engine stays stopped; the nested operation is polled and reported. Tier 2; out-of-band approval.",

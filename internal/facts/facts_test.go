@@ -75,6 +75,7 @@ type stubSvc struct {
 
 func (s *stubSvc) Version() (string, error)                { return s.version, nil }
 func (s *stubSvc) ConnectedDBInfo() (*fb.SrvDbInfo, error) { return s.info, s.err }
+func (s *stubSvc) FbLog() (string, error)                  { return "stub firebird.log\n", s.err }
 func (s *stubSvc) Close() error                            { return nil }
 
 func TestConnectedDatabasesUsesDBInstanceAndMapsPaths(t *testing.T) {
@@ -165,6 +166,25 @@ func TestConnectedDatabasesEmptyResult(t *testing.T) {
 	}
 	if info.Instance != "fb5" || info.AttachmentsCount != 0 || info.DatabaseCount != 0 || len(info.Databases) != 0 {
 		t.Fatalf("unexpected empty info: %+v", info)
+	}
+}
+
+func TestFirebirdLogUsesServiceCreds(t *testing.T) {
+	t.Setenv("FBMCP_SERVICE_PW", "masterkey")
+	cfg := testFactsConfig(t)
+	old := openSvc
+	defer func() { openSvc = old }()
+	var gotAddr string
+	openSvc = func(addr, user, pass string) (serviceClient, error) {
+		gotAddr = addr
+		return &stubSvc{}, nil
+	}
+	s, err := FirebirdLog(cfg, "fb5")
+	if err != nil || s != "stub firebird.log\n" || gotAddr != "localhost:3055" {
+		t.Fatalf("FirebirdLog = %q, %v (addr %q)", s, err, gotAddr)
+	}
+	if _, err := FirebirdLog(cfg, "nope"); err == nil {
+		t.Fatal("unknown instance accepted")
 	}
 }
 

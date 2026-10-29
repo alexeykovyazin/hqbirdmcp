@@ -1,4 +1,4 @@
-# fbagent bridge (phase 9)
+# fbagent bridge (phase 9, extended in phase 11)
 
 fbmcp can proxy the **fbagent** Local API — the loopback HTTP surface of the
 co-located HQBird agent service (documented in the fbagent repo,
@@ -54,15 +54,59 @@ Per-tool reference (args, tiers, confirmation channels):
 
 | Tier | Tools |
 |---|---|
-| 0 (14) | `fb_agent_instances`, `fb_agent_status`, `fb_agent_databases`, `fb_agent_artifact_list`, `fb_agent_artifact_get`, `fb_agent_job_status`, `fb_agent_operation`, `fb_agent_dbaccess`, `fb_agent_dbaccess_check`, `fb_agent_update_status`, `fb_agent_runs`, `fb_agent_license`, `fb_agent_license_request`, `fb_agent_product_update_status` |
+| 0 (17) | `fb_agent_instances`, `fb_agent_status`, `fb_agent_databases`, `fb_agent_artifact_list`, `fb_agent_artifact_get`, `fb_agent_job_status`, `fb_agent_operation`, `fb_agent_dbaccess`, `fb_agent_dbaccess_check`, `fb_agent_update_status`, `fb_agent_runs`, `fb_agent_license`, `fb_agent_license_request`, `fb_agent_product_update_status`, `fb_agent_discover`, `fb_agent_perf_report`, `fb_agent_backup_config` (+ `fb_firebird_log`, instance-scoped, agent optional) |
 | 1 (5) | `fb_agent_job_run` (dynamic), `fb_agent_run_cancel`, `fb_agent_license_set`, `fb_agent_config_reload`, `fb_agent_pprof` |
-| 2 (5) | `fb_agent_restart`, `fb_agent_stop`, `fb_agent_start`, `fb_agent_update_apply`, `fb_agent_product_update_apply` |
+| 2 (7) | `fb_agent_restart`, `fb_agent_stop`, `fb_agent_start`, `fb_agent_update_apply`, `fb_agent_product_update_apply`, `fb_agent_register`, `fb_agent_config_set` |
 
 Async agent operations (202 → `operation_id`) are polled internally
 (~2 s ticks, bounded by `timeout_seconds`, progress via the job runner);
 if the budget runs out the tool returns the `operation_id` and the client
 can resume later with Tier-0 `fb_agent_operation`.
 
+## Phase 11: discovery, logs, perf reports, job settings
+
+**Discover and register.** `fb_agent_discover` (Tier 0) reads the Windows
+service registry (`HQbirdFBAgent-*` → `--run <agent_config.json>`), derives
+`base_url` and `instance_id` by the agent's own listen rule, and never reads
+tokens. Per candidate it prints the two follow-up steps:
+
+1. The operator stores the agent's `local_api.token` under the suggested
+   name: `fbmcpctl secret set FBMCP_AGENT_TOKEN_P<port>` (never harvested
+   by fbmcp, never typed into chat).
+2. `fb_agent_register` (Tier 2, OOB) appends the `agents:` entry, reloads
+   the kernel config and checks the identity via `GET /v1/instances`.
+
+**Diagnostics reads (Tier 0).** `fb_firebird_log` reads the live
+`firebird.log` through the Services API (no agent needed);
+`archived=true` lists the agent's rotated copies (the agent API serves
+names only). `fb_agent_perf_report` returns the newest trace performance
+report or deadlock report. `fb_agent_backup_config` shows job-family
+settings from the newest config snapshot, secrets masked.
+
+**Config writes (ADR-037).** `fb_agent_config_set` (Tier 2, OOB) composes
+a whole config from the live `agent_config.json`, writes
+`agent_config_pending_<UTC>.json` beside it and calls
+`POST /v1/config/reload` — the agent validates, backs up, installs and
+rolls back. It needs `config_path` on the `agents:` entry and **read
+access to the live file** (plus create rights on its directory). That
+file holds the agent token and Firebird credentials, so granting access
+is an explicit operator decision:
+
+```powershell
+icacls C:\HQbird\fbagent-p3055\agent_config.json /grant "<fbmcp account>:R"
+icacls C:\HQbird\fbagent-p3055 /grant "<fbmcp account>:(AD,WD)"
+```
+
+Without it the tool refuses with this instruction; use HQ Monitor instead.
+
+**Engine control (RCM contract).** `fb_agent_restart`/`stop`/`start` run a
+preflight (`GET /v1/instances/{id}`: instance id match, state not
+`unknown`), send `{requested_by, reason, coalesce:true, timeout_sec}`,
+retry once on Windows error 1056, wait for the instance (never re-issue)
+when the agent reports `work_continues`, and post-check state plus a TCP
+probe on the Firebird port. When hqclusternode is installed, the call is
+refused unless `args.cluster_override=true`: the node owns restarts
+(restart window, `pending_restart`).
 ## Governance
 
 - Tier 0 needs no confirmation; Tier 1 confirms in-band
@@ -138,11 +182,13 @@ The agent's error envelope maps onto fbmcp's structured error codes
 
 ## Local lab (this dev host)
 
-A real agent is deployed at `C:\HQbirdbagent-p3055` with the Local API on
-`127.0.0.1:13055` and **instance_id `fb-master-3055`** (not the `fb1`
-default — every instance-scoped call 404s without it). It supervises the
-FB5 instance (`FirebirdServerHQBirdInstanceFB5`, port 3055) that the soak
-kernel attaches to, so Tier-2 engine tools are opt-in and coordinated.
+Five agents run on this host: `C:\HQbird\fbagent-p3053/54/55/56/65`
+(services `HQbirdFBAgent-p<port>`, Local API `127.0.0.1:1<port>`). The
+p3055 agent has **instance_id `honor2025261022-p3055`** (not the `fb1`
+default — every instance-scoped call 404s without it; `fb_agent_discover`
+reports it). It supervises the FB5 instance
+(`FirebirdServerHQBirdInstanceFB5`, port 3055) that the soak kernel
+attaches to, so Tier-2 engine tools are opt-in and coordinated.
 
 Run the live suites (`go test ./...` runs them green-skipped without env):
 
