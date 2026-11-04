@@ -88,3 +88,27 @@ ALERT: 2 consecutive RED nights - triage now (M3 clean streak is blocked)
 ALERT: 2 consecutive RED nights - triage now (M3 clean streak is blocked)
 2026-10-17 02:30:02 count=50 verdict=GREEN exit=0
 2026-10-18 02:30:06 count=50 verdict=GREEN exit=0
+2026-10-19 02:30:04 count=50 verdict=GREEN exit=0
+2026-10-20 02:30:05 count=50 verdict=GREEN exit=0
+2026-10-21 02:30:05 count=50 verdict=GREEN exit=0
+2026-10-22 02:30:07 count=50 verdict=RED exit=1
+2026-10-22 02:30:07 triage(auto): harness-failure - failing: TestKillScheduleMidDispatch
+2026-10-23 02:30:05 count=50 verdict=GREEN exit=0
+2026-10-24 02:30:05 count=50 verdict=GREEN exit=0
+2026-10-25 02:30:05 count=50 verdict=RED exit=1
+2026-10-25 02:30:05 triage(auto): harness-failure - failing: TestKillScheduleMidDispatch
+2026-10-27 01:30:05 count=50 verdict=RED exit=1
+2026-10-27 01:30:05 triage(auto): harness-failure - failing: TestKillScheduleMidDispatch
+ALERT: 2 consecutive RED nights - triage now (M3 clean streak is blocked)
+2026-10-29 01:30:07 count=50 verdict=GREEN exit=0
+2026-10-30 01:30:08 count=50 verdict=RED exit=1
+2026-10-30 01:30:08 triage(auto): harness-failure - failing: TestKillScheduleMidDispatch, TestRestoreTestNoMatviewsLive
+2026-10-31 01:30:05 count=50 verdict=RED exit=1
+2026-10-31 01:30:05 triage(auto): harness-failure - failing: TestKillScheduleMidDispatch
+ALERT: 2 consecutive RED nights - triage now (M3 clean streak is blocked)
+2026-11-01 01:30:06 count=50 verdict=GREEN exit=0
+2026-11-02 01:30:06 count=50 verdict=RED exit=1
+2026-11-02 01:30:06 triage(auto): harness-failure - failing: TestKillAtExecPreCommit
+2026-11-03 01:30:05 count=50 verdict=GREEN exit=0
+2026-11-04 01:30:49 count=50 verdict=RED exit=1
+2026-11-04 01:30:49 triage(auto): harness-failure - failing: TestKillScheduleMidDispatch
