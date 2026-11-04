@@ -47,6 +47,10 @@ On the dev host, `packaging/rebuild-install.ps1` does the whole loop in one
 command: rebuild all four binaries into `dist\`, stop/update/restart the
 running kernel and tray, merge the MCP client config, then `fbmcpctl doctor`.
 
+Short install and usage guide (Claude Desktop/Code, Cursor, Codex, ZCode,
+remote mode): [English](docs/quickstart-en.md) |
+[Русский](docs/quickstart-ru.md) | [Português](docs/quickstart-pt.md).
+
 Wire the server into an MCP client and configure `fbmcp.yaml`:
 [`docs/claude-desktop.md`](docs/claude-desktop.md). Then verify the host:
 `dist\fbmcpctl doctor <config>` must end `doctor: green`.
