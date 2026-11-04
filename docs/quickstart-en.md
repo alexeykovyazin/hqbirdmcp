@@ -11,6 +11,9 @@ confirmation. Every decision is written to the audit log (`audit.jsonl`).
 Details: [claude-desktop.md](claude-desktop.md) (local),
 [remote.md](remote.md) (remote), [tool-reference.md](tool-reference.md) (all tools).
 
+HQbird 2027 servers have fbmcp already (one service for all Firebird
+lines): see [`hqbird.md`](hqbird.md) instead of sections 3–4.
+
 ## 1. Two modes
 
 | Mode | Where fbmcp runs | When to use |

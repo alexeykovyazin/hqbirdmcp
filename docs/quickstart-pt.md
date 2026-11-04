@@ -12,6 +12,9 @@ gravadas no log de auditoria (`audit.jsonl`).
 Detalhes: [claude-desktop.md](claude-desktop.md) (local),
 [remote.md](remote.md) (remoto), [tool-reference.md](tool-reference.md) (todas as ferramentas).
 
+Servidores HQbird 2027 já têm o fbmcp (um serviço para todas as linhas
+Firebird): veja [`hqbird.md`](hqbird.md) em vez das seções 3–4.
+
 ## 1. Dois modos
 
 | Modo | Onde o fbmcp roda | Quando usar |

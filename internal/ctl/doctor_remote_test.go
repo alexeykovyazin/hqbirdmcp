@@ -1,4 +1,4 @@
-package main
+package ctl
 
 import (
 	"crypto/sha256"
@@ -13,6 +13,9 @@ import (
 )
 
 func TestDoctorListenerAndPin(t *testing.T) {
+	// The listener runs in this test binary (ctl.test), not in fbmcp.
+	defer func(old string) { listenerProcess = old }(listenerProcess)
+	listenerProcess = "ctl.test"
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
 			w.Write([]byte("ok\n"))

@@ -1,4 +1,4 @@
-package main
+package ctl
 
 // fbmcpctl tls (phase 12 B1): a self-signed certificate for remote mode and
 // the public-key pin the bridge checks (fbmcp bridge --pin).

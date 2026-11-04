@@ -13,6 +13,10 @@ admin PC: Claude Code ─────────────── HTTPS + Bear
 Design: [ADR-022](decisions/ADR-022-remote-tls.md) (phase 12 addendum).
 Plan and lab results: `../phase12_plan.md`.
 
+On an HQbird 2027 server fbmcp is already installed: turn remote mode on
+with `fbmcp ctl hqbird-install --allow-from <CIDR>` and one API key
+([`hqbird.md`](hqbird.md)). Sections 1–2 below are for other servers.
+
 ## 0. Before you start
 
 - On the server: Firebird and fbagent with the Local API on (fbagent ≥ 2.67).

@@ -83,11 +83,14 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           mkdir -p dist
-          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/fbmcp-windows-amd64.exe ./cmd/fbmcp
-          GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/fbmcp-linux-amd64 ./cmd/fbmcp
-          GOOS=linux   GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/fbmcp-linux-arm64 ./cmd/fbmcp
+          # ADR-038: the version comes from VERSION.
+          LD="-s -w -X main.version=$(tr -d '[:space:]' < VERSION)"
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="$LD" -o dist/fbmcp-windows-amd64.exe ./cmd/fbmcp
+          GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags="$LD" -o dist/fbmcp-linux-amd64 ./cmd/fbmcp
+          GOOS=linux   GOARCH=arm64 go build -trimpath -ldflags="$LD" -o dist/fbmcp-linux-arm64 ./cmd/fbmcp
           GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/fbmcp-tray-windows-amd64.exe ./cmd/fbmcp-tray
-          go build -trimpath -ldflags="-s -w" -o dist/fbmcpctl ./cmd/fbmcpctl
+          go build -trimpath -ldflags="$LD" -o dist/fbmcpctl ./cmd/fbmcpctl
+          test "$(./dist/fbmcp-linux-amd64 version)" = "{\"version\":\"$(tr -d '[:space:]' < VERSION)\"}"
           go version -m dist/fbmcp-linux-amd64 > dist/sbom-fbmcp-linux-amd64.txt
           go version -m dist/fbmcp-linux-arm64 > dist/sbom-fbmcp-linux-arm64.txt
           go version -m dist/fbmcp-windows-amd64.exe > dist/sbom-fbmcp-windows-amd64.txt

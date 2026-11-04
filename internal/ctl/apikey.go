@@ -1,4 +1,4 @@
-package main
+package ctl
 
 // fbmcpctl apikey (phase 12 B2): make, rotate and list remote-mode API keys.
 // A value is printed once (unless --no-show) and never by list.
@@ -18,7 +18,7 @@ import (
 
 func cmdAPIKey(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: fbmcpctl apikey new <identity> [--env NAME] [--max-tier N] [--profile autonomous] [--allow-from CIDR,...] [--secrets-dir DIR] [--no-show]\n       fbmcpctl apikey rotate <identity> [--env NAME | --config fbmcp.yaml] [--secrets-dir DIR] [--no-show]\n       fbmcpctl apikey list <fbmcp.yaml>")
+		fmt.Fprintln(os.Stderr, "usage: fbmcpctl apikey new <identity> [--env NAME] [--max-tier N] [--profile autonomous] [--allow-from CIDR,...] [--config fbmcp.yaml] [--secrets-dir DIR] [--no-show]\n       fbmcpctl apikey rotate <identity> [--env NAME | --config fbmcp.yaml] [--secrets-dir DIR] [--no-show]\n       fbmcpctl apikey list <fbmcp.yaml>")
 		return 2
 	}
 	switch args[0] {
@@ -86,6 +86,7 @@ func apikeyNew(args []string) int {
 	tier := fs.Int("max-tier", -1, "max tier 0..2 (default: 1, or 0 for --profile autonomous)")
 	profile := fs.String("profile", "", "identity profile: autonomous")
 	allow := fs.String("allow-from", "", "source addresses (IP or CIDR, comma separated)")
+	cfgPath := fs.String("config", "", "fbmcp.yaml: add the identity to it; secrets.dir is the default --secrets-dir")
 	dir := fs.String("secrets-dir", "", "store in this folder (fbmcp.yaml secrets.dir) instead of the keyring")
 	noShow := fs.Bool("no-show", false, "do not print the value (copy the secret file instead)")
 	force := fs.Bool("force", false, "replace an existing key of that name")
@@ -98,6 +99,22 @@ func apikeyNew(args []string) int {
 	if identity == "" {
 		fmt.Fprintln(os.Stderr, "apikey new: identity name required")
 		return 2
+	}
+	if *cfgPath != "" {
+		cfg, err := config.Load(*cfgPath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "apikey new:", err)
+			return 1
+		}
+		for _, id := range cfg.Identities {
+			if id.Name == identity {
+				fmt.Fprintf(os.Stderr, "apikey new: identity %s is already in %s; use apikey rotate --config\n", identity, *cfgPath)
+				return 1
+			}
+		}
+		if *dir == "" {
+			*dir = cfg.Secrets.Dir
+		}
 	}
 	name := *env
 	if name == "" {
@@ -133,7 +150,17 @@ func apikeyNew(args []string) int {
 		return 1
 	}
 	showKey(identity, value, *noShow, where)
-	fmt.Print("\nfbmcp.yaml identities: entry\n" + identityYAML(id))
+	if *cfgPath != "" {
+		// The key is stored first: an identity without its key would fail
+		// remote-mode Validate on the next reload.
+		if err := config.RegisterIdentity(*cfgPath, id); err != nil {
+			fmt.Fprintf(os.Stderr, "apikey new: the key is stored, but %s was not changed: %v\nadd this identities: entry by hand:\n%s", *cfgPath, err, identityYAML(id))
+			return 1
+		}
+		fmt.Printf("identity %s added to %s\n", identity, *cfgPath)
+	} else {
+		fmt.Print("\nfbmcp.yaml identities: entry\n" + identityYAML(id))
+	}
 	if id.Autonomous() && len(id.AllowFrom) == 0 {
 		fmt.Println("warning: autonomous identity without --allow-from; doctor --remote will flag it")
 	}

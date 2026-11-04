@@ -1,0 +1,7 @@
+# SHA1 thumbprint(s) of LAB test code-signing certificates (self-signed,
+# e.g. CN=IBSurgeon Software TEST), one per line.
+#
+# Used only by make-release.ps1 -Stage finish -AllowTestCert. Such a run is a
+# test run: the exe go to dist\fbmcp-<ver>-TESTSIGN, nothing is committed,
+# pushed or tagged. Never put the release certificate here, and never put a
+# test certificate in authenticode.pin.

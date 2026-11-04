@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/aleks/fbmcp/internal/audit"
 	"github.com/aleks/fbmcp/internal/backupsvc"
 	"github.com/aleks/fbmcp/internal/config"
+	"github.com/aleks/fbmcp/internal/ctl"
 	"github.com/aleks/fbmcp/internal/dbpool"
 	"github.com/aleks/fbmcp/internal/errdoc"
 	execpkg "github.com/aleks/fbmcp/internal/executor"
@@ -49,9 +51,29 @@ var registerExtra func(server *mcp.Server, cfg *config.Handle, pools *dbpool.Man
 
 var toolMeta = policy.SystemTools()
 
+// version is set at build time (ADR-038):
+//
+//	go build -ldflags "-X main.version=2027.2.20" ./cmd/fbmcp
+//
+// A build without it reports "dev".
+var version = "dev"
+
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "bridge" { // phase 12 B4: stdio → HTTPS relay
-		os.Exit(runBridge(os.Args[2:]))
+	ctl.Version = version
+	// /usr/local/bin/fbmcpctl is a link to fbmcp (docs/hqbird.md).
+	if b := strings.ToLower(filepath.Base(os.Args[0])); strings.HasPrefix(b, "fbmcpctl") {
+		os.Exit(ctl.Main(os.Args[1:]))
+	}
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "version": // fbagent VersionFromCLI: one JSON line, no config, no kernel
+			fmt.Printf("{\"version\":%q}\n", version)
+			return
+		case "ctl": // the operator CLI (fbmcpctl) in the same binary
+			os.Exit(ctl.Main(os.Args[2:]))
+		case "bridge": // phase 12 B4: stdio → HTTPS relay
+			os.Exit(runBridge(os.Args[2:]))
+		}
 	}
 	if maybeRunService() {
 		return
@@ -129,7 +151,7 @@ func runForegroundCtx(ctx context.Context) {
 	allFacts := state.CompositeFacts{engFacts, backupsvc.NewCatalog(st)}
 	eng := policy.New(toolMeta, allFacts, st)
 
-	server := mcp.NewServer(&mcp.Implementation{Name: "fbmcp", Version: "0.2.0"}, nil)
+	server := mcp.NewServer(&mcp.Implementation{Name: "fbmcp", Version: version}, nil)
 
 	type noArgs struct{}
 	type dbArg struct {
@@ -138,7 +160,7 @@ func runForegroundCtx(ctx context.Context) {
 
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_ping", Description: "liveness probe; names the server (server_name) and the caller identity"}, func(ctx context.Context, req *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
 		id := identity.Caller(ctx)
-		return text(fmt.Sprintf("pong\nserver: %s\nidentity: %s (max tier %d)\n", handle.Current().ServerNameOrDefault(), id.Name, id.MaxTier)), nil, nil
+		return text(fmt.Sprintf("pong\nserver: %s\nversion: %s\nidentity: %s (max tier %d)\n", handle.Current().ServerNameOrDefault(), version, id.Name, id.MaxTier)), nil, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_db_list", Description: "Tier 0: list registered databases with health"}, func(ctx context.Context, req *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {

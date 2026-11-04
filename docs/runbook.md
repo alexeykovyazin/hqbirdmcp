@@ -65,6 +65,11 @@ Every call passes policy → human confirmation → audited execution.
 In setup A the kernel lives only while a client runs, so **schedules fire
 only then**. Use B or C for unattended schedules (`nightly_verify`).
 
+**fbmcp in HQbird.** HQbird 2027 setups and fbagent install fbmcp by
+default: one service per server for all Firebird lines, set up by
+`fbmcp ctl hqbird-install`. On such a server do not follow §6–§8; read
+[`hqbird.md`](hqbird.md) (layout, remote mode with `--allow-from`, API keys).
+
 ## 4. Get the binaries
 
 Requirements: Go ≥ 1.25.13 (to build), CGO not needed; Firebird 2.5–5.0;

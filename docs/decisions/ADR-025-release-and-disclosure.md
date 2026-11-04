@@ -10,12 +10,12 @@ threat-model walkthrough is.
 
 ## Decision
 
-**Versioning.** SemVer. `0.x` until M6. First tagged release is `v1.0.0`.
-Patch releases for security and correctness; minor for additive tools.
-Breaking tool semantics ship as `<tool>_v2` (main plan Appendix B).
+**Versioning.** Replaced by [ADR-038](ADR-038-fbmcp-versions-in-hqbird.md)
+(2026-11-04): own `YYYY.N.N` line, first release `2027.2.20`. Breaking tool
+semantics still ship as `<tool>_v2` (main plan Appendix B).
 
-**Support window.** `v1.0.x` is the supported line until `v1.1.0` is tagged.
-Security fixes backport only to the current minor.
+**Support window.** The latest release is the supported one. Security
+fixes go into the next release; there are no backports.
 
 **Reporting.** [`SECURITY.md`](../../SECURITY.md). Preferred: private email
 to the address listed there. No public GitHub issue for unreleased vulns.

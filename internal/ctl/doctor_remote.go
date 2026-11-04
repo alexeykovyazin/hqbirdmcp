@@ -1,4 +1,4 @@
-package main
+package ctl
 
 // fbmcpctl doctor --remote <config> (phase 12 B6): one line per check of a
 // remote-mode install. Values of keys are never printed (F18).
@@ -173,6 +173,10 @@ func envNames(lines []string) map[string]bool {
 
 // checkListener: the port answers, it belongs to fbmcp, /healthz says ok
 // with the configured certificate.
+// listenerProcess is the process name the listen port must belong to (the
+// tests serve it from their own binary).
+var listenerProcess = "fbmcp"
+
 func checkListener(d *doctorOut, cfg *config.Config, pin string) {
 	host, port, err := net.SplitHostPort(cfg.Listen)
 	if err != nil {
@@ -193,10 +197,10 @@ func checkListener(d *doctorOut, cfg *config.Config, pin string) {
 	c.Close()
 	if owner := portOwner(port); owner == "" {
 		d.ok("listen", "%s answers", addr)
-	} else if strings.Contains(strings.ToLower(owner), "fbmcp") {
+	} else if strings.Contains(strings.ToLower(owner), listenerProcess) {
 		d.ok("listen", "%s answers (process %s)", addr, owner)
 	} else {
-		d.fail("listen", "%s is held by %s, not fbmcp", addr, owner)
+		d.fail("listen", "%s is held by %s, not %s", addr, owner, listenerProcess)
 	}
 	var served string
 	tc := &tls.Config{InsecureSkipVerify: true, // the pin compare below is the check

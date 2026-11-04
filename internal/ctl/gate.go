@@ -2,7 +2,7 @@
 // the eight M9 gate items with whatever evidence is mechanically checkable
 // from the source tree. It decides NOTHING — every item line is evidence or
 // "manual"; the human go/no-go is item 8.
-package main
+package ctl
 
 import (
 	"fmt"

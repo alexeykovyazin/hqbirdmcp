@@ -1,4 +1,4 @@
-package main
+package ctl
 
 import (
 	"github.com/aleks/fbmcp/internal/state"

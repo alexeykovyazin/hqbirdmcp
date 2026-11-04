@@ -68,3 +68,29 @@ func RegisterAgent(cfgPath string, ag Agent) error {
 	}
 	return configedit.AtomicWrite(cfgPath, string(body))
 }
+
+// RegisterIdentity appends one identities: entry to fbmcp.yaml (atomic
+// write, full Validate first). A running kernel picks it up on hot reload.
+func RegisterIdentity(cfgPath string, id APIIdentity) error {
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		return err
+	}
+	for _, existing := range cfg.Identities {
+		if existing.Name == id.Name {
+			return fmt.Errorf("identity %q already exists", id.Name)
+		}
+		if existing.KeyEnv == id.KeyEnv {
+			return fmt.Errorf("key_env %q is already used by identity %q", id.KeyEnv, existing.Name)
+		}
+	}
+	cfg.Identities = append(cfg.Identities, id)
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	body, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return configedit.AtomicWrite(cfgPath, string(body))
+}

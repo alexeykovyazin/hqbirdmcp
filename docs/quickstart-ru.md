@@ -11,6 +11,9 @@ fbagent. Каждое изменение проходит проверку по�
 Подробно: [claude-desktop.md](claude-desktop.md) (локально),
 [remote.md](remote.md) (удалённо), [tool-reference.md](tool-reference.md) (все инструменты).
 
+На серверах HQbird 2027 fbmcp уже установлен (одна служба на все линии
+Firebird): вместо разделов 3–4 смотрите [`hqbird.md`](hqbird.md).
+
 ## 1. Два режима
 
 | Режим | Где работает fbmcp | Когда выбрать |

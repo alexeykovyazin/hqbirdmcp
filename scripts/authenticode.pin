@@ -1,0 +1,14 @@
+# SHA1 thumbprint(s) of the IBSurgeon code-signing certificate, one per line.
+#
+# make-release.ps1 -Stage finish accepts a signed exe only when its
+# Authenticode signer has one of these thumbprints. Change this file only on
+# purpose, in its own commit (new certificate, renewal). The same thumbprint
+# is in fbagent scripts/authenticode.pin and goafts
+# ops/hqbird2027/authenticode.pin.
+#
+# Get the thumbprint from a file signed with the token:
+#   (Get-AuthenticodeSignature .\fbmcp-windows-amd64.exe).SignerCertificate.Thumbprint
+#
+# Empty: -Stage finish refuses every signed zip.
+# TOO IBSURGEON SOFTWARE, GlobalSign GCC R45 CodeSigning CA 2020, valid until 2027-07-13 (pinned 2026-10-25).
+D9FA4E026E3137386036B0D2BA457154AA4FD492

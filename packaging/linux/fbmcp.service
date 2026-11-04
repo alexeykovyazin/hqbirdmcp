@@ -26,10 +26,13 @@ PrivateTmp=true
 # "-" = skip a missing folder instead of failing with 226/NAMESPACE (F11).
 # State, backups and work folders as in fbmcp.yaml. work_dir must not be
 # under /tmp or /var/tmp: PrivateTmp hides them from the Firebird server.
-# /opt/hqbird-fbagent: fb_agent_config_set writes its candidate file there.
+# /opt/hqbird (HQbird 2027 agent folders fbagent-<line>) and
+# /opt/hqbird-fbagent (older agent): fb_agent_config_set writes its
+# candidate file next to agent_config.json. On HQbird servers
+# "fbmcp ctl hqbird-install" writes its own unit (docs/hqbird.md).
 # fbmcp.yaml stays read-only: fb_db_register / fb_agent_register then refuse
 # with a clear message (F21); see docs/remote.md "Config writes".
-ReadWritePaths=-/var/lib/fbmcp -/var/lib/fbmcp-backups -/var/lib/fbmcp-work -/opt/hqbird-fbagent
+ReadWritePaths=-/var/lib/fbmcp -/var/lib/fbmcp-backups -/var/lib/fbmcp-work -/opt/hqbird -/opt/hqbird-fbagent
 
 [Install]
 WantedBy=multi-user.target

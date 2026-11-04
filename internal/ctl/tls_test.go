@@ -1,7 +1,8 @@
-package main
+package ctl
 
 import (
 	"crypto/tls"
+	"github.com/aleks/fbmcp/internal/config"
 	"net"
 	"os"
 	"path/filepath"
@@ -90,5 +91,38 @@ func TestAPIKeyNewRotateFileSource(t *testing.T) {
 	t.Setenv("FBMCP_KEY_LAB", "x")
 	if code := apikeyRotate([]string{"lab", "--secrets-dir", dir, "--no-show"}); code != 1 {
 		t.Fatalf("rotate with env set: exit %d, want 1 (F2)", code)
+	}
+}
+
+// apikey new --config adds the identity to fbmcp.yaml and stores the key in
+// its secrets.dir, so "apikey new, then hqbird-install" turns remote mode on.
+func TestAPIKeyNewConfig(t *testing.T) {
+	root := t.TempDir()
+	sec := filepath.Join(root, "secrets")
+	cfgPath := filepath.Join(root, "fbmcp.yaml")
+	body := "state:\n  dir: " + filepath.ToSlash(filepath.Join(root, "state")) + "\nsecrets:\n  dir: " + filepath.ToSlash(sec) + "\n" +
+		"instances:\n  - id: fb5\n    addr: localhost:3055\n    bin_dir: C:/HQbird/Firebird50\n"
+	if err := os.MkdirAll(sec, 0o700); err != nil { // hqbird-install made it
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	os.Unsetenv("FBMCP_KEY_OPS")
+	if code := apikeyNew([]string{"ops", "--max-tier", "2", "--config", cfgPath, "--no-show"}); code != 0 {
+		t.Fatalf("new --config: exit %d", code)
+	}
+	if _, err := os.Stat(filepath.Join(sec, "FBMCP_KEY_OPS")); err != nil {
+		t.Fatalf("key not in secrets.dir: %v", err)
+	}
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Identities) != 1 || cfg.Identities[0].Name != "ops" || cfg.Identities[0].KeyEnv != "FBMCP_KEY_OPS" || cfg.Identities[0].EffectiveMaxTier() != 2 {
+		t.Fatalf("identities = %+v", cfg.Identities)
+	}
+	if code := apikeyNew([]string{"ops", "--config", cfgPath, "--force", "--no-show"}); code != 1 {
+		t.Fatalf("second new for the same identity: exit %d, want 1", code)
 	}
 }
