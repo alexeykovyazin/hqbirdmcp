@@ -1,198 +1,406 @@
-# fbmcp Operator Runbook (P6.3 T1)
+# fbmcp — full guide: install and use
 
-Audience: the person operating fbmcp in production — who did **not** build it.
-Everything here is mechanical; no Go or Firebird internals knowledge required.
-Paths use the dev-host layout (`E:\Projects_2026\AIDBA\fbmcp`, state dir
-`C:\HQbirdData\output\fbmcp-spike\state`); substitute your own.
+Audience: the person who installs and runs fbmcp, and did **not** build it.
+No Go or Firebird internals knowledge is needed. State as of 2026-11-04
+(phases 1–12: local and remote mode, fbagent bridge, result grid).
 
-Related docs: [`docs/tool-reference.md`](tool-reference.md) (generated tool
-catalog — source of truth), [`docs/claude-desktop.md`](claude-desktop.md)
-(MCP client wiring), [`../README.md`](../README.md), ADRs under
-[`docs/decisions/`](decisions/).
+Short versions: [English](quickstart-en.md) | [Русский](quickstart-ru.md) |
+[Português](quickstart-pt.md). Details: [remote.md](remote.md) (remote
+mode), [agent-bridge.md](agent-bridge.md) (fbagent),
+[tool-reference.md](tool-reference.md) (every tool, its tier and arguments),
+[claude-desktop.md](claude-desktop.md) (client wiring on the dev host),
+ADRs in [decisions/](decisions/).
 
 ---
 
-## 1. Safety model in one paragraph
+## 1. What fbmcp is
 
-Every mutating call passes policy → human confirmation → audited execution.
-Risk tiers: **0** reads (no confirmation), **1** routine mutations (confirmed
-in-band by the person driving the MCP client via `fb_confirm`), **≥ 2**
-dangerous (shutdown, replace-restore, config writes, service control) —
-**out-of-band confirmation only**: the LLM client can never approve these,
-by design. Tier 3 (`fb_db_drop`) is disabled entirely. A confirmation is
-only as trustworthy as the channel it arrives on (principle §2.7).
+fbmcp is an MCP server for Firebird 2.5–5.0 on Windows and Linux. An MCP
+client (Claude Desktop, Claude Code, Cursor, Codex, ZCode, others) uses it
+to work as a DBA: monitoring, backups and verified restores, SQL/DDL/DCL,
+indexes, users and grants, `firebird.conf`, a scheduler, migrations, and the
+HQbird fbagent. It has **98 tools**: 51 read-only (Tier 0), 32 Tier 1,
+14 Tier 2, 1 Tier 3 (disabled).
 
-## 2. Install
-
-1. **Binaries**: `fbmcp.exe` (server), `fbmcpctl.exe` (operator CLI),
-   `fbmcp-tray.exe` (Approve/Deny popup) — from `dist\` (build via
-   [`packaging/rebuild-install.ps1`](../packaging/rebuild-install.ps1), which
-   also merges the MCP client config).
-2. **Config**: one YAML (`fbmcp.yaml`; example:
-   [`packaging/fbmcp.yaml.example`](../packaging/fbmcp.yaml.example)).
-   Databases are referenced by registry id only — never paths in client
-   conversations. Secrets come from environment variables (never the YAML); an unset variable falls back to the OS keyring entry `fbmcp/<ENV_NAME>` (`fbmcpctl secret set <ENV_NAME>`, value via stdin; env always wins).
-3. **State directory**: created once; holds `state.json`, `audit.jsonl`,
-   `approvals\`, `instance.lock`. One state dir = one kernel (extra piped
-   clients attach to it automatically).
-4. **Posture check**: `fbmcpctl doctor <config>` must end `doctor: green`
-   before going live. Host-privilege posture scripts live in
-   [`packaging/posture/`](../packaging/posture/); `fbmcpctl setup --write-posture <config>`
-   records the `posture.verified` marker — `fb_service_start/stop/restart`
-   refuse to run without it.
-5. **Windows service** (optional): [`packaging/windows/install-service.ps1`](../packaging/windows/install-service.ps1)
-   (SCM Stop drains the kernel gracefully). Tray for Tier ≥ 2 popups:
-   [`packaging/windows/install-tray.ps1`](../packaging/windows/install-tray.ps1).
-6. **MCP clients**: stdio (default; leave `listen` empty) — see
-   [`docs/claude-desktop.md`](claude-desktop.md). Remote HTTPS (fbmcp on the
-   DB server, admins connect with API keys or `fbmcp bridge`): follow
-   [`docs/remote.md`](remote.md) — install scripts, keys, certificate,
-   autonomous agents, troubleshooting (ADR-022).
-
-## 3. Daily operations
-
-| Task | Tool / command |
+| Binary | Role |
 |---|---|
-| Liveness | `fb_ping`; instance health `fb_service_status` |
-| List databases + online/offline | `fb_db_list`, then `fb_db_health` per db |
-| Transaction health (OIT/OAT gaps) | `fb_transactions` |
-| Backup (gbak, async job) | `fb_backup_start` → note the job id → `fb_job_status` |
-| Verify a backup | `fb_restore_test` (restore into the work dir — this is what marks the catalog entry *verified*; gbak has no standalone verify) |
-| Restore drill (real recovery practice) | verified backup → maintenance window (`fb_window_open`) → `fb_restore_replace` (Tier 2, OOB approval) |
-| Scheduled nightly backup+verify | `fb_schedule_create` with `target=nightly_verify` (durable grant; fires without re-confirmation — ADR-023) |
-| Retention sweep | `fb_retention_run` — **default is keep-everything** (`keep_days: 0` = never delete, ADR-016); dry-run unless `dry_run=false` |
-| Config inspect/diff | `fb_config_get`, `fb_config_diff`; apply edits with `fb_config_reload` (hot reload, no restart) |
-| Schema/DDL work | `fb_write` — every statement is classified, tiered, previewable (`mode=preview`) before execution |
+| `fbmcp` | The server. Default: MCP over stdio (a client starts it). `-serve`: no stdio, runs as a service (scheduler, attach socket, HTTPS listener if configured). `fbmcp bridge`: a stdio client for a remote fbmcp |
+| `fbmcpctl` | Operator CLI: `doctor`, `approve`, `secret`, `apikey`, `tls`, `verify`, `status`, `ping`, `setup`, `repair`, `gate` |
+| `fbmcp-tray` | Windows tray: Approve/Deny pop-up for requests that need an operator |
 
-Jobs are async: submit → poll `fb_job_status`. On the same database they
-serialize (one at a time); overlapping tools refuse while a job is live.
+One **kernel** per state directory. A second client with the same config
+does not start a second kernel: it attaches to the running one.
 
-## 4. Confirmations — the part you must not get wrong
+## 2. Safety model
 
-- **Tier 1**: the client shows a request id + token; the human says yes →
-  the call to `fb_confirm` completes it. Fine for routine work.
-- **Tier ≥ 2**: in-band confirmation is *rejected by the kernel* ("channel
-  policy"). The only paths are out-of-band:
-  - CLI marker: `fbmcpctl approve <state_dir> [request_id]` — writes a marker
-    into `approvals\` that the kernel consumes within ~2 s; or
-  - the tray popup (`fbmcp-tray`), Approve/Deny.
-  - **There is no approval web page and there must never be one** — an
-    approvable surface the LLM can reach defeats the design.
-- Wrong-channel or wrong-identity attempts do **not** consume the pending
-  action; it stays available until its TTL (15 min) or `fb_cancel`.
-- After approval of e.g. `fb_restore_replace`: expect downtime — the kernel
-  closes pools, snapshots the file to `<db>.pre-restore`, restores, revalidates,
-  and brings the database back online (AutoReopen), even if the kernel itself
-  is killed mid-flight (chaos-verified, claims C7a/C7b).
+Every call passes policy → human confirmation → audited execution.
 
-## 5. Update / rebuild
+| Tier | What | How it is confirmed |
+|---|---|---|
+| 0 | Reads (engine-enforced read-only transactions) | Not needed |
+| 1 | Routine changes: DML/DDL, backup, users, grants | In-band: the client shows a request id and a token; the person agrees; the client calls `fb_confirm` |
+| 2 | High impact: service control, restore-replace, `firebird.conf`, exclusive window, registration, agent restarts | **Out-of-band only:** the tray or `fbmcpctl approve`. The client can never approve it |
+| 3 | Critical (`fb_db_drop`) | Disabled by design |
 
-One command (see [`packaging/rebuild-install.ps1`](../packaging/rebuild-install.ps1)):
+- Tier 2 usually needs an open maintenance window (`fb_window_open`, on
+  the same `db`) and a **verified** backup younger than 24 hours. The
+  refusal says what is missing.
+- A pending request expires after **15 minutes**. A wrong-channel attempt
+  does not consume it; `fb_cancel` removes it.
+- Every gated tool accepts `mode: preview`: it shows the impact and does
+  nothing.
+- Every decision (allow, pending, approved, denied) goes to the
+  hash-chained `audit.jsonl`.
+- There is no approval web page, and there must never be one: a page the
+  model can reach would break the design.
+
+## 3. Choose a setup
+
+| Setup | Where fbmcp runs | Use it when | Section |
+|---|---|---|---|
+| A. Local stdio | Your PC; the client starts it | One admin, Firebird on this PC or in the LAN | §6 |
+| B. Local service | Windows service on the DB host (`-serve`) | Schedules must run when no client is open | §7 |
+| C. Remote | Service on the DB server, HTTPS + API keys | Several admins, a distant server, autonomous agents | §8 |
+
+In setup A the kernel lives only while a client runs, so **schedules fire
+only then**. Use B or C for unattended schedules (`nightly_verify`).
+
+## 4. Get the binaries
+
+Requirements: Go ≥ 1.25.13 (to build), CGO not needed; Firebird 2.5–5.0;
+fbagent ≥ 2.67 with the Local API for the agent tools (optional).
 
 ```powershell
-cd E:\Projects_2026\AIDBA\fbmcp
-.\packaging\rebuild-install.ps1 -WhatIf     # dry run
-.\packaging\rebuild-install.ps1 -Force       # stop old processes, rebuild, update dist\, merge client config, doctor
+git clone https://github.com/alexeykovyazin/hqbirdmcp.git
+cd hqbirdmcp
+$env:CGO_ENABLED = "0"
+go build -trimpath -ldflags "-s -w" -o dist/fbmcp.exe ./cmd/fbmcp
+go build -trimpath -ldflags "-s -w" -o dist/fbmcpctl.exe ./cmd/fbmcpctl
+go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist/fbmcp-tray.exe ./cmd/fbmcp-tray
 ```
 
-MCP clients load servers **at startup only** — restart the client after an
-update. Old binaries are kept as `*.exe~` in `dist\`.
+Linux binaries (cross-build from Windows, or build on Linux without
+`GOOS`):
 
-## 6. Crash / restart recovery — what self-heals and what doesn't
+```powershell
+$env:GOOS = "linux"; $env:GOARCH = "amd64"
+go build -trimpath -ldflags "-s -w" -o dist/fbmcp ./cmd/fbmcp
+go build -trimpath -ldflags "-s -w" -o dist/fbmcpctl ./cmd/fbmcpctl
+```
 
-Verified by the chaos harness (`internal/killharness`); do not re-derive:
+Checksums: `Get-FileHash dist/*` or `sha256sum dist/*`. More targets:
+[packaging/README.md](../packaging/README.md). Put the binaries in a folder
+of their own (examples use `C:\fbmcp\`).
 
-| Situation after a crash/kill | Behavior on restart | Operator action |
+## 5. Configure `fbmcp.yaml`
+
+Full example: [packaging/fbmcp.yaml.example](../packaging/fbmcp.yaml.example).
+Minimal Windows config:
+
+```yaml
+state:
+  dir: C:\ProgramData\fbmcp\state
+# secrets:
+#   dir: C:\ProgramData\fbmcp\secrets   # setups B and C
+instances:
+  - id: fb5
+    addr: localhost:3050
+    bin_dir: C:\Program Files\Firebird\Firebird_5_0   # folder with gbak, gfix, gstat
+    version: "5.0"
+    service: FirebirdServerDefaultInstance            # Linux: firebird.opt_fb50
+    service_user: SYSDBA                              # instance tools (fb_firebird_log, ...)
+    service_secret_env: FBMCP_FB5_SERVICE_PW
+databases:
+  - id: main                 # tools and chats use the id, never the path
+    instance: fb5
+    path: D:\Data\main.fdb
+    backup_dir: D:\fbmcp\backups
+    work_dir: D:\fbmcp\work  # restore tests; Linux: not under /tmp
+    ro_user: FBMCP_RO        # a read-only Firebird user
+    ro_secret_env: FBMCP_MAIN_RO_PW
+    admin_user: SYSDBA
+    admin_secret_env: FBMCP_MAIN_ADMIN_PW
+notify:
+  webhook_url: ""            # optional: a chat webhook for pending requests
+retention:
+  keep_days: 0               # 0 = never delete backups
+```
+
+**Secrets.** The YAML holds only variable **names**. fbmcp looks up each
+value in this order: environment variable → file `<secrets.dir>/<NAME>` →
+OS keyring of the account that runs fbmcp.
+
+```powershell
+C:\fbmcp\fbmcpctl.exe secret set FBMCP_MAIN_RO_PW                                     # keyring of the current user (setup A)
+C:\fbmcp\fbmcpctl.exe secret set --dir C:\ProgramData\fbmcp\secrets FBMCP_MAIN_RO_PW  # secrets dir (setups B, C)
+```
+
+The value is read from stdin (type it, then Ctrl+Z, Enter; Linux Ctrl+D).
+A service account (LocalSystem, `NT SERVICE\...`) cannot see your keyring:
+use `secrets.dir` for services. A changed secret file applies in a few
+seconds without a restart.
+
+**Read-only user.** Create a separate Firebird user for `ro_user`. SYSDBA as
+the RO user is for dev only; `doctor` warns about it.
+
+**Live reload.** fbmcp applies changes to `fbmcp.yaml` by itself (file
+watcher), or on `fb_config_reload`. No client or process restart. A reload
+waits for jobs on the changed databases (30 s), then applies. Refused:
+a `state.dir` change, duplicate database paths, an insecure remote config.
+
+**Check:** `C:\fbmcp\fbmcpctl.exe doctor C:\fbmcp\fbmcp.yaml` must end with
+`doctor: green` (remote mode: `doctor --remote`, no FAIL lines).
+
+## 6. Setup A — local stdio
+
+Use absolute paths. Do not set `listen`. Restart the client after a config
+change: clients load servers only at start.
+
+| Client | Where | Entry |
 |---|---|---|
-| Job was running/queued | Marked `interrupted` ("re-submit if safe"); never auto-resumed | Re-submit if needed |
-| Pending gate action, unconfirmed | Replayed from `state.json` (TTL still applies) | Confirm or let it expire |
-| Workflow mid-`restore_replace` | AutoReopen resumes: restores, validates, database back online; `<db>.pre-restore` kept | Verify `fb_db_health` = online; clean up `.pre-restore` after confidence |
-| Workflow mid-`shutdown_window` | AutoReopen finishes the `gfix -online` tail | Verify online |
-| Stale `instance.lock` (dead PID) | Reclaimed automatically via the OS file lock | none |
-| `state.json` corrupt | **Kernel refuses to start.** Evidence copy kept as `state.json.corrupt-<ts>`; every start keeps failing until you intervene | Inspect the `.corrupt-*` copy; remove/repair `state.json` deliberately — there is no silent empty restart |
-| `audit.jsonl` corrupt/truncated | **Kernel refuses to start** (head-sidecar mismatch) | See §7 incident: audit-verify first; treat as tamper signal, not bad luck |
-| Clock rewound (NTP) | Scheduler skips ("clock behind last fire"); no double-fire | none |
+| Claude Desktop | Settings → Developer → Edit Config (`%APPDATA%\Claude\claude_desktop_config.json`) | `"mcpServers": {"fbmcp": {"command": "C:\\fbmcp\\fbmcp.exe", "args": ["-config", "C:\\fbmcp\\fbmcp.yaml"]}}` |
+| Claude Code | command line | `claude mcp add --transport stdio fbmcp -- "C:\fbmcp\fbmcp.exe" -config "C:\fbmcp\fbmcp.yaml"` |
+| Cursor | `%USERPROFILE%\.cursor\mcp.json` or `.cursor\mcp.json` in the project | same JSON as Claude Desktop |
+| Codex | `codex mcp add fbmcp -- C:\fbmcp\fbmcp.exe -config C:\fbmcp\fbmcp.yaml` or `%USERPROFILE%\.codex\config.toml` | `[mcp_servers.fbmcp]` `command = 'C:\fbmcp\fbmcp.exe'` `args = ["-config", 'C:\fbmcp\fbmcp.yaml']` |
+| ZCode | `.zcode\config.json` in the project | `"mcp": {"servers": {"fbmcp": { ...same command and args... }}}` |
 
-Rule of thumb: the kernel fails **closed** on anything it cannot prove
-intact. A restart loop is a finding, not a bug — look at stderr.
+Passwords are in the keyring (§5), so no `env` block is needed. If you put
+a password into a client `env` block anyway, keep that file out of git.
 
-## 7. Incident playbooks
+Then start the tray for Tier 2 approvals:
+`C:\fbmcp\fbmcp-tray.exe C:\fbmcp\fbmcp.yaml` (at every logon:
+`.\packaging\windows\install-tray.ps1 -Bin C:\fbmcp\fbmcp-tray.exe -Config C:\fbmcp\fbmcp.yaml`).
 
-### 7.1 "Something is wrong with a database" — start here
-1. `fbmcpctl doctor <config>` — config, secrets, dirs, posture, schedules.
-2. `fb_db_list` → `fb_db_health <db>`; `fb_service_status` for the instance.
-3. `fb_sessions` / `fb_transactions` for attachment or OAT-gap trouble.
+Smoke test in the client: "call `fb_ping`" (shows the server name and your
+identity with its max tier), then "`fb_db_list`", then "`fb_db_health` for main".
 
-### 7.2 Suspected tamper or crash corruption — audit first
-1. Verify the chain before touching anything:
-   `fbmcpctl verify <config>` — rehashes every entry and the head sidecar;
-   prints `audit chain OK: N entries` or `BROKEN` with the reason.
-2. The kernel itself also refuses to start on any chain mismatch — a
-   startup refusal naming `audit:` is the same signal.
-3. If verification fails: preserve the whole state dir (it is the evidence),
-   then investigate. Do not delete `audit.jsonl` to "fix" the startup — that
-   destroys the tamper record.
+## 7. Setup B — local Windows service
 
-### 7.3 Restore drill (practice quarterly)
-1. `fb_backup_start` → wait `fb_job_status` = succeeded.
-2. `fb_restore_test` → catalog entry becomes *verified* (also proves the
-   backup is restorable).
-3. Open a window: `fb_window_open` (Tier ≥ 2 tools require it).
-4. `fb_restore_replace` → approve out-of-band (§4). Downtime until online.
-5. Verify: `fb_db_health`, then a real read (`fb_schema_list`, `fb_info`).
-6. The previous database file remains as `<db>.pre-restore` until removed.
+Elevated PowerShell:
 
-### 7.4 Kernel down / MCP client cannot connect
-1. `fbmcpctl status <config>` — is a kernel alive? Check `instance.lock` PID.
-2. Stderr of the service/client log names the failing component (config,
-   state, audit, attach). Each failure message names the file.
-3. If another fbmcp is active: extra piped clients **attach** automatically;
-   a second *kernel* fails fast by design — run one per state dir.
+```powershell
+.\packaging\windows\install-service.ps1 -Bin C:\fbmcp\fbmcp.exe -Config C:\fbmcp\fbmcp.yaml
+sc.exe start fbmcp
+```
 
-### fbagent bridge down or failing (phase 9)
+- The service runs `fbmcp -serve` as LocalSystem, restarts on failure, and
+  stops cleanly on a service stop.
+- Use `secrets.dir` for passwords (§5).
+- Lock the folder: only SYSTEM and Administrators may write to `C:\fbmcp`
+  (the script prints the `icacls` command). A folder made under `C:\` lets
+  every user change the files, and the service runs them as SYSTEM.
+- The tray user and local stdio clients need read/write on the state dir:
+  `icacls C:\ProgramData\fbmcp\state /grant "<user>:(OI)(CI)M"`. A stdio
+  client with the same config then attaches to the service kernel.
+- Readiness: `C:\fbmcp\fbmcpctl.exe ping C:\fbmcp\fbmcp.yaml`.
+- Log: `<state_dir>\fbmcp.log` (5 × 10 MiB; crashes in `fbmcp-crash.log`).
 
-The agent bridge tools proxy the co-located fbagent Local API. Full doc:
-[agent-bridge.md](agent-bridge.md).
+For a service that admins reach over the network, use setup C instead.
 
-| Signal | Meaning / fix |
+## 8. Setup C — remote (HTTPS + API keys)
+
+Full procedure: [remote.md](remote.md). Short form:
+
+**Windows server** (elevated):
+1. Binaries and `fbmcp.yaml` in `C:\fbmcp\` (template: remote.md §3: `listen`, `tls`, `identities`, `allowed_origins`, `secrets.dir`).
+2. `C:\fbmcp\fbmcpctl.exe tls selfsign --out C:\fbmcp\tls --dns srv1 --ip 10.0.0.5 --grant "NT SERVICE\fbmcp"` — note the pin `sha256:...`.
+3. One key per person or agent: `C:\fbmcp\fbmcpctl.exe apikey new alice --max-tier 2 --secrets-dir C:\ProgramData\fbmcp\secrets` (printed once; paste the printed YAML into `identities:`).
+4. Passwords and agent tokens: `fbmcpctl secret set --dir C:\ProgramData\fbmcp\secrets NAME`.
+5. `.\packaging\windows\install-remote.ps1 -Port 8443 -AllowFrom 10.0.0.0/24 -FirebirdService FirebirdServerDefaultInstance -WhatIf`, then without `-WhatIf`. It creates the service, the firewall rule, the folder ACLs and the Firebird service rights.
+6. `C:\fbmcp\fbmcpctl.exe doctor --remote C:\fbmcp\fbmcp.yaml` → no FAIL; `curl.exe --cacert C:\fbmcp\tls\tls.crt https://srv1:8443/healthz` → `ok`.
+7. Tray for the approver: `.\packaging\windows\install-tray.ps1`.
+
+**Linux server** (root): copy `fbmcp`, `fbmcpctl` and `packaging/linux/`, then
+
+```sh
+install -m 0755 fbmcp fbmcpctl /usr/local/bin/
+sh packaging/linux/install-remote.sh --user firebird --port 8443 --allow-from 10.0.0.0/24 --dry-run
+sh packaging/linux/install-remote.sh --user firebird --port 8443 --allow-from 10.0.0.0/24
+```
+
+The script makes the folders, the certificate, a first config with an
+`admin` key (printed once), the systemd unit, the sudo rule for the
+Firebird unit and the ufw rule, then runs `doctor --remote`. Add
+`databases:` and `agents:` to `/etc/fbmcp/fbmcp.yaml`. Approvals on Linux:
+`sudo -u firebird fbmcpctl approve /var/lib/fbmcp [id]` (no tray).
+
+**Admin PC:**
+1. `C:\fbmcp\fbmcpctl.exe secret set FBMCP_KEY_SRV1` (the key you got).
+2. Any stdio client (Claude Desktop, Cursor, Codex, ZCode): the §6 entry
+   with these `args`:
+   `["bridge", "--url", "https://srv1:8443/mcp", "--key-env", "FBMCP_KEY_SRV1", "--pin", "sha256:<hex>"]`.
+   The pin checks the server key, so a self-signed certificate needs no CA
+   setup.
+3. Claude Code can also connect directly over HTTP (`.mcp.json`
+   `"type": "http"`, header `Authorization: Bearer ${FBMCP_KEY_SRV1}`,
+   `NODE_EXTRA_CA_CERTS` for a self-signed cert). Do not pass the key with
+   `claude mcp add --header`: it is stored in plain text.
+4. Test: `fb_ping` shows the server name and your identity.
+
+**Autonomous agents** (OpenClaw and similar): a separate key with
+`apikey new openclaw-1 --profile autonomous --allow-from 10.0.0.21/32`.
+Read-only by default; every Tier 1 request waits for an operator, and
+`fb_confirm` from the agent is refused. Limits: remote.md §6–7.
+
+## 9. fbagent bridge (optional)
+
+The agent tools (`fb_agent_status`, `fb_agent_job_run`, ...) use the HQbird
+fbagent Local API on the same host.
+They are off until `agents:` has an entry.
+
+1. In the client: "`fb_agent_discover`". It lists the local agents with
+   `base_url`, `instance_id` and the suggested token name. It never reads
+   tokens.
+2. The operator stores the agent's **`local_api.token`** (not
+   `agent.auth_token`): `fbmcpctl secret set [--dir <secrets.dir>] FBMCP_AGENT_TOKEN_P<port>`.
+   Never type a token into the chat.
+3. In the client: "`fb_agent_register` for that agent" → approve in the
+   tray. fbmcp adds the `agents:` entry, reloads and checks the identity.
+4. Test: `fb_agent_status`, `fb_agent_instances`.
+
+`fb_agent_config_set` (change job settings: backup, sweep, ...) also needs
+`config_path` on the entry and read access to the live `agent_config.json`
+plus create rights on its folder. That file holds the token and Firebird
+credentials, so this grant is the operator's decision
+([agent-bridge.md](agent-bridge.md)). When the agent check fails, the tool
+writes nothing.
+
+## 10. Daily use
+
+Ask the client in plain words; it picks the tools. Examples:
+
+| Task | Tools |
 |---|---|
-| `agent-unreachable` | Agent service not running, `local_api.enabled: false`, or wrong `base_url` (default listen `127.0.0.1:(10000 + firebird.port)` → 13050 for 3050). |
-| `agent-auth` on every call | Keyring/env token ≠ agent's `local_api.token`. Re-set: `fbmcpctl secret set FBMCP_AGENT_TOKEN`. |
-| Tier-2 bridge tool denied "no open maintenance window" | The window must be opened for the SAME registry `db` you pass to the tool (`fb_window_open`, then pass that `db`). |
-| `agent-timeout` on restarts | `agents[].timeout_seconds` (default 130) must exceed the agent's `restart_timeout_seconds` (default 120); raise it. |
-| `agent-payload-too-large` on artifacts | Over the 8 MiB decoded cap — retry with `tail=N` (db-scoped `*/latest`). |
+| Is everything up? | `fb_ping`, `fb_db_list`, `fb_db_health`, `fb_service_status` |
+| Read data | `fb_query` (read-only, rows + plan + per-table stats; a grid in MCP-Apps clients); check a draft with `fb_query_check` |
+| Sessions, long transactions | `fb_sessions`, `fb_transactions`, `fb_session_kill` (Tier 1) |
+| Slow query | `fb_analyze_query`, `fb_index_advice` → apply with `fb_write`; `fb_agent_perf_report` |
+| Backup | `fb_backup_start` → job id → `fb_job_status` |
+| Verify a backup | `fb_restore_test` (restores into `work_dir`, marks the backup verified) |
+| Nightly backup + verify | `fb_schedule_create` with `target=nightly_verify` (confirmed once; setup B or C) |
+| Schema / DDL | `fb_schema_list`, `fb_describe`, `fb_write` (each statement is classified and tiered), `fb_diff_schema` |
+| Migrations | `fb_migration_status`, `fb_migration_plan`, `fb_migration_apply` |
+| Server config | `fb_config_get`, `fb_config_diff`, `fb_config_set` (Tier 2) |
+| Logs | `fb_firebird_log` |
+| Capacity | `fb_trends`, `fb_gstat`, `fb_index_stats` |
 
-Governance reminder: the fbmcp gate approves the *request*; the job runs
-under the agent's own scheduler — check the agent's logs for execution.
+Jobs are async: submit → `fb_job_status`. Jobs on one database run one at
+a time. A job survives an fbmcp restart only as `interrupted`: submit it
+again if it is still needed.
 
-## 8. Troubleshooting table
+`fb_config_set` changes only its own line in `firebird.conf` (comments,
+indentation and line ends stay), keeps the old file as `firebird.conf.prev`,
+and never restarts Firebird. Restart with `fb_service_restart` (Tier 2): it
+waits until the service is stopped and running again.
+
+## 11. Operator tasks
+
+| Task | Command |
+|---|---|
+| List / approve requests | `fbmcpctl approve <state_dir>`; `fbmcpctl approve <state_dir> <id>` (or the tray) |
+| Rotate a key | `fbmcpctl apikey rotate alice --config <fbmcp.yaml>` (old key stops in seconds) |
+| List keys | `fbmcpctl apikey list <fbmcp.yaml>` (names, sources, tiers; never values) |
+| Remove a person | delete the `identities:` entry, then `fbmcpctl secret drop --dir <dir> NAME` |
+| Renew the certificate | `fbmcpctl tls selfsign --renew --out <dir> --dns ... --ip ...` (pin unchanged, no restart) |
+| Check the audit chain | `fbmcpctl verify <fbmcp.yaml>` |
+| Is the kernel alive? | `fbmcpctl ping <fbmcp.yaml>`; `fbmcpctl status <fbmcp.yaml>` (offline read of the state) |
+| Allow service control | `packaging/posture/verify.ps1` or `verify.sh`, then `fbmcpctl setup --write-posture <fbmcp.yaml>` |
+| Upgrade | stop the service (or the clients), replace the binaries, start, `doctor` |
+| Remove | Windows: `sc.exe stop fbmcp; sc.exe delete fbmcp; Remove-NetFirewallRule -DisplayName fbmcp-remote`. Linux: remote.md §10. Keep the state dir (audit) unless the owner says otherwise |
+
+Dev host only: `.\packaging\rebuild-install.ps1 -Force` rebuilds `dist\`,
+stops and replaces the running binaries (old ones kept as `*.exe~`),
+merges client configs and runs `doctor`.
+
+## 12. Crash and restart recovery
+
+Verified by the chaos harness (`internal/killharness`).
+
+| After a crash or kill | On restart | Operator action |
+|---|---|---|
+| Job was running or queued | Marked `interrupted`; never resumed | Submit again if needed |
+| Pending request, not confirmed | Restored from `state.json` (TTL still applies) | Confirm or let it expire |
+| `fb_restore_replace` in progress | Finishes: restore, validate, database online; `<db>.pre-restore` kept | Check `fb_db_health`; delete `.pre-restore` later |
+| `fb_shutdown_window` in progress | Finishes the `gfix -online` step | Check online |
+| Stale `instance.lock` | Taken over automatically | None |
+| `state.json` corrupt | **Kernel refuses to start**; copy kept as `state.json.corrupt-<ts>` | Inspect; repair or remove `state.json` on purpose (`fbmcpctl repair` rebuilds schedule grants from the audit) |
+| `audit.jsonl` corrupt or cut | **Kernel refuses to start** | §13.2: treat it as a tamper signal |
+| Clock moved back | Scheduler skips; no double run | None |
+| Windows service process killed | SCM restarts it in about 5 s | None |
+
+The kernel fails **closed** on anything it cannot prove intact. A restart
+loop is a finding: read the log.
+
+## 13. Incident playbooks
+
+### 13.1 Something is wrong with a database
+1. `fbmcpctl doctor <config>`: config, secrets, folders, posture, schedules.
+2. `fb_db_list` → `fb_db_health <db>`; `fb_service_status` for the instance.
+3. `fb_sessions`, `fb_transactions` for attachment or OAT-gap problems;
+   `fb_firebird_log` for engine errors.
+
+### 13.2 Suspected tamper or corruption: audit first
+1. `fbmcpctl verify <config>` → `audit chain OK: N entries` or `BROKEN` with the reason.
+2. If it fails: keep the whole state dir (it is the evidence), then
+   investigate. Do not delete `audit.jsonl` to make the kernel start.
+
+### 13.3 Restore drill (every quarter)
+1. `fb_backup_start` → `fb_job_status` = succeeded.
+2. `fb_restore_test` → the backup is verified.
+3. `fb_window_open` for the database.
+4. `fb_restore_replace` → approve out-of-band. Downtime until online.
+5. Check: `fb_db_health`, then a real read (`fb_schema_list`, `fb_info`).
+6. The old file stays as `<db>.pre-restore` until you delete it.
+
+### 13.4 Client cannot connect
+1. `fbmcpctl ping <config>`, `fbmcpctl status <config>`.
+2. Read the client's MCP log (stdio) or `<state_dir>\fbmcp.log` / `journalctl -u fbmcp` (service).
+3. "another fbmcp instance is active": one kernel per state dir. Piped
+   clients attach by themselves; a second kernel fails fast by design.
+
+## 14. Troubleshooting
 
 | Symptom | Meaning / fix |
 |---|---|
-| Tier-2 "confirmation rejected: channel policy" | Expected in-band. Use `fbmcpctl approve` or the tray (§4). |
-| "another fbmcp instance is active" | A kernel holds the lock. Use `fbmcpctl status` to find it; do not start a second kernel on the same state dir. |
-| Attach fails with "no attach endpoint" | The lock-holder is an old binary or died between lock and attach listener. Stop stale processes; retry. |
-| `Error loading plugin MySQLEngine … module could not be found` when attaching | **Misleading**: on HQBird builds this usually means the database *file does not exist* (engine-provider scan fails first). Check the file path before blaming plugins. |
-| Job stuck "running" | Same-db jobs serialize; check a live job via `fb_job_status`, or `fb_cancel`. Interrupted-after-restart jobs never resume alone. |
-| `fb_restore_replace` denied: preconditions | Need a *verified* backup < 24 h old: run `fb_backup_start` + `fb_restore_test`, and open a maintenance window. |
-| Service control denied | `posture.verified` marker missing (run `fbmcpctl setup --write-posture`) or the OS account lacks service rights (ADR-017). |
-| Tools missing for one database only | That database is offline (`fb_db_health`) — tools degrade per-database by design. |
-| Raw `DROP INDEX` via `fb_write` denied: "no open maintenance window" | Statement classification puts bare `DROP INDEX` at Tier 2. Use `fb_index_drop` instead (Tier 1, in-band confirm; refuses indexes backing a constraint). Same for a script mixing e.g. `DROP` + `CREATE INDEX`: split it per tier. |
-| New index on a column never picked up by the optimizer | Two causes seen on FB 4/5: (1) fresh statistics — run `SET STATISTICS INDEX` (`fb_index_rebuild` action=statistics); (2) `ORDER BY <col> DESC` will not walk an ascending index on FB — create a `DESCENDING` index for it. |
-| A bridge tool fails with `agent-*` codes | See the fbagent bridge playbook above (§7); the bridge is disabled unless an `agents:` entry exists in `fbmcp.yaml`. |
+| Tools do not appear | JSON syntax, absolute paths, full client restart; the client's MCP log |
+| Server exits at once | `fbmcpctl doctor`; a missing secret; a service cannot read your keyring (use `secrets.dir`) |
+| Tier 2 "confirmation rejected: channel policy" | Expected in the chat. Approve in the tray or with `fbmcpctl approve` |
+| Tier 2 "no open maintenance window" | `fb_window_open` for the **same** `db` you pass to the tool |
+| `fb_restore_replace` denied: preconditions | Needs a verified backup < 24 h: `fb_backup_start` + `fb_restore_test`, and a window |
+| Service control denied | `posture.verified` missing (`fbmcpctl setup --write-posture`) or the account has no rights on the Firebird service |
+| `fb_config_set`: cannot write | The account may not change that file (Linux unit `ProtectSystem=strict`; Windows ACL). Edit by hand, or see remote.md §8 |
+| Tray shows nothing | It shows only requests that need an operator; check the tray user's rights on the state dir and `tray.log` there |
+| 401 (remote) | Wrong key, or the server did not load it: `apikey list`, `doctor --remote` |
+| 403 (remote) | Source IP not in `allow_from` / firewall, or an Origin header not in `allowed_origins` |
+| 429 (remote) | Limits; wait for `Retry-After` |
+| Pin mismatch | The server key changed; get the new pin from the server admin |
+| `agent-unreachable` | Agent service down, `local_api.enabled: false`, or wrong `base_url` (default `127.0.0.1:(10000 + firebird port)`) |
+| `agent-auth` | The stored token is not the agent's `local_api.token`; set it again |
+| `agent-timeout` on restarts | `agents[].timeout_seconds` (130) must be larger than the agent's `restart_timeout_seconds` (120) |
+| `Error loading plugin MySQLEngine …` on attach | On HQbird this usually means the database **file does not exist**; check the path |
+| Bare `DROP INDEX` in `fb_write` needs a window | It is Tier 2 there; use `fb_index_drop` (Tier 1; refuses constraint indexes) |
+| New index not used | Run statistics (`fb_index_rebuild` action=statistics); `ORDER BY … DESC` needs a `DESCENDING` index |
+| Tools fail for one database only | It is offline (`fb_db_health`); tools degrade per database |
 
-## 9. State directory reference
+## 15. State directory reference
 
 | Path | Meaning |
 |---|---|
-| `state.json` (+ `.tmp`, `.corrupt-*`) | Kernel snapshot: pendings, jobs, catalog, workflows, schedules. Atomic writes; corrupt ⇒ refuses to start |
-| `audit.jsonl` (+ `.head`) | Hash-chained audit log. `.head` sidecar detects truncation |
-| `approvals\<request_id>` | OOB approval markers (consumed within ~2 s) |
-| `instance.lock` | Single-kernel lock (PID inside is diagnostic only) |
-| `attach.addr`, `attach.token` | Attach endpoint for extra piped MCP clients |
+| `state.json` (+ `.tmp`, `.corrupt-*`) | Pending requests, jobs, backup catalog, workflows, schedules. Corrupt ⇒ refuses to start |
+| `audit.jsonl` (+ `.head`) | Hash-chained audit log; `.head` detects truncation |
+| `events.jsonl` | Job events (`job.succeeded`, `job.failed` with the message) |
+| `approvals\`, `denials\` | Out-of-band decisions (tray / `fbmcpctl approve`), used within ~2 s |
+| `instance.lock` | One-kernel lock |
+| `attach.addr`, `attach.token` | Attach endpoint for extra stdio clients |
+| `fbmcp.log`, `fbmcp-crash.log` | Service log (rotated) and crash output |
+| `query-log.jsonl` | Every `fb_query` call |
+| `trends\` | Sampler history for `fb_trends` |
+| `config-journal\` | `fb_config_set` history (old and new value) |
+| `posture.verified` | Marker that allows service control |
+| `tray.log` | Tray errors |
 
-## 10. Walkthrough status (P6.3 T6)
+## 16. Walkthrough status
 
-Pending: a solo (24 h cooling + checklist) or two-engineer independent
-walkthrough on a fresh Windows host using this runbook only. Findings fold
-back into this file.
+Pending (M1): a walkthrough on a fresh Windows host using only this guide.
+Findings go back into this file. Lab results for remote mode (Linux host,
+fresh VM, Windows service): [findings/phase12-lab-2026-11-03.md](findings/phase12-lab-2026-11-03.md).

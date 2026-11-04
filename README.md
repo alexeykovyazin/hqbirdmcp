@@ -8,7 +8,7 @@ Every mutating call passes a tiered policy engine and a **human confirmation
 gate** before it touches the database, and every decision is written to a
 hash-chained audit log. 98 tools in total (51 read-only, 32 Tier 1, 14
 Tier 2, 1 disabled-by-design Tier 3; phase 9 added 24 fbagent bridge
-proxies — [docs/agent-bridge.md](fbmcp/docs/agent-bridge.md)). `fb_query`
+proxies — [docs/agent-bridge.md](docs/agent-bridge.md)). `fb_query`
 results also render as a **sortable grid inside the chat** on MCP-Apps
 clients (`ui://fbmcp/results/{id}` resources, phase 10 /
 [docs/grid.md](docs/grid.md)); `fb_query_check` compile-validates drafts
@@ -22,7 +22,7 @@ a reachable Firebird 2.5–5.0 server. Windows and Linux.
 ```bash
 # checkout
 git clone https://github.com/alexeykovyazin/hqbirdmcp.git
-cd hqbirdmcp/fbmcp
+cd hqbirdmcp
 ```
 
 ```powershell
@@ -47,7 +47,9 @@ On the dev host, `packaging/rebuild-install.ps1` does the whole loop in one
 command: rebuild all four binaries into `dist\`, stop/update/restart the
 running kernel and tray, merge the MCP client config, then `fbmcpctl doctor`.
 
-Short install and usage guide (Claude Desktop/Code, Cursor, Codex, ZCode,
+**Full install and usage guide:** [docs/runbook.md](docs/runbook.md)
+(local, Windows service and remote setups; all clients; daily use; recovery;
+troubleshooting). Short version (Claude Desktop/Code, Cursor, Codex, ZCode,
 remote mode): [English](docs/quickstart-en.md) |
 [Русский](docs/quickstart-ru.md) | [Português](docs/quickstart-pt.md).
 
