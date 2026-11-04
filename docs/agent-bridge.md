@@ -66,7 +66,9 @@ can resume later with Tier-0 `fb_agent_operation`.
 ## Phase 11: discovery, logs, perf reports, job settings
 
 **Discover and register.** `fb_agent_discover` (Tier 0) reads the Windows
-service registry (`HQbirdFBAgent-*` → `--run <agent_config.json>`), derives
+service registry (`HQbirdFBAgent-*` → `--run <agent_config.json>`) or, on Linux,
+the systemd units whose ExecStart runs `fbagent --run <config>` (listen line
+from the journal when the config is not readable), derives
 `base_url` and `instance_id` by the agent's own listen rule, and never reads
 tokens. Per candidate it prints the two follow-up steps:
 

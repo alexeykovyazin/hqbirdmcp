@@ -148,7 +148,7 @@ func (gt *gatedTools) requestGated(ctx context.Context, meta policy.ToolMeta, im
 	gt.mu.Unlock()
 	var b strings.Builder
 	b.WriteString(gate.ImpactStatement(p))
-	if meta.Tier <= 1 {
+	if meta.Tier <= 1 && !p.OOBOnly {
 		fmt.Fprintf(&b, "In-band token (Tier 1 only): %s\n", gate.IssueToken(p.ID, argHash))
 	}
 	return b.String()

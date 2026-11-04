@@ -108,7 +108,7 @@ func policyResource() string {
 func configResource(cfg *config.Config) string {
 	ids := map[string]int{}
 	for _, i := range cfg.Identities {
-		ids[i.Name] = i.MaxTier
+		ids[i.Name] = i.EffectiveMaxTier()
 	}
 	b, _ := json.MarshalIndent(map[string]any{
 		"state_dir":                 cfg.State.Dir,
@@ -117,6 +117,7 @@ func configResource(cfg *config.Config) string {
 		"local_max_tier":            cfg.LocalMaxTierOrDefault(),
 		"identity_names_and_tiers":  ids,
 		"notify_webhook_configured": cfg.Notify.WebhookURL != "",
+		"server_name":               cfg.ServerNameOrDefault(),
 		"note":                      "secret values live in environment variables; this resource names none of them",
 	}, "", " ")
 	return string(b)

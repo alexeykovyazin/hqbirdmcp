@@ -27,6 +27,9 @@ var (
 	ErrUnknown       = errors.New("unknown request id")
 	ErrIdentity      = errors.New("token bound to a different identity")
 	ErrChannelPolicy = errors.New("this tier cannot be confirmed through the in-band channel")
+	// ErrOOBOnly: the requesting identity has inband_confirm: false (or
+	// profile autonomous), so even Tier 1 needs the out-of-band surface.
+	ErrOOBOnly = errors.New("this identity cannot confirm in-band (inband_confirm: false / profile autonomous) — an operator must approve out of band (tray or fbmcpctl approve)")
 )
 
 // Channels (§5.5). Trust increases downward.
@@ -73,13 +76,23 @@ func (g *Gate) Request(id policy.Identity, db string, meta policy.ToolMeta, impa
 		ImpactText:    impactText,
 		ArgHash:       argHash,
 		Preconditions: toMap(preconds),
+		OOBOnly:       id.OOBOnly,
 	}
 	if err := g.st.AddPending(p); err != nil {
 		return state.PendingAction{}, err
 	}
 	killpoint.Hit("gate.pending") // chaos harness: kill with an unconsumed pending action on disk
-	g.aud.Log(audit.Entry{Identity: id.Name, Database: db, Tool: meta.Name, Tier: meta.Tier, Decision: "pending",
-		Detail: map[string]interface{}{"request_id": p.ID, "expires_in": g.ttl.String()}})
+	detail := map[string]interface{}{"request_id": p.ID, "expires_in": g.ttl.String()}
+	if id.RemoteAddr != "" { // phase 12 B0.8
+		detail["remote_addr"] = id.RemoteAddr
+	}
+	if id.Profile != "" {
+		detail["profile"] = id.Profile
+	}
+	if p.OOBOnly {
+		detail["oob_only"] = true
+	}
+	g.aud.Log(audit.Entry{Identity: id.Name, Database: db, Tool: meta.Name, Tier: meta.Tier, Decision: "pending", Detail: detail})
 	if g.onPending != nil {
 		g.onPending(p)
 	}
@@ -144,6 +157,12 @@ func (g *Gate) Confirm(requestID, identity, channel, token string) (state.Pendin
 			Detail: map[string]interface{}{"request_id": requestID, "reason": "channel policy: tier >= 2 requires out-of-band"}})
 		return state.PendingAction{}, fmt.Errorf("%w (tier %d)", ErrChannelPolicy, p.Tier)
 	}
+	if p.OOBOnly && channel != ChannelOutOfBand { // phase 12 B8
+		g.requeue(p)
+		g.aud.Log(audit.Entry{Identity: identity, Database: p.Database, Tool: p.Tool, Tier: p.Tier, Decision: "denied", Channel: channel,
+			Detail: map[string]interface{}{"request_id": requestID, "reason": "identity is out-of-band only"}})
+		return state.PendingAction{}, ErrOOBOnly
+	}
 	if channel == ChannelInBand {
 		if token == "" {
 			g.requeue(p)
@@ -201,6 +220,10 @@ func ImpactStatement(p state.PendingAction) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\nTier: %d | Database: %s | Request ID: %s\nExpires: %s\n",
 		p.ImpactText, p.Tier, p.Database, p.ID, p.Expires.UTC().Format(time.RFC3339))
+	if p.OOBOnly && p.Tier <= 1 {
+		fmt.Fprintf(&b, "Accepted confirmation channels: %s (this identity is out-of-band only)\n", ChannelOutOfBand)
+		return b.String()
+	}
 	fmt.Fprintf(&b, "Accepted confirmation channels: %s\n", strings.Join(AllowedChannels(p.Tier), ", "))
 	return b.String()
 }

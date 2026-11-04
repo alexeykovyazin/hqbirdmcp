@@ -124,7 +124,7 @@ func (gt *gatedTools) requestWrite(ctx context.Context, id policy.Identity, dbID
 	gt.mu.Unlock()
 	var b strings.Builder
 	b.WriteString(gate.ImpactStatement(p))
-	if meta.Tier <= 1 {
+	if meta.Tier <= 1 && !p.OOBOnly {
 		fmt.Fprintf(&b, "In-band token (Tier 1 only): %s\n", gate.IssueToken(p.ID, argHash))
 	} else {
 		b.WriteString("Confirmation: out-of-band only (fbmcp-tray popup or fbmcpctl approve)\n")
@@ -162,7 +162,7 @@ func registerIndexTools(server *mcp.Server, gt *gatedTools) {
 				return "", err
 			}
 			if adv != "" {
-				gt.aud.Log(audit.Entry{Identity: "local", Database: dbID, Tool: "fb_index_rebuild", Tier: 1, Decision: "approved",
+				gt.aud.Log(audit.Entry{Identity: identity.Caller(ctx).Name, Database: dbID, Tool: "fb_index_rebuild", Tier: 1, Decision: "approved",
 					Detail: map[string]interface{}{"advisory_id": adv, "index": idx}})
 			}
 			return msg, nil
@@ -183,7 +183,7 @@ func registerIndexTools(server *mcp.Server, gt *gatedTools) {
 				return "", err
 			}
 			if adv != "" {
-				gt.aud.Log(audit.Entry{Identity: "local", Database: dbID, Tool: "fb_index_drop", Tier: 1, Decision: "approved",
+				gt.aud.Log(audit.Entry{Identity: identity.Caller(ctx).Name, Database: dbID, Tool: "fb_index_drop", Tier: 1, Decision: "approved",
 					Detail: map[string]interface{}{"advisory_id": adv, "index": idx}})
 			}
 			return msg, nil

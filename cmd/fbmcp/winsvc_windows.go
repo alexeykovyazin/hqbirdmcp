@@ -39,6 +39,7 @@ func maybeRunService() bool {
 	if err != nil || !ok {
 		return false
 	}
+	serviceMode = true // B0.4: the SCM's stdin is not a client; never take the stdio transport
 	_ = svc.Run("fbmcp", &winService{})
 	return true
 }

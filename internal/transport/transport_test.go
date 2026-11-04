@@ -43,7 +43,7 @@ func TestAuthBattery(t *testing.T) {
 		}
 		w.WriteHeader(204)
 	})
-	ids := []config.APIIdentity{{Name: "op", KeyEnv: "X", MaxTier: 2}}
+	ids := []config.APIIdentity{{Name: "op", KeyEnv: "X", MaxTier: config.Tier(2)}}
 	secrets := map[string]string{"op": "good-key"}
 	h := Auth(ids, secrets, []string{"https://console.example"}, config.Limits{MaxSessions: 64, RatePerMinute: 100000, RateBurst: 100000}, okH)
 
@@ -85,7 +85,7 @@ func TestAuthBattery(t *testing.T) {
 
 func TestAuthenticatorReplace(t *testing.T) {
 	okH := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })
-	a := NewAuthenticator([]config.APIIdentity{{Name: "op", KeyEnv: "X", MaxTier: 2}}, map[string]string{"op": "old-key"}, nil, config.Limits{})
+	a := NewAuthenticator([]config.APIIdentity{{Name: "op", KeyEnv: "X", MaxTier: config.Tier(2)}}, map[string]string{"op": "old-key"}, nil, config.Limits{})
 	h := a.Handler(okH)
 	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	req.Header.Set("Authorization", "Bearer old-key")
@@ -94,7 +94,7 @@ func TestAuthenticatorReplace(t *testing.T) {
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("old key: %d", rr.Code)
 	}
-	a.Replace([]config.APIIdentity{{Name: "op", KeyEnv: "Y", MaxTier: 2}}, map[string]string{"op": "new-key"}, nil)
+	a.Replace([]config.APIIdentity{{Name: "op", KeyEnv: "Y", MaxTier: config.Tier(2)}}, map[string]string{"op": "new-key"}, nil)
 	req = httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	req.Header.Set("Authorization", "Bearer old-key")
 	rr = httptest.NewRecorder()

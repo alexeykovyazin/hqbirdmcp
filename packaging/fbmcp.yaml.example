@@ -1,24 +1,35 @@
 # Skeleton — localhost-only, empty schedules, notifications = local log, remote off.
-# Secrets stay in the environment (ADR-009). SYSDBA-as-RO is dev-only.
+# Secrets: env, then secrets.dir files, then the OS keyring (ADR-009, phase 12).
+# SYSDBA-as-RO is dev-only. Remote mode: docs/remote.md.
 state:
   dir: /var/lib/fbmcp
+# server_name: srv1         # shown by fb_ping / fb_db_list / webhooks (default: host name)
+# secrets:
+#   dir: /etc/fbmcp/secrets # one file per secret name, mode 0600; changes apply without a restart
 # listen: 10.0.0.5:8443   # remote: requires TLS + identities (ADR-022)
 # tls:
-#   cert: /etc/fbmcp/tls.crt
-#   key: /etc/fbmcp/tls.key
+#   cert: /etc/fbmcp/tls/tls.crt   # fbmcpctl tls selfsign --out /etc/fbmcp/tls ...
+#   key: /etc/fbmcp/tls/tls.key
 # identities:
 #   - name: operator
-#     key_env: FBMCP_API_KEY
-#     max_tier: 2
+#     key_env: FBMCP_KEY_OPERATOR  # fbmcpctl apikey new operator --max-tier 2 --secrets-dir ...
+#     max_tier: 2                  # default 1 (0 for profile autonomous)
+#   - name: openclaw-1
+#     key_env: FBMCP_KEY_OPENCLAW_1
+#     profile: autonomous          # read-only by default; Tier 1 needs an operator (out of band)
+#     allow_from: [10.0.0.21/32]   # TCP peer address; X-Forwarded-For is ignored
 # allowed_origins:          # REQUIRED in remote mode (default-deny, E.1):
 #   - https://ops.example   # any Origin header not listed gets 403; remote
 #                           # starts refuse without at least one entry. Requests
 #                           # WITHOUT an Origin header always pass (non-browser).
 # local_max_tier: 2         # ceiling of the stdio-local identity (0-2)
 # limits:                   # per-identity remote-mode bounds (E.1; 0 = default)
-#   max_sessions: 8         # concurrent in-flight authenticated requests
+#   max_sessions: 8         # concurrent in-flight calls (GET streams not counted)
+#   max_streams: 2          # held GET streams
 #   rate_per_minute: 30     # sustained request budget (token bucket)
 #   rate_burst: 60          # burst size
+#   max_live_sessions: 16   # open MCP sessions per key
+#   session_idle_minutes: 30  # global only: an idle session is closed
 notify:
   webhook_url: ""
   webhook_secret_env: ""
@@ -27,15 +38,17 @@ retention:
 instances:
   - id: fb5
     addr: localhost:3050
-    bin_dir: /opt/firebird
+    bin_dir: /opt/firebird/bin    # the folder that holds gbak, gfix, gstat
     version: "5.0"
-    service: firebird
+    service: firebird             # systemd unit, e.g. firebird.opt_fb50 (systemctl list-units 'firebird*')
+    service_user: SYSDBA          # Services API user for instance tools (fb_firebird_log, ...)
+    service_secret_env: FBMCP_FB5_SERVICE_PW
 databases:
   - id: example
     instance: fb5
     path: /var/lib/firebird/example.fdb
-    backup_dir: /var/backups/firebird
-    work_dir: /var/tmp/fbmcp-work
+    backup_dir: /var/lib/fbmcp-backups
+    work_dir: /var/lib/fbmcp-work   # not under /tmp or /var/tmp (the unit's PrivateTmp hides them from Firebird)
     ro_user: FBMCP_RO
     ro_secret_env: FBMCP_EXAMPLE_RO_PW
     admin_user: SYSDBA

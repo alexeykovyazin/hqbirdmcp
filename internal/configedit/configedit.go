@@ -3,7 +3,10 @@
 package configedit
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -53,6 +56,7 @@ type Line struct {
 type File struct {
 	Path  string
 	Lines []Line
+	CRLF  bool // the source used CRLF line ends; String keeps them
 }
 
 // ParseFile reads a firebird.conf-style file, preserving comments/blanks.
@@ -89,7 +93,7 @@ func Parse(path, src string) File {
 		l.Key, l.Value = key, val
 		lines = append(lines, l)
 	}
-	return File{Path: path, Lines: lines}
+	return File{Path: path, Lines: lines, CRLF: strings.Contains(src, "\r\n")}
 }
 
 func splitAssign(s string) (string, string, bool) {
@@ -99,8 +103,9 @@ func splitAssign(s string) (string, string, bool) {
 	}
 	key := s[:i]
 	rest := strings.TrimLeftFunc(s[i:], func(r rune) bool { return r == '=' || unicode.IsSpace(r) })
-	// strip trailing comment
-	if j := strings.IndexAny(rest, "#;"); j >= 0 {
+	// strip a trailing comment: only # (";" separates list values, as in
+	// TempDirectories = c:\temp;d:\temp)
+	if j := strings.Index(rest, "#"); j >= 0 {
 		rest = strings.TrimSpace(rest[:j])
 	}
 	return key, rest, true
@@ -115,22 +120,59 @@ func (f File) Get(name string) (string, bool) {
 	return "", false
 }
 
+// String writes every line as it was read (Raw), so a set changes only its
+// own line: comments, indentation and line ends of the others stay (phase
+// 12 test W: re-rendering all lines dropped inline comments and CRLF).
 func (f File) String() string {
+	nl := "\n"
+	if f.CRLF {
+		nl = "\r\n"
+	}
 	var b strings.Builder
 	for i, l := range f.Lines {
 		if i > 0 {
-			b.WriteByte('\n')
+			b.WriteString(nl)
 		}
-		if l.Key != "" {
+		if l.Raw == "" && l.Key != "" {
 			fmt.Fprintf(&b, "%s = %s", l.Key, l.Value)
 		} else {
 			b.WriteString(l.Raw)
 		}
 	}
 	if !strings.HasSuffix(b.String(), "\n") && len(f.Lines) > 0 {
-		b.WriteByte('\n')
+		b.WriteString(nl)
 	}
 	return b.String()
+}
+
+// fbInt reads a firebird.conf integer as Firebird does: digits with an
+// optional k, m or g suffix (x1024, x1024², x1024³). fb_config_get shows
+// such values ("DefaultDbCachePages = 40K"), so fb_config_set must take
+// them back (phase 12 test W).
+func fbInt(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	mult := int64(1)
+	if n := len(s); n > 0 {
+		switch s[n-1] {
+		case 'k', 'K':
+			mult = 1 << 10
+		case 'm', 'M':
+			mult = 1 << 20
+		case 'g', 'G':
+			mult = 1 << 30
+		}
+		if mult > 1 {
+			s = s[:n-1]
+		}
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	if n > math.MaxInt64/mult || n < math.MinInt64/mult {
+		return 0, fmt.Errorf("%s: out of range", s)
+	}
+	return n * mult, nil
 }
 
 // ValidateSet checks the registry and type/range.
@@ -150,14 +192,14 @@ func ValidateSet(name, value string) (Param, error) {
 	}
 	switch p.Kind {
 	case "int":
-		n, err := strconv.Atoi(value)
+		n, err := fbInt(value)
 		if err != nil {
-			return p, fmt.Errorf("%s: not an int", name)
+			return p, fmt.Errorf("%s: not an int (digits, optional k/m/g suffix)", name)
 		}
-		if p.Min != nil && n < *p.Min {
+		if p.Min != nil && n < int64(*p.Min) {
 			return p, fmt.Errorf("%s: below min", name)
 		}
-		if p.Max != nil && n > *p.Max {
+		if p.Max != nil && n > int64(*p.Max) {
 			return p, fmt.Errorf("%s: above max", name)
 		}
 	case "bool":
@@ -181,17 +223,40 @@ func ValidateSet(name, value string) (Param, error) {
 	return p, nil
 }
 
+// renderAssign rewrites one assignment line with a new value; it keeps the
+// indentation and an inline # comment with the space before it.
+func renderAssign(raw, key, value string) string {
+	body := strings.TrimLeftFunc(raw, unicode.IsSpace)
+	line := raw[:len(raw)-len(body)] + key + " = " + value
+	if j := strings.Index(body, "#"); j >= 0 {
+		gap := body[len(strings.TrimRightFunc(body[:j], unicode.IsSpace)):j]
+		if gap == "" {
+			gap = " "
+		}
+		line += gap + body[j:]
+	}
+	return line
+}
+
 // Apply sets name=value, returning a new File (original unchanged).
 func (f File) Apply(name, value string) File {
-	out := File{Path: f.Path, Lines: append([]Line(nil), f.Lines...)}
+	out := File{Path: f.Path, Lines: append([]Line(nil), f.Lines...), CRLF: f.CRLF}
 	for i := range out.Lines {
 		if strings.EqualFold(out.Lines[i].Key, name) {
 			out.Lines[i].Key = name
 			out.Lines[i].Value = value
+			out.Lines[i].Raw = renderAssign(out.Lines[i].Raw, name, value)
 			return out
 		}
 	}
-	out.Lines = append(out.Lines, Line{Key: name, Value: value})
+	add := Line{Key: name, Value: value}
+	if n := len(out.Lines); n > 0 && out.Lines[n-1].Raw == "" {
+		// the file ends with a newline: add before that empty last line
+		last := out.Lines[n-1]
+		out.Lines = append(out.Lines[:n-1], add, last)
+		return out
+	}
+	out.Lines = append(out.Lines, add)
 	return out
 }
 
@@ -200,7 +265,7 @@ func AtomicWrite(path string, body string) error {
 	prev := path + ".prev"
 	neu := path + ".new"
 	if err := os.WriteFile(neu, []byte(body), 0o644); err != nil {
-		return err
+		return notWritable(path, err)
 	}
 	if _, err := os.Stat(path); err == nil {
 		data, err := os.ReadFile(path)
@@ -208,7 +273,7 @@ func AtomicWrite(path string, body string) error {
 			return err
 		}
 		if err := os.WriteFile(prev, data, 0o644); err != nil {
-			return err
+			return notWritable(path, err)
 		}
 	}
 	if err := os.Rename(neu, path); err != nil {
@@ -219,6 +284,15 @@ func AtomicWrite(path string, body string) error {
 		}
 	}
 	return nil
+}
+
+// notWritable explains a write the service account cannot do (phase 12
+// F21: the Linux unit has ProtectSystem=strict and a root-owned config).
+func notWritable(path string, err error) error {
+	if errors.Is(err, fs.ErrPermission) || strings.Contains(err.Error(), "read-only file system") {
+		return fmt.Errorf("cannot write %s: %v — the fbmcp service account may not change this file (Linux unit: ProtectSystem=strict, root-owned folder; Windows service: read-only rights). Make the change by hand (fbmcp.yaml reloads by itself), or allow it: docs/remote.md §Config writes", path, err)
+	}
+	return err
 }
 
 // AppendJournal writes one JSONL record under stateDir/config-journal/.
@@ -238,11 +312,25 @@ func AppendJournal(stateDir, instance, path, name, oldV, newV string) error {
 	return err
 }
 
-// ConfPath returns the default firebird.conf for an install root.
+// ConfPath returns the default firebird.conf for an instance bin_dir.
 func ConfPath(binDir string) string {
-	return filepath.Join(binDir, "firebird.conf")
+	return filepath.Join(confDir(binDir), "firebird.conf")
 }
 
 func DatabasesConfPath(binDir string) string {
-	return filepath.Join(binDir, "databases.conf")
+	return filepath.Join(confDir(binDir), "databases.conf")
+}
+
+// confDir is the folder with the conf files. Windows Firebird 3+ keeps them
+// beside the binaries (bin_dir = install root); Linux (and Windows 2.5) keep
+// the binaries in <root>/bin and the conf files in <root> (phase 12 lab:
+// bin_dir /opt/fb50/bin, conf /opt/fb50/firebird.conf).
+func confDir(binDir string) string {
+	if _, err := os.Stat(filepath.Join(binDir, "firebird.conf")); err == nil {
+		return binDir
+	}
+	if strings.EqualFold(filepath.Base(binDir), "bin") {
+		return filepath.Dir(binDir)
+	}
+	return binDir
 }

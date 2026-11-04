@@ -44,8 +44,10 @@ only as trustworthy as the channel it arrives on (principle §2.7).
    (SCM Stop drains the kernel gracefully). Tray for Tier ≥ 2 popups:
    [`packaging/windows/install-tray.ps1`](../packaging/windows/install-tray.ps1).
 6. **MCP clients**: stdio (default; leave `listen` empty) — see
-   [`docs/claude-desktop.md`](claude-desktop.md). Remote HTTP requires TLS +
-   API key identities (ADR-022) and refuses non-localhost binds without them.
+   [`docs/claude-desktop.md`](claude-desktop.md). Remote HTTPS (fbmcp on the
+   DB server, admins connect with API keys or `fbmcp bridge`): follow
+   [`docs/remote.md`](remote.md) — install scripts, keys, certificate,
+   autonomous agents, troubleshooting (ADR-022).
 
 ## 3. Daily operations
 

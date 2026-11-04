@@ -41,6 +41,7 @@ type PendingAction struct {
 	ImpactText       string            `json:"impact_text"`
 	ArgHash          string            `json:"arg_hash"`                // re-validation: changed args ⇒ re-request
 	Preconditions    map[string]string `json:"preconditions,omitempty"` // name → human-readable requirement
+	OOBOnly          bool              `json:"oob_only,omitempty"`      // phase 12 B8: requester may not confirm in-band
 	ConfirmedChannel string            `json:"-"`                       // set by gate.Confirm; not persisted
 }
 

@@ -28,7 +28,7 @@ func FuzzBearer(f *testing.F) {
 // (non-browser clients send none).
 func TestC11EmptyOriginDefaultDeny(t *testing.T) {
 	okH := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })
-	ids := []config.APIIdentity{{Name: "op", KeyEnv: "X", MaxTier: 2}}
+	ids := []config.APIIdentity{{Name: "op", KeyEnv: "X", MaxTier: config.Tier(2)}}
 	h := Auth(ids, map[string]string{"op": "good-key"}, nil, config.Limits{}, okH)
 
 	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
@@ -53,7 +53,7 @@ func TestC11EmptyOriginDefaultDeny(t *testing.T) {
 // burst are 429.
 func TestC11RateLimitEnforced(t *testing.T) {
 	okH := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })
-	ids := []config.APIIdentity{{Name: "op", KeyEnv: "X", MaxTier: 2}}
+	ids := []config.APIIdentity{{Name: "op", KeyEnv: "X", MaxTier: config.Tier(2)}}
 	limits := config.Limits{MaxSessions: 64, RatePerMinute: 30, RateBurst: 3}
 	h := Auth(ids, map[string]string{"op": "good-key"}, nil, limits, okH)
 	saw429 := false
@@ -86,7 +86,7 @@ func TestC11SessionCapEnforced(t *testing.T) {
 		<-release
 		w.WriteHeader(204)
 	})
-	ids := []config.APIIdentity{{Name: "op", KeyEnv: "X", MaxTier: 2}}
+	ids := []config.APIIdentity{{Name: "op", KeyEnv: "X", MaxTier: config.Tier(2)}}
 	limits := config.Limits{MaxSessions: 1, RatePerMinute: 100000, RateBurst: 100000}
 	h := Auth(ids, map[string]string{"op": "good-key"}, nil, limits, okH)
 

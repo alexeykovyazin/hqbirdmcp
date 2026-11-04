@@ -3,6 +3,8 @@ package identity
 import (
 	"context"
 	"testing"
+
+	"github.com/aleks/fbmcp/internal/config"
 )
 
 func TestContextRoundTrip(t *testing.T) {
@@ -46,10 +48,38 @@ func TestSetLocalMaxTierClamps(t *testing.T) {
 }
 
 func TestAPIKeyDefaultTier(t *testing.T) {
-	if id := APIKey("x", 0); id.MaxTier != 2 {
-		t.Fatalf("zero max_tier should default to 2, got %d", id.MaxTier)
+	// Phase 12 B0.1 (F1): 0 is read-only, never Tier 2.
+	if id := APIKey("x", 0); id.MaxTier != 0 {
+		t.Fatalf("max_tier 0 must stay 0 (read-only), got %d", id.MaxTier)
+	}
+	if id := APIKey("x", 7); id.MaxTier != 2 {
+		t.Fatalf("max_tier above 2 must clamp to 2, got %d", id.MaxTier)
 	}
 	if id := Operator(); id.MaxTier != 3 || id.Kind != "operator" {
 		t.Fatalf("operator = %+v", id)
 	}
 }
+
+func TestFromConfigTierAndProfile(t *testing.T) {
+	cases := []struct {
+		id      config.APIIdentity
+		tier    int
+		oobOnly bool
+	}{
+		{config.APIIdentity{Name: "a"}, 1, false},                          // missing → 1 (R5)
+		{config.APIIdentity{Name: "a", MaxTier: config.Tier(0)}, 0, false}, // 0 → read-only
+		{config.APIIdentity{Name: "a", MaxTier: config.Tier(2)}, 2, false},
+		{config.APIIdentity{Name: "a", Profile: "autonomous"}, 0, true}, // B8 default
+		{config.APIIdentity{Name: "a", Profile: "autonomous", MaxTier: config.Tier(1)}, 1, true},
+		{config.APIIdentity{Name: "a", Profile: "autonomous", InbandConfirm: boolp(true)}, 0, true}, // profile forces false
+		{config.APIIdentity{Name: "a", InbandConfirm: boolp(false)}, 1, true},
+	}
+	for i, c := range cases {
+		got := FromConfig(c.id)
+		if got.MaxTier != c.tier || got.OOBOnly != c.oobOnly || got.Kind != "api-key" {
+			t.Fatalf("case %d: %+v, want tier %d oobOnly %v", i, got, c.tier, c.oobOnly)
+		}
+	}
+}
+
+func boolp(b bool) *bool { return &b }

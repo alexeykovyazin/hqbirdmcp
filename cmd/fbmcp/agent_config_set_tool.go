@@ -43,6 +43,15 @@ func readAgentConfig(acfg config.Agent) ([]byte, error) {
 	return b, nil
 }
 
+// agentRefused reports whether a reload error is the agent's answer about
+// the candidate (it then archives it as rejected). Auth, transport and 5xx
+// errors leave the candidate pending.
+func agentRefused(err error) bool {
+	s := err.Error()
+	return strings.HasPrefix(s, "fbagent bad-request") || strings.HasPrefix(s, "fbagent conflict") ||
+		strings.HasPrefix(s, "fbagent payload-too-large")
+}
+
 func registerAgentConfigSetTool(server *mcp.Server, gt *gatedTools) {
 	type cfgSetArg struct {
 		Agent  string         `json:"agent,omitempty" jsonschema:"agent registry id (optional when exactly one agent is configured)"`
@@ -74,6 +83,17 @@ func registerAgentConfigSetTool(server *mcp.Server, gt *gatedTools) {
 		if p, _ := agentcfg.Pending(acfg.ConfigPath); len(p) > 0 {
 			return "", fmt.Errorf("another candidate is already waiting (%s); let the agent apply it or remove it first", strings.Join(p, ", "))
 		}
+		// Check the token before the write: the agent promotes a pending
+		// candidate by itself on its next config tick, so a reload that
+		// fails on auth after the write would still change the config
+		// (phase 12 test W: a wrong token gave 401 only after the write).
+		cl, _, err := gt.agentClient(acfg.ID)
+		if err != nil {
+			return "", fmt.Errorf("nothing written: %w", err)
+		}
+		if _, err := cl.GetInstances(ctx, ""); err != nil {
+			return "", fmt.Errorf("nothing written: agent %s check failed (%v); fix the token or the agent first", acfg.ID, err)
+		}
 		prog(0.2, "writing candidate")
 		name, err := agentcfg.WriteCandidate(acfg.ConfigPath, res.Doc, time.Now())
 		if err != nil {
@@ -85,14 +105,13 @@ func registerAgentConfigSetTool(server *mcp.Server, gt *gatedTools) {
 			return "", fmt.Errorf("cancelled after writing %s (the agent promotes it on its next config tick): %w", name, ctx.Err())
 		case <-time.After(agentcfg.SettleTime):
 		}
-		cl, _, err := gt.agentClient(acfg.ID)
-		if err != nil {
-			return "", fmt.Errorf("candidate %s written but reload not requested (%v); the agent promotes it on its next config tick", name, err)
-		}
 		prog(0.6, "POST /v1/config/reload")
 		raw, err := cl.ReloadConfig(ctx)
 		if err != nil {
-			return "", fmt.Errorf("agent refused candidate %s (it archives it as agent_config_rejected_*; live config unchanged): %w", name, err)
+			if agentRefused(err) {
+				return "", fmt.Errorf("agent refused candidate %s (it archives it as agent_config_rejected_*; live config unchanged): %w", name, err)
+			}
+			return "", fmt.Errorf("reload request failed (%v); candidate %s is still pending and the agent promotes it on its next config tick — check with fb_agent_backup_config", err, name)
 		}
 		var rr struct {
 			Reloaded           bool     `json:"reloaded"`

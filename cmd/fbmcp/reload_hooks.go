@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/aleks/fbmcp/internal/audit"
 	"github.com/aleks/fbmcp/internal/config"
 	"github.com/aleks/fbmcp/internal/identity"
 	"github.com/aleks/fbmcp/internal/reload"
+	"github.com/aleks/fbmcp/internal/secrets"
 )
 
 func (gt *gatedTools) reloadHooks() reload.Hooks {
@@ -117,10 +119,18 @@ func (gt *gatedTools) reloadHooks() reload.Hooks {
 		},
 		ApplyAuth: func(cfg *config.Config) error {
 			identity.SetLocalMaxTier(cfg.LocalMaxTierOrDefault())
-			if gt.httpLn == nil {
-				return nil
+			secrets.SetDir(cfg.Secrets.Dir)
+			return nil // keys, origins and limits: RefreshAuth (runs on every Apply)
+		},
+		RefreshAuth: func(cfg *config.Config) ([]string, error) {
+			secrets.SetDir(cfg.Secrets.Dir)
+			if gt.bus != nil {
+				gt.bus.SetServer(cfg.ServerNameOrDefault())
 			}
-			return gt.httpLn.ReplaceAuth(cfg)
+			if gt.httpLn == nil {
+				return nil, nil
+			}
+			return gt.httpLn.RefreshAuth(cfg)
 		},
 		ApplyListener: func(old, new *config.Config) error {
 			if gt.httpLn == nil {
@@ -137,6 +147,9 @@ func formatReload(res reload.Result, err error) string {
 		return "reload denied: " + err.Error()
 	}
 	if res.Class == "noop" {
+		if i := strings.Index(res.Message, "; key errors"); i >= 0 {
+			return "reload: no changes" + res.Message[i:]
+		}
 		return "reload: no changes"
 	}
 	if res.Message != "" {
@@ -162,4 +175,8 @@ func (gt *gatedTools) auditReload(res reload.Result, err error) {
 		tool = "fb_config_reload"
 	}
 	gt.aud.Log(audit.Entry{Identity: "local", Tool: tool, Tier: 0, Decision: dec, Detail: detail})
+	if len(res.KeysChanged) > 0 { // B0.2: names only, never values or hashes
+		gt.aud.Log(audit.Entry{Identity: "local", Tool: "auth.keys_reloaded", Tier: 0, Decision: "apply",
+			Detail: map[string]interface{}{"identities": strings.Join(res.KeysChanged, ","), "reason": res.Reason}})
+	}
 }

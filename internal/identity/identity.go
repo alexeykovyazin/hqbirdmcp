@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/aleks/fbmcp/internal/config"
 	"github.com/aleks/fbmcp/internal/policy"
 )
 
@@ -44,12 +45,25 @@ func Local(maxTier int, dbs []string) policy.Identity {
 	return policy.Identity{Name: "local", MaxTier: maxTier, DBs: dbs, Kind: "local"}
 }
 
-// APIKey is a remote identity (P5.1 / ADR-022).
+// APIKey is a remote identity (P5.1 / ADR-022). maxTier is clamped to
+// 0..2. Phase 12 B0.1: 0 means read-only; it no longer maps to Tier 2 (the
+// "missing → 1" default lives in config.APIIdentity.EffectiveMaxTier).
 func APIKey(name string, maxTier int) policy.Identity {
-	if maxTier <= 0 {
+	if maxTier < 0 {
+		maxTier = 0
+	}
+	if maxTier > 2 {
 		maxTier = 2
 	}
 	return policy.Identity{Name: name, MaxTier: maxTier, Kind: "api-key"}
+}
+
+// FromConfig builds the identity of a configured API key (B0.1 / B8).
+func FromConfig(id config.APIIdentity) policy.Identity {
+	p := APIKey(id.Name, id.EffectiveMaxTier())
+	p.Profile = id.Profile
+	p.OOBOnly = !id.InbandAllowed()
+	return p
 }
 
 // Operator is the out-of-band confirmation identity (fbmcpctl approve).

@@ -1,3 +1,8 @@
-# Least-privilege allowlist for Firebird service units (edit names).
-# fbmcp ALL=(root) NOPASSWD: /bin/systemctl start firebird*, /bin/systemctl stop firebird*, /bin/systemctl restart firebird*
-fbmcp ALL=(root) NOPASSWD: /bin/systemctl start firebird, /bin/systemctl stop firebird, /bin/systemctl restart firebird
+# /etc/sudoers.d/fbmcp - fbmcp (running as the service user) may start,
+# stop and restart the Firebird unit(s) for fb_service_* (phase 12 R9).
+# packaging/linux/install-remote.sh writes this file from --user and
+# --firebird-unit. By hand: replace the user and the unit name (find it with
+# "systemctl list-units 'firebird*'", e.g. firebird.opt_fb50), then
+#   install -m 0440 sudoers.fbmcp /etc/sudoers.d/fbmcp && visudo -c
+# The kernel calls exactly "sudo -n /bin/systemctl <start|stop|restart> <unit>".
+firebird ALL=(root) NOPASSWD: /bin/systemctl start firebird.opt_fb50, /bin/systemctl stop firebird.opt_fb50, /bin/systemctl restart firebird.opt_fb50

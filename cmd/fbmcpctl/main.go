@@ -21,7 +21,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: fbmcpctl <approve|status|setup|doctor|verify|repair|secret|gate|ping> ...")
+		fmt.Fprintln(os.Stderr, "usage: fbmcpctl <approve|status|setup|doctor|verify|repair|secret|apikey|tls|gate|ping> ...")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -39,6 +39,10 @@ func main() {
 		os.Exit(cmdRepair(os.Args[2:]))
 	case "secret":
 		os.Exit(cmdSecret(os.Args[2:]))
+	case "apikey":
+		os.Exit(cmdAPIKey(os.Args[2:]))
+	case "tls":
+		os.Exit(cmdTLS(os.Args[2:]))
 	case "gate":
 		os.Exit(cmdGate(os.Args[2:]))
 	case "ping":
@@ -152,23 +156,35 @@ func cmdRepair(args []string) int {
 // cmdSecret manages keyring fallback entries (D4.3 / E.4): the value is
 // read from stdin, never argv (C10). set <ENV_NAME>, get <ENV_NAME>,
 // drop <ENV_NAME>. Environment variables still win at lookup time.
+// --dir DIR uses the file source instead (phase 12 B0.9 / B2): one file
+// per name, mode 0600, owned like DIR when run as root.
 func cmdSecret(args []string) int {
-	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: fbmcpctl secret set|get|drop <ENV_NAME>  (set reads the value from stdin)")
+	var dir string
+	var rest []string
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--dir" && i+1 < len(args):
+			dir = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--dir="):
+			dir = strings.TrimPrefix(args[i], "--dir=")
+		default:
+			rest = append(rest, args[i])
+		}
+	}
+	if len(rest) < 2 {
+		fmt.Fprintln(os.Stderr, "usage: fbmcpctl secret set|get|drop [--dir DIR] <ENV_NAME>  (set reads the value from stdin)")
 		return 2
 	}
-	op, name := args[0], args[1]
+	op, name := rest[0], rest[1]
+	if dir != "" {
+		return secretFile(op, dir, name)
+	}
 	switch op {
 	case "set":
-		val, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1
-		}
-		v := strings.TrimSpace(string(val))
-		if v == "" {
-			fmt.Fprintln(os.Stderr, "empty value on stdin")
-			return 1
+		v, code := readSecretStdin()
+		if code != 0 {
+			return code
 		}
 		if err := secrets.Set(name, v); err != nil {
 			fmt.Fprintln(os.Stderr, "keyring:", err)
@@ -193,6 +209,56 @@ func cmdSecret(args []string) int {
 			return 1
 		}
 		fmt.Printf("dropped fbmcp/%s\n", name)
+		return 0
+	}
+	fmt.Fprintln(os.Stderr, "unknown secret op:", op)
+	return 2
+}
+
+func readSecretStdin() (string, int) {
+	val, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return "", 1
+	}
+	v := strings.TrimSpace(string(val))
+	if v == "" {
+		fmt.Fprintln(os.Stderr, "empty value on stdin")
+		return "", 1
+	}
+	return v, 0
+}
+
+// secretFile is cmdSecret for the file source. get never prints the value.
+func secretFile(op, dir, name string) int {
+	switch op {
+	case "set":
+		v, code := readSecretStdin()
+		if code != 0 {
+			return code
+		}
+		if err := secrets.WriteFile(dir, name, v); err != nil {
+			fmt.Fprintln(os.Stderr, "secret file:", err)
+			return 1
+		}
+		fmt.Printf("stored %s (env %s still wins if set); a running kernel picks it up in a few seconds\n", filepath.Join(dir, name), name)
+		return 0
+	case "get":
+		if _, err := secrets.ReadFile(dir, name); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		fmt.Printf("file %s present and readable\n", filepath.Join(dir, name))
+		if os.Getenv(name) != "" {
+			fmt.Printf("note: env %s is set in this shell and shadows the file\n", name)
+		}
+		return 0
+	case "drop":
+		if err := secrets.DropFile(dir, name); err != nil {
+			fmt.Fprintln(os.Stderr, "secret file:", err)
+			return 1
+		}
+		fmt.Printf("removed %s\n", filepath.Join(dir, name))
 		return 0
 	}
 	fmt.Fprintln(os.Stderr, "unknown secret op:", op)
@@ -241,11 +307,11 @@ func cmdApprove(args []string) int {
 		return 1
 	}
 	pending := st.Pending()
-	if len(pending) == 0 {
-		fmt.Println("no pending actions")
-		return 0
-	}
 	if len(args) == 1 {
+		if len(pending) == 0 {
+			fmt.Println("no pending actions")
+			return 0
+		}
 		for _, p := range pending {
 			fmt.Println(gate.ImpactStatement(p))
 			fmt.Println("---")
@@ -262,7 +328,9 @@ func cmdApprove(args []string) int {
 		}
 	}
 	if !found {
-		fmt.Println("no such pending action:", id)
+		// lab 2026-11-04: an expired id used to print "no pending actions"
+		// with exit 0, so the operator took it for an approval.
+		fmt.Printf("no such pending action: %s (a request expires after %s; an approved, denied or expired one leaves the list)\n", id, gate.DefaultTTL)
 		return 1
 	}
 	approvals := filepath.Join(dir, "approvals")
@@ -345,13 +413,28 @@ func cmdSetup(args []string) int {
 		}
 		fmt.Println("wrote", posture.Marker(cfg.State.Dir))
 	}
-	fmt.Println("D5 keyring: env fallback is active (ADR-009). Set per-DB *_PW variables; OS keyring is optional.")
-	fmt.Println("RO users: fbmcp.dev.yaml still uses SYSDBA — create RO users via fb_user_create + GRANT (dev-only SYSDBA is not for production).")
+	fmt.Println("secrets: environment variable, then <secrets.dir>/<NAME>, then the OS keyring (fbmcpctl secret set).")
+	var sysdbaRO []string
+	for _, d := range cfg.Databases {
+		if strings.EqualFold(d.ROUser, "SYSDBA") {
+			sysdbaRO = append(sysdbaRO, d.ID)
+		}
+	}
+	if len(sysdbaRO) > 0 {
+		fmt.Printf("RO users: %s read as SYSDBA; for production create RO users (fb_user_create + GRANT).\n", strings.Join(sysdbaRO, ", "))
+	}
 	fmt.Println("self-check: start fbmcp, fb_ping, confirm a Tier-1 tool, fbmcpctl doctor")
 	return 0
 }
 
 func cmdDoctor(args []string) int {
+	if len(args) > 0 && (args[0] == "--remote" || args[0] == "-remote") {
+		cfgPath := "fbmcp.yaml"
+		if len(args) > 1 {
+			cfgPath = args[1]
+		}
+		return doctorRemote(cfgPath)
+	}
 	cfgPath := "fbmcp.yaml"
 	if len(args) > 0 {
 		cfgPath = args[0]

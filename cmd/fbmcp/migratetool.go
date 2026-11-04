@@ -305,7 +305,7 @@ func (gt *gatedTools) requestMigrationApply(ctx context.Context, id policy.Ident
 	gt.mu.Unlock()
 	var b strings.Builder
 	b.WriteString(gate.ImpactStatement(p))
-	if meta.Tier <= 1 {
+	if meta.Tier <= 1 && !p.OOBOnly {
 		fmt.Fprintf(&b, "In-band token (Tier 1 only): %s\n", gate.IssueToken(p.ID, argHash))
 	} else {
 		b.WriteString("Confirmation: out-of-band only (Tier-2 statements in the batch — fbmcp-tray popup or fbmcpctl approve)\n")

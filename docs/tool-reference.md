@@ -39,7 +39,7 @@ Refused: `state.dir` change; ADR-022 (loopback bind, missing cert/key, zero iden
 
 | Tool | Tier | Args | What it does |
 |---|---|---|---|
-| `fb_ping` | 0 | — | Liveness (`pong`) |
+| `fb_ping` | 0 | — | Liveness: `pong`, `server_name`, caller identity and its max tier |
 | `fb_db_list` | 0 | — | Registered databases + online/offline |
 | `fb_db_health` | 0 | `db` | Probe one registry id |
 | `fb_confirm` | 0 | `request_id`, `token` | Confirm a **Tier 1** pending action (Tier ≥ 2 is rejected in-band) |
@@ -237,7 +237,7 @@ executes under the agent's own scheduler and policy, outside fbmcp's gate.
 | `fb_agent_run_cancel` | 1 | `db`, `args.agent?`, `args.run_id` | cancel a queued/waiting run-now run; **409 conflict** once it runs |
 | `fb_agent_license_set` | 1 | `db`, `args.agent?`, `args.license` | install the vendor license document as `license.json` (agent verifies before writing; 400 `license_invalid`) |
 | `fb_agent_product_update_apply` | 2 | `db` (window key), `args.agent?`, `args.product`, `args.reason?` | queue job `{product}_update`: release check → stop / single-file swap / start / health-check, revert on failure; result carries `action` and per-install outcomes. **OOB** |
-| `fb_agent_discover` | 0 | `db?` | enumerate co-located fbagents from the Windows service registry (`HQbirdFBAgent-*` → `--run` config path), derive `base_url`/`instance_id` by the agent's own listen rule (config → log line → defaults); never reads tokens; prints the exact `fbmcpctl secret set` + `fb_agent_register` follow-up per candidate |
+| `fb_agent_discover` | 0 | `db?` | enumerate co-located fbagents from the Windows service registry (`HQbirdFBAgent-*` → `--run` config path) or Linux systemd units (ExecStart runs `fbagent --run <config>`; listen line from the journal), derive `base_url`/`instance_id` by the agent's own listen rule (config → log line → defaults); never reads tokens; prints the exact `fbmcpctl secret set` + `fb_agent_register` follow-up per candidate |
 | `fb_agent_register` | 2 | `db?`, `id`, `base_url`, `token_env`, `instance_id?`, `config_path?`, `mode?` | persist one discovered fbagent into `fbmcp.yaml` `agents:` (ADR-031 validation: loopback, token_env; duplicate id/base_url refused); after apply, best-effort identity check via `GET /v1/instances` reports verified / token-missing / other-agent. **OOB** |
 | `fb_firebird_log` | 0 | `instance`, `tail?`, `archived?`, `glob?`, `agent?` | read the instance's live `firebird.log` through the Services API (the engine's get-log service action, service credentials of the `instances:` entry; works without an agent); `tail` default 100, max 5000. `archived=true` lists the co-located fbagent's rotated log / conf-change copies (`server/firebird/files/watched`) — names only, the agent API serves no content for them |
 | `fb_agent_perf_report` | 0 | `agent?`, `db?`, `report?` | newest trace performance report (`report=perf`, default: top slow queries grouped by plan) or deadlock/conflict report (`report=deadlocks`) from the agent artifact hub; refresh with `fb_agent_job_run job=process_traces\|find_deadlocks` |

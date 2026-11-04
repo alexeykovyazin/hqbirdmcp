@@ -1,5 +1,5 @@
 // Phase 11 D1/D2 — fbagent endpoint discovery and gated registration.
-// fb_agent_discover is a Tier-0 LOCAL read (SCM registry + files, no HTTP,
+// fb_agent_discover is a Tier-0 LOCAL read (Windows SCM registry or Linux systemd units + files, no HTTP,
 // no token access); fb_agent_register persists one agents: entry through
 // the standard Tier-2 out-of-band flow (fb_db_register pattern, ADR-031
 // rules enforced by config.Validate on the appended document).
@@ -53,7 +53,7 @@ func registerAgentDiscoverTools(server *mcp.Server, gt *gatedTools) {
 	type discoverArg struct {
 		Db string `json:"db,omitempty" jsonschema:"registry database id (audit key only)"`
 	}
-	mcp.AddTool(server, &mcp.Tool{Name: "fb_agent_discover", Description: "Tier 0: discover co-located fbagent Local API endpoints from the Windows service registry + agent files (no HTTP, no token access); prints the register follow-up per candidate"}, func(ctx context.Context, req *mcp.CallToolRequest, a discoverArg) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_agent_discover", Description: "Tier 0: discover co-located fbagent Local API endpoints from the Windows service registry or Linux systemd units + agent files (no HTTP, no token access); prints the register follow-up per candidate"}, func(ctx context.Context, req *mcp.CallToolRequest, a discoverArg) (*mcp.CallToolResult, any, error) {
 		id := identity.Caller(ctx)
 		if d := gt.eng.Evaluate(id, a.Db, "fb_agent_discover"); d.Outcome == "deny" {
 			gt.aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_agent_discover", Tier: 0, Decision: "denied", Detail: map[string]any{"reason": d.Reason}})
@@ -73,7 +73,7 @@ func registerAgentDiscoverTools(server *mcp.Server, gt *gatedTools) {
 			} else {
 				envName := suggestTokenEnv(c)
 				fmt.Fprintf(&b, "  to register:\n")
-				fmt.Fprintf(&b, "    1. put the agent's local_api token into env %s (or: fbmcpctl secret set %s)\n", envName, envName)
+				fmt.Fprintf(&b, "    1. put the agent's local_api token into env %s (or: fbmcpctl secret set [--dir <secrets.dir>] %s)\n", envName, envName)
 				fmt.Fprintf(&b, "    2. fb_agent_register {\"id\":%q,\"base_url\":%q,\"instance_id\":%q,\"token_env\":%q,\"config_path\":%q}\n",
 					suggestAgentID(c), c.BaseURL, c.InstanceID, envName, c.ConfigPath)
 			}
@@ -84,7 +84,7 @@ func registerAgentDiscoverTools(server *mcp.Server, gt *gatedTools) {
 		for _, n := range hostNotes {
 			fmt.Fprintf(&b, "\nhost note: %s\n", n)
 		}
-		b.WriteString("\nTokens are never read by discovery: the operator supplies them (env or OS keyring).\n")
+		b.WriteString("\nTokens are never read by discovery: the operator supplies them (env, secrets.dir file or OS keyring).\n")
 		gt.aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_agent_discover", Tier: 0, Decision: "allow", Detail: map[string]any{"candidates": len(cands)}})
 		return text(b.String()), nil, nil
 	})

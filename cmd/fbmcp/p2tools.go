@@ -15,6 +15,7 @@ import (
 	"github.com/aleks/fbmcp/internal/dbpool"
 	"github.com/aleks/fbmcp/internal/facts"
 	"github.com/aleks/fbmcp/internal/gstat"
+	"github.com/aleks/fbmcp/internal/identity"
 	"github.com/aleks/fbmcp/internal/lwmonitoring"
 	"github.com/aleks/fbmcp/internal/queryplan"
 	"github.com/aleks/fbmcp/internal/state"
@@ -53,7 +54,7 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 		if err != nil {
 			return errText("error: " + err.Error())
 		}
-		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_analyze_query", Tier: 0, Decision: "allow"})
+		aud.Log(audit.Entry{Identity: identity.Caller(ctx).Name, Database: a.Db, Tool: "fb_analyze_query", Tier: 0, Decision: "allow"})
 		return text("PLAN: " + plan), nil, nil
 	})
 
@@ -137,7 +138,7 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 				b.WriteString("advisory: no duplicate-column indexes found\n")
 			}
 		}
-		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_index_stats", Tier: 0, Decision: "allow"})
+		aud.Log(audit.Entry{Identity: identity.Caller(ctx).Name, Database: a.Db, Tool: "fb_index_stats", Tier: 0, Decision: "allow"})
 		return text(b.String()), nil, nil
 	})
 
@@ -183,7 +184,7 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 		if err != nil {
 			return errText("error: " + err.Error())
 		}
-		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_gstat", Tier: 0, Decision: "allow"})
+		aud.Log(audit.Entry{Identity: identity.Caller(ctx).Name, Database: a.Db, Tool: "fb_gstat", Tier: 0, Decision: "allow"})
 		return text(out), nil, nil
 	})
 
@@ -249,7 +250,7 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 		_ = listNames(`SELECT RDB$TRIGGER_NAME FROM RDB$TRIGGERS WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 ORDER BY 1`, "TRIGGER", false)
 		_ = listNames(`SELECT RDB$FUNCTION_NAME FROM RDB$FUNCTIONS WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 ORDER BY 1`, "FUNCTION", false)
 		_ = listNames(`SELECT RDB$PACKAGE_NAME FROM RDB$PACKAGES WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 ORDER BY 1`, "PACKAGE", false)
-		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_schema_list", Tier: 0, Decision: "allow"})
+		aud.Log(audit.Entry{Identity: identity.Caller(ctx).Name, Database: a.Db, Tool: "fb_schema_list", Tier: 0, Decision: "allow"})
 		return text(b.String()), nil, nil
 	})
 
@@ -291,7 +292,7 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 		if n == 0 {
 			return text("relation not found (or has no columns)"), nil, nil
 		}
-		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_describe", Tier: 0, Decision: "allow"})
+		aud.Log(audit.Entry{Identity: identity.Caller(ctx).Name, Database: a.Db, Tool: "fb_describe", Tier: 0, Decision: "allow"})
 		return text(b.String()), nil, nil
 	})
 
@@ -345,7 +346,7 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 		for _, k := range []string{"page_reads", "page_writes", "inserts", "updates", "deletes"} {
 			fmt.Fprintf(&b, "%s: %d\n", k, second[k]-first[k])
 		}
-		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_activity_sample", Tier: 0, Decision: "allow"})
+		aud.Log(audit.Entry{Identity: identity.Caller(ctx).Name, Database: a.Db, Tool: "fb_activity_sample", Tier: 0, Decision: "allow"})
 		return text(b.String()), nil, nil
 	})
 
@@ -396,7 +397,7 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 			// degrade loudly instead of returning an empty success.
 			return text(fmt.Sprintf("error: fbsvcmgr returned an empty body for lwm_query level %d - the installed fblwmon plugin likely does not support it (level 1 works; upstream follow-up in docs/decisions/phase5-gap-notes.md)", level)), nil, nil
 		}
-		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_lwmonitoring", Tier: 0, Decision: "allow"})
+		aud.Log(audit.Entry{Identity: identity.Caller(ctx).Name, Database: a.Db, Tool: "fb_lwmonitoring", Tier: 0, Decision: "allow"})
 		return text(out), nil, nil
 	})
 

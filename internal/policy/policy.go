@@ -42,6 +42,14 @@ type Identity struct {
 	MaxTier int      // identity ceiling: requests above this are denied
 	DBs     []string // empty = all registered
 	Kind    string   // "local" | "api-key" | "operator"
+	// Profile is the api-key profile ("" or "autonomous", phase 12 B8).
+	Profile string
+	// OOBOnly sends Tier-1 requests to the out-of-band queue and refuses
+	// in-band confirmation (inband_confirm: false / profile autonomous).
+	OOBOnly bool
+	// RemoteAddr is the TCP peer of the current request (api-key only;
+	// phase 12 B0.8). Set per request, never from headers.
+	RemoteAddr string
 }
 
 // Engine is the policy decision point.

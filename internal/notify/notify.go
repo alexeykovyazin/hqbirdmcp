@@ -20,6 +20,7 @@ import (
 type Event struct {
 	ID       string            `json:"id"`
 	Type     string            `json:"type"`
+	Server   string            `json:"server,omitempty"` // server_name (B5)
 	Database string            `json:"database,omitempty"`
 	Tool     string            `json:"tool,omitempty"`
 	Message  string            `json:"message"`
@@ -34,6 +35,7 @@ type Bus struct {
 	webhookURL    string
 	webhookSecret string
 	client        *http.Client
+	server        string
 	failures      int
 	deliver       func(url string, body []byte, id, sig string) error // test hook
 }
@@ -54,6 +56,14 @@ func New(stateDir, webhookURL, webhookSecret string) (*Bus, error) {
 
 func (b *Bus) Failures() int { b.mu.Lock(); defer b.mu.Unlock(); return b.failures }
 
+// SetServer sets the server name stamped on every event (phase 12 B5), so
+// one webhook channel can serve many fbmcp servers.
+func (b *Bus) SetServer(name string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.server = name
+}
+
 // SetWebhook updates delivery target without reopening the local event log.
 func (b *Bus) SetWebhook(url, secret string) {
 	b.mu.Lock()
@@ -68,6 +78,11 @@ func (b *Bus) Emit(e Event) error {
 	}
 	if e.At.IsZero() {
 		e.At = time.Now().UTC()
+	}
+	if e.Server == "" {
+		b.mu.Lock()
+		e.Server = b.server
+		b.mu.Unlock()
 	}
 	body, err := json.Marshal(e)
 	if err != nil {

@@ -226,7 +226,7 @@ identities); duplicate database paths.
 
 | Tool | Tier | Args | What it does |
 |---|---|---|---|
-| `fb_ping` | 0 | — | Liveness (`pong`) |
+| `fb_ping` | 0 | — | Liveness: `pong`, `server_name`, caller identity and its max tier |
 | `fb_db_list` | 0 | — | Registered databases + online/offline |
 | `fb_db_health` | 0 | `db` | Probe one registry id |
 | `fb_confirm` | 0 | `request_id`, `token` | Confirm a **Tier 1** pending action (Tier ≥ 2 is rejected in-band) |
@@ -387,7 +387,7 @@ executes under the agent's own scheduler and policy.
 | `fb_agent_run_cancel` | 1 | `db`, `args.agent?`, `args.run_id` | cancel a queued/waiting run-now run (409 once it runs) |
 | `fb_agent_license_set` | 1 | `db`, `args.agent?`, `args.license` | install the vendor license document (agent verifies first) |
 | `fb_agent_product_update_apply` | 2 | `db` (window key), `args.agent?`, `args.product`, `args.reason?` | queue a product update (stop / swap / start, revert on failure). **OOB** |
-| `fb_agent_discover` | 0 | `db?` | find co-located fbagent Local APIs (service registry + files; no HTTP, no token access) with register follow-ups |
+| `fb_agent_discover` | 0 | `db?` | find co-located fbagent Local APIs (Windows service registry or Linux systemd units + files; no HTTP, no token access) with register follow-ups |
 | `fb_agent_register` | 2 | `db?`, `id`, `base_url`, `token_env`, `instance_id?`, `config_path?`, `mode?` | persist a discovered fbagent into `agents:`; verifies identity after apply. **OOB** |
 | `fb_firebird_log` | 0 | `instance`, `tail?`, `archived?`, `glob?`, `agent?` | live `firebird.log` via the Services API (tail, default 100); `archived=true` lists the agent's rotated copies |
 | `fb_agent_perf_report` | 0 | `agent?`, `db?`, `report?` | newest trace performance report (`perf`) or deadlock report (`deadlocks`) |
@@ -419,8 +419,27 @@ fbmcp-tray.exe [--console] [fbmcp.yaml]
 fbmcpctl approve <state_dir> [request_id]
 fbmcpctl status [config]
 fbmcpctl setup [--write-posture] [config]
-fbmcpctl doctor [config]
+fbmcpctl doctor [--remote] [config]
+fbmcpctl verify [config]
+fbmcpctl secret set|get|drop [--dir <secrets.dir>] NAME
+fbmcpctl apikey new NAME [--max-tier N] [--profile autonomous] [--allow-from CIDR,...] [--secrets-dir DIR] [--no-show]
+fbmcpctl apikey rotate NAME [--config fbmcp.yaml] [--secrets-dir DIR] [--no-show]
+fbmcpctl apikey list [config]
+fbmcpctl tls selfsign --out DIR --dns a,b --ip x,y [--grant ACCOUNT] [--days 825] [--renew|--force]
+fbmcpctl tls show <cert.pem>
 ```
+
+**`fbmcp bridge`** (admin workstation): a stdio MCP server for Claude
+Desktop and other stdio clients that relays every message to a remote
+fbmcp over HTTPS with an API key; `--pin sha256:<hex>` trusts a
+self-signed server key without CA setup.
+
+```
+fbmcp bridge --url https://srv1:8443/mcp --key-env FBMCP_KEY_SRV1 [--pin sha256:<hex> | --ca srv1.crt] [--secrets-dir DIR]
+```
+
+Remote mode install, keys, autonomous agents, troubleshooting:
+[`docs/remote.md`](docs/remote.md).
 
 Spike state dir: `C:\HQbirdData\output\fbmcp-spike\state`.
 

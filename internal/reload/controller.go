@@ -20,6 +20,8 @@ type Result struct {
 	Diff    config.Diff
 	Hash    string
 	Message string
+	// KeysChanged lists identities whose API key changed (B0.2).
+	KeysChanged []string
 }
 
 // Hooks are kernel side-effects. Nil funcs are skipped.
@@ -36,7 +38,12 @@ type Hooks struct {
 	SetWebhook        func(url, secretEnv string) error
 	ApplyAuth         func(cfg *config.Config) error
 	ApplyListener     func(old, new *config.Config) error
-	Audit             func(res Result, err error)
+	// RefreshAuth resolves the identity keys again and applies them when a
+	// value changed (phase 12 B0.2). It runs on every Apply, also when the
+	// YAML did not change, because a rotated key lives outside the YAML.
+	// It returns the identities whose key changed.
+	RefreshAuth func(cfg *config.Config) ([]string, error)
+	Audit       func(res Result, err error)
 }
 
 // Controller serializes reloads against one Handle.
@@ -63,6 +70,9 @@ func (c *Controller) Apply(reason, exceptJobID string) (Result, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	res, err := c.applyLocked(reason, exceptJobID)
+	if err == nil && c.hooks.RefreshAuth != nil {
+		res = c.refreshAuth(res)
+	}
 	if c.hooks.Audit != nil {
 		c.hooks.Audit(res, err)
 	}
@@ -194,6 +204,23 @@ func (c *Controller) applyLocked(reason, exceptJobID string) (Result, error) {
 		Hash:    hash,
 		Message: summarize(diff),
 	}, nil
+}
+
+// refreshAuth applies changed keys after a successful Apply (including a
+// noop one) and folds the outcome into the result.
+func (c *Controller) refreshAuth(res Result) Result {
+	changed, kerr := c.hooks.RefreshAuth(c.h.Current())
+	if len(changed) > 0 {
+		res.KeysChanged = changed
+		if res.Class == "noop" {
+			res.Class, res.Message = "apply", "reload applied"
+		}
+		res.Message += " keys=" + strings.Join(changed, ",")
+	}
+	if kerr != nil {
+		res.Message += "; key errors (those keys are off): " + kerr.Error()
+	}
+	return res
 }
 
 func summarize(d config.Diff) string {

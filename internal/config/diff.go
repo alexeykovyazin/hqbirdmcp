@@ -1,7 +1,9 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 )
 
@@ -124,7 +126,8 @@ func CompareSnapshots(oldC, newC *Config) Diff {
 	if strings.TrimSpace(oldC.Listen) != strings.TrimSpace(newC.Listen) || oldC.TLS.Cert != newC.TLS.Cert || oldC.TLS.Key != newC.TLS.Key {
 		d.Listener = true
 	}
-	if !identitiesEqual(oldC.Identities, newC.Identities) {
+	if !identitiesEqual(oldC.Identities, newC.Identities) || !reflect.DeepEqual(oldC.Limits, newC.Limits) ||
+		!reflect.DeepEqual(oldC.AllowedOrigins, newC.AllowedOrigins) || oldC.Secrets.Dir != newC.Secrets.Dir {
 		d.Auth = true
 	}
 
@@ -191,18 +194,17 @@ func identitiesEqual(a, b []APIIdentity) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	type key struct {
-		n, e string
-		t    int
-	}
-	ma := map[key]int{}
+	// Order-insensitive multiset compare over every field (B8 added
+	// pointer and slice fields, so compare the canonical JSON form).
+	ma := map[string]int{}
 	for _, id := range a {
-		ma[key{id.Name, id.KeyEnv, id.MaxTier}]++
+		k, _ := json.Marshal(id)
+		ma[string(k)]++
 	}
 	for _, id := range b {
-		k := key{id.Name, id.KeyEnv, id.MaxTier}
-		ma[k]--
-		if ma[k] < 0 {
+		k, _ := json.Marshal(id)
+		ma[string(k)]--
+		if ma[string(k)] < 0 {
 			return false
 		}
 	}

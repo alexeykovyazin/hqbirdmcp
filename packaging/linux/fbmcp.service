@@ -1,17 +1,35 @@
 [Unit]
-Description=Firebird DBA MCP server
-After=network.target
+Description=fbmcp - Firebird DBA MCP server (remote mode)
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=fbmcp
-ExecStart=/usr/local/bin/fbmcp -config /etc/fbmcp/fbmcp.yaml
+# R7: run as the Firebird user. fbagent writes agent_config.json with mode
+# 0600 firebird, and the Firebird server must read backups fbmcp writes.
+User=firebird
+Group=firebird
+# -serve: no stdio transport; SIGTERM stops the kernel cleanly (B0.4).
+ExecStart=/usr/local/bin/fbmcp -config /etc/fbmcp/fbmcp.yaml -serve
+# Optional NAME=value lines. The file source (secrets.dir in fbmcp.yaml) is
+# the default, because a change there applies without a restart (B0.9).
+EnvironmentFile=-/etc/fbmcp/fbmcp.env
 Restart=on-failure
 RestartSec=5
-NoNewPrivileges=true
+TimeoutStopSec=30
+# No NoNewPrivileges=true: fb_service_start/stop/restart run
+# "sudo -n /bin/systemctl" with /etc/sudoers.d/fbmcp (R9), and
+# NoNewPrivileges blocks sudo.
 ProtectSystem=strict
+ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/lib/fbmcp /var/backups/firebird /var/tmp/fbmcp-work
+# "-" = skip a missing folder instead of failing with 226/NAMESPACE (F11).
+# State, backups and work folders as in fbmcp.yaml. work_dir must not be
+# under /tmp or /var/tmp: PrivateTmp hides them from the Firebird server.
+# /opt/hqbird-fbagent: fb_agent_config_set writes its candidate file there.
+# fbmcp.yaml stays read-only: fb_db_register / fb_agent_register then refuse
+# with a clear message (F21); see docs/remote.md "Config writes".
+ReadWritePaths=-/var/lib/fbmcp -/var/lib/fbmcp-backups -/var/lib/fbmcp-work -/opt/hqbird-fbagent
 
 [Install]
 WantedBy=multi-user.target

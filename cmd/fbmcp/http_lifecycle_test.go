@@ -43,7 +43,7 @@ func TestStartRequiresTLSAndIdentitiesAndOrigins(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "at least one identity") {
 		t.Fatalf("no identities: %v", err)
 	}
-	cfg.Identities = []config.APIIdentity{{Name: "op", KeyEnv: "FBMCP_TEST_KEY", MaxTier: 1}}
+	cfg.Identities = []config.APIIdentity{{Name: "op", KeyEnv: "FBMCP_TEST_KEY", MaxTier: config.Tier(1)}}
 	t.Setenv("FBMCP_TEST_KEY", "sekrit")
 	err = l.Start(cfg)
 	if err == nil || !strings.Contains(err.Error(), "allowed_origins") {

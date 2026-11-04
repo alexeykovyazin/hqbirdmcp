@@ -37,6 +37,43 @@ func TestValidateWireCrypt(t *testing.T) {
 	}
 }
 
+// Phase 12 test W: fb_config_get showed "DefaultDbCachePages = 40K" and
+// fb_config_set refused the same value as "not an int".
+func TestValidateIntSuffix(t *testing.T) {
+	for _, v := range []string{"2048", "40K", "40k", "64M", "1G", " 8K "} {
+		if _, err := ValidateSet("DefaultDbCachePages", v); err != nil {
+			t.Errorf("%q refused: %v", v, err)
+		}
+	}
+	for _, v := range []string{"", "K", "40KB", "4.5K", "x", "9999999999999G"} {
+		if _, err := ValidateSet("DefaultDbCachePages", v); err == nil {
+			t.Errorf("%q accepted", v)
+		}
+	}
+	if n, err := fbInt("40K"); err != nil || n != 40960 {
+		t.Fatalf("fbInt(40K) = %d, %v", n, err)
+	}
+}
+
+// Phase 12 test W: a set re-rendered every line, so the HQbird
+// firebird.conf (CRLF, indented lines, inline comments) would lose them
+// all, and ";" cut TempDirectories. Only the set line may change.
+func TestApplyKeepsOtherLines(t *testing.T) {
+	src := "# header\r\n  DefaultDbCachePages = 40K      # pages\r\nTempDirectories = c:\\temp;d:\\temp\r\n\tWireCrypt = Enabled # keep\r\n"
+	f := Parse("x", src)
+	if v, _ := f.Get("TempDirectories"); v != `c:\temp;d:\temp` {
+		t.Fatalf("TempDirectories = %q", v)
+	}
+	got := f.Apply("DefaultDbCachePages", "64K").String()
+	want := "# header\r\n  DefaultDbCachePages = 64K      # pages\r\nTempDirectories = c:\\temp;d:\\temp\r\n\tWireCrypt = Enabled # keep\r\n"
+	if got != want {
+		t.Fatalf("got  %q\nwant %q", got, want)
+	}
+	if out := f.Apply("TempCacheLimit", "64M").String(); !strings.HasSuffix(out, "WireCrypt = Enabled # keep\r\nTempCacheLimit = 64M\r\n") {
+		t.Fatalf("append: %q", out)
+	}
+}
+
 func TestAtomicWriteKeepsPrev(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "firebird.conf")
@@ -158,10 +195,30 @@ func TestAppendJournalLine(t *testing.T) {
 }
 
 func TestConfPaths(t *testing.T) {
-	if got := ConfPath("C:/fb/bin"); got != filepath.Join("C:/fb/bin", "firebird.conf") {
-		t.Fatalf("ConfPath=%q", got)
+	// Windows 3+: conf beside the binaries.
+	win := t.TempDir()
+	if err := os.WriteFile(filepath.Join(win, "firebird.conf"), nil, 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if got := DatabasesConfPath("C:/fb/bin"); got != filepath.Join("C:/fb/bin", "databases.conf") {
-		t.Fatalf("DatabasesConfPath=%q", got)
+	if got := ConfPath(win); got != filepath.Join(win, "firebird.conf") {
+		t.Fatalf("ConfPath(win)=%q", got)
+	}
+	if got := DatabasesConfPath(win); got != filepath.Join(win, "databases.conf") {
+		t.Fatalf("DatabasesConfPath(win)=%q", got)
+	}
+	// Linux: binaries in <root>/bin, conf in <root>.
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "firebird.conf"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ConfPath(bin); got != filepath.Join(root, "firebird.conf") {
+		t.Fatalf("ConfPath(linux)=%q", got)
+	}
+	if got := DatabasesConfPath(bin); got != filepath.Join(root, "databases.conf") {
+		t.Fatalf("DatabasesConfPath(linux)=%q", got)
 	}
 }

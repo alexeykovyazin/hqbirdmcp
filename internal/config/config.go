@@ -39,7 +39,32 @@ type Config struct {
 	Trends       Trends    `yaml:"trends"`
 	Agents       []Agent   `yaml:"agents"`
 	Grid         Grid      `yaml:"grid"`
-	SourcePath   string    `yaml:"-"`
+	// ServerName names this server in fb_ping, fb_db_list and webhook
+	// events (phase 12 B5), so one client or channel can serve many
+	// servers. Empty → the OS host name (ServerNameOrDefault).
+	ServerName string `yaml:"server_name"`
+	// Secrets configures the file secret source (phase 12 B0.9).
+	Secrets    Secrets `yaml:"secrets"`
+	SourcePath string  `yaml:"-"`
+}
+
+// Secrets is the optional file secret source (phase 12 B0.9): one file per
+// secret name (<dir>/FBMCP_KEY_ALICE), readable only by the service
+// account. Lookup order: env → file → OS keyring. The config watcher also
+// watches this folder, so a changed file applies with no restart.
+type Secrets struct {
+	Dir string `yaml:"dir"`
+}
+
+// ServerNameOrDefault returns server_name, or the OS host name.
+func (c *Config) ServerNameOrDefault() string {
+	if n := strings.TrimSpace(c.ServerName); n != "" {
+		return n
+	}
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return strings.ToLower(h)
+	}
+	return "fbmcp"
 }
 
 // Agent is one co-located fbagent Local API endpoint (phase9_plan.md /
@@ -108,15 +133,24 @@ func (t Trends) OrDefault() Trends {
 // E.1, closing the C11 residual). Zero values mean defaults.
 type Limits struct {
 	// MaxSessions caps concurrent in-flight authenticated requests per
-	// identity (streamable POSTs + held SSE streams).
+	// identity (streamable POSTs and SSE message POSTs). Held GET streams
+	// do not count here (phase 12 B0.7); MaxStreams caps them.
 	MaxSessions int `yaml:"max_sessions"`
 	// RatePerMinute is the sustained request budget per identity.
 	RatePerMinute int `yaml:"rate_per_minute"`
 	// RateBurst is the token-bucket burst size.
 	RateBurst int `yaml:"rate_burst"`
+	// MaxStreams caps held GET streams (/mcp GET, /sse) per identity.
+	MaxStreams int `yaml:"max_streams"`
+	// MaxLiveSessions caps live MCP sessions per identity (phase 12 B0.5).
+	MaxLiveSessions int `yaml:"max_live_sessions"`
+	// SessionIdleMinutes closes a session with no request for this long
+	// (phase 12 B0.5). Global only: the SDK has one timeout per handler.
+	SessionIdleMinutes int `yaml:"session_idle_minutes"`
 }
 
-// OrDefault fills the E.1 defaults: 8 sessions, 30/min sustained, burst 60.
+// OrDefault fills the E.1 defaults: 8 in-flight calls, 30/min sustained,
+// burst 60, 2 streams, 16 live sessions, 30 min idle timeout.
 func (l Limits) OrDefault() Limits {
 	if l.MaxSessions <= 0 {
 		l.MaxSessions = 8
@@ -126,6 +160,38 @@ func (l Limits) OrDefault() Limits {
 	}
 	if l.RateBurst <= 0 {
 		l.RateBurst = 60
+	}
+	if l.MaxStreams <= 0 {
+		l.MaxStreams = 2
+	}
+	if l.MaxLiveSessions <= 0 {
+		l.MaxLiveSessions = 16
+	}
+	if l.SessionIdleMinutes <= 0 {
+		l.SessionIdleMinutes = 30
+	}
+	return l
+}
+
+// Over returns l with every non-zero field of o applied on top.
+func (l Limits) Over(o *Limits) Limits {
+	if o == nil {
+		return l
+	}
+	if o.MaxSessions > 0 {
+		l.MaxSessions = o.MaxSessions
+	}
+	if o.RatePerMinute > 0 {
+		l.RatePerMinute = o.RatePerMinute
+	}
+	if o.RateBurst > 0 {
+		l.RateBurst = o.RateBurst
+	}
+	if o.MaxStreams > 0 {
+		l.MaxStreams = o.MaxStreams
+	}
+	if o.MaxLiveSessions > 0 {
+		l.MaxLiveSessions = o.MaxLiveSessions
 	}
 	return l
 }
@@ -174,9 +240,131 @@ type TLS struct {
 
 // APIIdentity is a remote API-key identity (P5.1).
 type APIIdentity struct {
-	Name    string `yaml:"name"`
-	KeyEnv  string `yaml:"key_env"`
-	MaxTier int    `yaml:"max_tier"`
+	Name   string `yaml:"name"`
+	KeyEnv string `yaml:"key_env"`
+	// MaxTier is the identity ceiling (phase 12 B0.1): missing → 1
+	// (0 for profile autonomous), 0 → read-only, 1, 2. Tier 3 is never
+	// reachable by an API key; values outside 0..2 are a config error.
+	MaxTier *int `yaml:"max_tier,omitempty"`
+	// Profile "autonomous" (phase 12 B8) marks an agent that runs without a
+	// human: max_tier defaults to 0, in-band confirmation is off, and the
+	// profile limits apply. Empty = an interactive client.
+	Profile string `yaml:"profile,omitempty"`
+	// InbandConfirm false sends Tier-1 requests of this identity to the
+	// out-of-band queue (tray / fbmcpctl approve) and refuses its
+	// fb_confirm. Missing → true; profile autonomous forces false.
+	InbandConfirm *bool `yaml:"inband_confirm,omitempty"`
+	// AllowFrom accepts this key only from these TCP peer addresses
+	// (IP or CIDR). Empty = any address. X-Forwarded-For is not trusted.
+	AllowFrom []string `yaml:"allow_from,omitempty"`
+	// Limits override the global limits: block for this identity.
+	Limits *Limits `yaml:"limits,omitempty"`
+}
+
+// ProfileAutonomous is the B8 identity profile for unattended agents.
+const ProfileAutonomous = "autonomous"
+
+// Tier returns a *int for APIIdentity.MaxTier literals.
+func Tier(n int) *int { return &n }
+
+// Autonomous reports profile: autonomous.
+func (id APIIdentity) Autonomous() bool { return id.Profile == ProfileAutonomous }
+
+// EffectiveMaxTier applies the B0.1 / B8 defaults.
+func (id APIIdentity) EffectiveMaxTier() int {
+	if id.MaxTier != nil {
+		return *id.MaxTier
+	}
+	if id.Autonomous() {
+		return 0
+	}
+	return 1
+}
+
+// InbandAllowed reports whether fb_confirm (in-band token / elicitation)
+// may confirm this identity's Tier-1 requests.
+func (id APIIdentity) InbandAllowed() bool {
+	if id.Autonomous() {
+		return false
+	}
+	return id.InbandConfirm == nil || *id.InbandConfirm
+}
+
+// autonomousLimits are the B8 profile defaults: 10/min, burst 20, 2 calls.
+var autonomousLimits = Limits{MaxSessions: 2, RatePerMinute: 10, RateBurst: 20, MaxStreams: 2, MaxLiveSessions: 4}
+
+// EffectiveLimits returns the limits for this identity: the global block
+// (with defaults), then the profile defaults, then the identity override.
+func (id APIIdentity) EffectiveLimits(global Limits) Limits {
+	l := global.OrDefault()
+	if id.Autonomous() {
+		l = l.Over(&autonomousLimits)
+	}
+	return l.Over(id.Limits)
+}
+
+// AllowNets parses AllowFrom (validated by Config.Validate).
+func (id APIIdentity) AllowNets() []*net.IPNet {
+	var out []*net.IPNet
+	for _, s := range id.AllowFrom {
+		if n, err := ParseNet(s); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// ParseNet accepts an IP or a CIDR; a bare IP becomes a /32 or /128.
+func ParseNet(s string) (*net.IPNet, error) {
+	s = strings.TrimSpace(s)
+	if strings.Contains(s, "/") {
+		_, n, err := net.ParseCIDR(s)
+		return n, err
+	}
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return nil, fmt.Errorf("not an IP or CIDR: %q", s)
+	}
+	bits := 128
+	if ip.To4() != nil {
+		ip, bits = ip.To4(), 32
+	}
+	return &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)}, nil
+}
+
+// SecretNameRe is the shape of a secret name (env var, file, keyring key).
+var SecretNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
+
+// Validate checks one identity entry (also used by fbmcpctl apikey new).
+func (id APIIdentity) Validate() error { return id.validate() }
+
+func (id APIIdentity) validate() error {
+	if strings.TrimSpace(id.Name) == "" {
+		return fmt.Errorf("identity: name is required")
+	}
+	if !SecretNameRe.MatchString(id.KeyEnv) {
+		return fmt.Errorf("identity %q: key_env must be a secret name like FBMCP_KEY_ALICE", id.Name)
+	}
+	if id.MaxTier != nil && (*id.MaxTier < 0 || *id.MaxTier > 2) {
+		return fmt.Errorf("identity %q: max_tier must be 0, 1 or 2 (got %d); Tier 3 is never reachable by an API key", id.Name, *id.MaxTier)
+	}
+	if id.Profile != "" && id.Profile != ProfileAutonomous {
+		return fmt.Errorf("identity %q: unknown profile %q (known: %s)", id.Name, id.Profile, ProfileAutonomous)
+	}
+	for _, a := range id.AllowFrom {
+		if _, err := ParseNet(a); err != nil {
+			return fmt.Errorf("identity %q: allow_from: %v", id.Name, err)
+		}
+	}
+	if l := id.Limits; l != nil {
+		if l.MaxSessions < 0 || l.RatePerMinute < 0 || l.RateBurst < 0 || l.MaxStreams < 0 || l.MaxLiveSessions < 0 {
+			return fmt.Errorf("identity %q: limits must not be negative", id.Name)
+		}
+		if l.SessionIdleMinutes != 0 {
+			return fmt.Errorf("identity %q: limits.session_idle_minutes is global only", id.Name)
+		}
+	}
+	return nil
 }
 
 // Retention is ADR-016 keep_days (0 = keep-everything).
@@ -308,6 +496,16 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("database %q: UNC paths are refused", db.ID)
 			}
 		}
+	}
+	seenIdent := map[string]bool{}
+	for _, id := range c.Identities {
+		if err := id.validate(); err != nil {
+			return err
+		}
+		if seenIdent[id.Name] {
+			return fmt.Errorf("duplicate identity %q", id.Name)
+		}
+		seenIdent[id.Name] = true
 	}
 	seenAgent := map[string]bool{}
 	for _, ag := range c.Agents {

@@ -18,6 +18,7 @@ import (
 	"github.com/aleks/fbmcp/internal/config"
 	"github.com/aleks/fbmcp/internal/dbpool"
 	"github.com/aleks/fbmcp/internal/fbparse"
+	"github.com/aleks/fbmcp/internal/identity"
 	"github.com/aleks/fbmcp/internal/idxadvice"
 	"github.com/aleks/fbmcp/internal/queryplan"
 	"github.com/aleks/fbmcp/internal/state"
@@ -143,7 +144,7 @@ func registerIndexAdviceTool(server *mcp.Server, cfg *config.Handle, pools *dbpo
 			for _, n := range res.Notes {
 				fmt.Fprintf(&b, "- %s\n", n)
 			}
-			aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_index_advice", Tier: 0, Decision: "allow",
+			aud.Log(audit.Entry{Identity: identity.Caller(ctx).Name, Database: a.Db, Tool: "fb_index_advice", Tier: 0, Decision: "allow",
 				Detail: map[string]interface{}{"advice_count": 0, "recheck_of": a.RecheckOf}})
 			return text(b.String()), structured, nil
 		}
@@ -170,7 +171,7 @@ func registerIndexAdviceTool(server *mcp.Server, cfg *config.Handle, pools *dbpo
 			}
 		}
 		b.WriteString("\nrisk: every new index adds write overhead and maintenance; check fb_index_stats for near-duplicates before applying; estimates assume column distinctness, they are not measured\n")
-		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_index_advice", Tier: 0, Decision: "allow",
+		aud.Log(audit.Entry{Identity: identity.Caller(ctx).Name, Database: a.Db, Tool: "fb_index_advice", Tier: 0, Decision: "allow",
 			Detail: map[string]interface{}{"advice_count": len(res.Advice), "recheck_of": a.RecheckOf}})
 		return text(b.String()), structured, nil
 	})

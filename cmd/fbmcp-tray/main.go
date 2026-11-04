@@ -3,7 +3,8 @@
 // fbmcp-tray — the out-of-band confirmation surface as a Windows tray app
 // (§5.5c, Tier ≥ 2). Watches the same state dir the running fbmcp server
 // reads/writes and pops a native Approve/Deny dialog for each Tier ≥ 2
-// pending action, writing the same approvals/denials markers the
+// pending action (and each OOB-only one, phase 12 B8), writing the same
+// approvals/denials markers the
 // fbmcpctl approve CLI already writes. The MCP client
 // cannot reach this surface.
 package main

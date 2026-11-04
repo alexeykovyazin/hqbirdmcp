@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -36,6 +35,7 @@ import (
 	"github.com/aleks/fbmcp/internal/qlog"
 	"github.com/aleks/fbmcp/internal/reload"
 	"github.com/aleks/fbmcp/internal/schedule"
+	"github.com/aleks/fbmcp/internal/secrets"
 	"github.com/aleks/fbmcp/internal/state"
 	"github.com/aleks/fbmcp/internal/transport"
 	"github.com/aleks/fbmcp/internal/uigrid"
@@ -50,22 +50,45 @@ var registerExtra func(server *mcp.Server, cfg *config.Handle, pools *dbpool.Man
 var toolMeta = policy.SystemTools()
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "bridge" { // phase 12 B4: stdio → HTTPS relay
+		os.Exit(runBridge(os.Args[2:]))
+	}
 	if maybeRunService() {
 		return
 	}
 	runForegroundCtx(context.Background())
 }
 
+// serviceMode is set when the Windows SCM runs the kernel (phase 12 B0.4):
+// a service never takes the stdio transport, whatever its stdin looks like.
+var serviceMode bool
+
 func runForegroundCtx(ctx context.Context) {
 	cfgPath := flag.String("config", "fbmcp.yaml", "path to fbmcp configuration")
-	serveMode := flag.Bool("serve", false, "unattended mode: no stdio transport; run attach socket + scheduler until terminated")
+	serveFlag := flag.Bool("serve", false, "unattended mode: no stdio transport; run attach socket, scheduler and the HTTPS listener (if configured) until terminated")
 	flag.Parse()
+	serveMode := serveFlag
+	if serviceMode {
+		on := true
+		serveMode = &on
+	}
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fbmcp: %v\n", err)
 		os.Exit(1)
 	}
+	if *serveMode {
+		// B0.10: an unattended kernel also writes stderr to <state>/fbmcp.log
+		// (the Windows SCM drops stderr).
+		if closeLog, lerr := teeStderrToFile(cfg.State.Dir); lerr != nil {
+			fmt.Fprintf(os.Stderr, "fbmcp: log file: %v\n", lerr)
+		} else {
+			flushLog = closeLog
+			defer closeLog()
+		}
+	}
+	secrets.SetDir(cfg.Secrets.Dir)                       // B0.9: env → file → keyring
 	identity.SetLocalMaxTier(cfg.LocalMaxTierOrDefault()) // WS2.3; re-applied on reload via ApplyAuth
 	instLock, err := instlock.Acquire(cfg.State.Dir)      // D8: one kernel; extra stdio clients attach
 	if err != nil {
@@ -78,26 +101,22 @@ func runForegroundCtx(ctx context.Context) {
 			}
 			return
 		}
-		fmt.Fprintf(os.Stderr, "fbmcp: %v\n", err)
-		os.Exit(1)
+		die("fbmcp: %v", err)
 	}
 	defer instLock.Release()
 	aud, err := audit.Open(cfg.State.Dir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "fbmcp: audit: %v\n", err)
-		os.Exit(1)
+		die("fbmcp: audit: %v", err)
 	}
 	defer aud.Close()
 	ql, err := qlog.Open(cfg.State.Dir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "fbmcp: qlog: %v\n", err)
-		os.Exit(1)
+		die("fbmcp: qlog: %v", err)
 	}
 	defer ql.Close()
 	st, err := state.Open(cfg.State.Dir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "fbmcp: state: %v\n", err)
-		os.Exit(1)
+		die("fbmcp: state: %v", err)
 	}
 
 	g := gate.New(st, aud)
@@ -117,12 +136,14 @@ func runForegroundCtx(ctx context.Context) {
 		Db string `json:"db" jsonschema:"registry id of the database"`
 	}
 
-	mcp.AddTool(server, &mcp.Tool{Name: "fb_ping", Description: "liveness probe"}, func(ctx context.Context, req *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
-		return text("pong"), nil, nil
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_ping", Description: "liveness probe; names the server (server_name) and the caller identity"}, func(ctx context.Context, req *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
+		id := identity.Caller(ctx)
+		return text(fmt.Sprintf("pong\nserver: %s\nidentity: %s (max tier %d)\n", handle.Current().ServerNameOrDefault(), id.Name, id.MaxTier)), nil, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_db_list", Description: "Tier 0: list registered databases with health"}, func(ctx context.Context, req *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
 		var b strings.Builder
+		fmt.Fprintf(&b, "server: %s\n", handle.Current().ServerNameOrDefault())
 		for _, db := range handle.Current().Databases {
 			s := "online"
 			if err := pools.Health(ctx, db.ID); err != nil {
@@ -135,10 +156,10 @@ func runForegroundCtx(ctx context.Context) {
 
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_db_health", Description: "Tier 0: probe a registered database"}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
 		if err := pools.Health(ctx, a.Db); err != nil {
-			aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_db_health", Tier: 0, Decision: "error", Detail: map[string]interface{}{"error": err.Error()}})
+			aud.Log(audit.Entry{Identity: identity.Caller(ctx).Name, Database: a.Db, Tool: "fb_db_health", Tier: 0, Decision: "error", Detail: map[string]interface{}{"error": err.Error()}})
 			return errText("offline: " + err.Error())
 		}
-		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_db_health", Tier: 0, Decision: "allow"})
+		aud.Log(audit.Entry{Identity: identity.Caller(ctx).Name, Database: a.Db, Tool: "fb_db_health", Tier: 0, Decision: "allow"})
 		return text("online"), nil, nil
 	})
 
@@ -162,11 +183,28 @@ func runForegroundCtx(ctx context.Context) {
 	}
 	bus, err := notify.New(cfg.State.Dir, cfg.Notify.WebhookURL, hookSecret)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "fbmcp: notify: %v\n", err)
-		os.Exit(1)
+		die("fbmcp: notify: %v", err)
 	}
 	gt.bus = bus
-	httpLn := &httpListener{mcp: server}
+	bus.SetServer(cfg.ServerNameOrDefault())
+	httpLn := &httpListener{mcp: server, onAuthEvent: func(ev transport.AuthEvent) {
+		// B0.8: who connected from where. Values only, never keys.
+		dec := "allow"
+		if ev.Kind == "auth.denied" {
+			dec = "denied"
+		}
+		d := map[string]interface{}{"remote_addr": ev.RemoteAddr}
+		if ev.Profile != "" {
+			d["profile"] = ev.Profile
+		}
+		if ev.Reason != "" {
+			d["reason"] = ev.Reason
+		}
+		if ev.UserAgent != "" {
+			d["user_agent"] = ev.UserAgent
+		}
+		aud.Log(audit.Entry{Identity: ev.Identity, Tool: ev.Kind, Tier: 0, Decision: dec, Detail: d})
+	}}
 	gt.httpLn = httpLn
 	gt.reloader = reload.New(handle, gt.reloadHooks())
 	runner.SetHook(func(j state.Job) {
@@ -232,10 +270,11 @@ func runForegroundCtx(ctx context.Context) {
 		if err != nil {
 			return errText("gate error: " + err.Error())
 		}
-		tok := gate.IssueToken(p.ID, argHash)
 		var b strings.Builder
 		b.WriteString(gate.ImpactStatement(p))
-		fmt.Fprintf(&b, "In-band token (Tier 1 only): %s\n", tok)
+		if !p.OOBOnly {
+			fmt.Fprintf(&b, "In-band token (Tier 1 only): %s\n", gate.IssueToken(p.ID, argHash))
+		}
 		return text(b.String()), nil, nil
 	})
 
@@ -306,17 +345,17 @@ func runForegroundCtx(ctx context.Context) {
 				fmt.Fprintf(&b, "%s: %v\n", k, v)
 			}
 		}
-		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_info", Tier: 0, Decision: "allow"})
+		aud.Log(audit.Entry{Identity: identity.Caller(ctx).Name, Database: a.Db, Tool: "fb_info", Tier: 0, Decision: "allow"})
 		return text(b.String()), nil, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_connected_dbs", Description: "Tier 0: list active databases on the chosen instance and map them to managed db ids"}, func(ctx context.Context, req *mcp.CallToolRequest, a instanceArg) (*mcp.CallToolResult, any, error) {
 		info, err := facts.ConnectedDatabases(handle.Current(), a.Instance)
 		if err != nil {
-			aud.Log(audit.Entry{Identity: "local", Database: a.Instance, Tool: "fb_connected_dbs", Tier: 0, Decision: "error", Detail: map[string]interface{}{"error": err.Error()}})
+			aud.Log(audit.Entry{Identity: identity.Caller(ctx).Name, Database: a.Instance, Tool: "fb_connected_dbs", Tier: 0, Decision: "error", Detail: map[string]interface{}{"error": err.Error()}})
 			return errText("error: " + err.Error())
 		}
-		aud.Log(audit.Entry{Identity: "local", Database: a.Instance, Tool: "fb_connected_dbs", Tier: 0, Decision: "allow"})
+		aud.Log(audit.Entry{Identity: identity.Caller(ctx).Name, Database: a.Instance, Tool: "fb_connected_dbs", Tier: 0, Decision: "allow"})
 		return text(formatConnectedDBs(info)), nil, nil
 	})
 	registerDBTool(server, gt)
@@ -354,7 +393,7 @@ func runForegroundCtx(ctx context.Context) {
 				break
 			}
 		}
-		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_sessions", Tier: 0, Decision: "allow"})
+		aud.Log(audit.Entry{Identity: identity.Caller(ctx).Name, Database: a.Db, Tool: "fb_sessions", Tier: 0, Decision: "allow"})
 		return text(b.String()), nil, nil
 	})
 
@@ -371,7 +410,7 @@ func runForegroundCtx(ctx context.Context) {
 			return errText("error: " + err.Error())
 		}
 		out := fmt.Sprintf("oldest_transaction: %d\noldest_active: %d\noldest_snapshot: %d\nnext: %d\nnext-oit gap: %d\n", oit, oat, ost, next, next-oit)
-		aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_transactions", Tier: 0, Decision: "allow"})
+		aud.Log(audit.Entry{Identity: identity.Caller(ctx).Name, Database: a.Db, Tool: "fb_transactions", Tier: 0, Decision: "allow"})
 		return text(out), nil, nil
 	})
 
@@ -379,7 +418,7 @@ func runForegroundCtx(ctx context.Context) {
 	uigrid.RegisterResource(server, gt.grid, aud) // phase10: ui://fbmcp/results/{id}, one audit line per read (no-op when grid disabled)
 	registerSurfaces(server, handle, st)
 	if err := serve(ctx, server, handle, gt, *serveMode); err != nil {
-		log.Fatalf("fbmcp: server: %v", err)
+		die("fbmcp: server: %v", err)
 	}
 }
 
@@ -433,14 +472,21 @@ func serve(ctx context.Context, server *mcp.Server, handle *config.Handle, gt *g
 		_ = gt.httpLn.Close(ctx)
 	}()
 	if serveMode {
-		// Unattended mode (8M/M2 soak): no stdio transport — a detached
-		// kernel with no client must not exit on stdin EOF. The attach
-		// socket, scheduler and trends sampler keep the process useful;
-		// Ctrl+C / SIGTERM stops it.
+		// Unattended mode (8M/M2 soak; phase 12 remote server): no stdio
+		// transport — a detached kernel with no client must not exit on
+		// stdin EOF. The attach socket, scheduler, trends sampler and the
+		// HTTPS listener keep the process useful. Ctrl+C / SIGTERM stops it,
+		// and so does ctx (the Windows service Stop, B0.4).
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
+		defer signal.Stop(ch)
 		fmt.Fprintln(os.Stderr, "fbmcp: serve mode (no stdio); interrupt or SIGTERM to stop")
-		<-ch
+		select {
+		case s := <-ch:
+			fmt.Fprintf(os.Stderr, "fbmcp: %v received, stopping\n", s)
+		case <-ctx.Done():
+			fmt.Fprintln(os.Stderr, "fbmcp: stop requested, stopping")
+		}
 		return nil
 	}
 	if attach.PipedStdin() {

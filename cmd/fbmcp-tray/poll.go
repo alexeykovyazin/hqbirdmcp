@@ -44,7 +44,9 @@ func (t *tracker) Snooze(id string) {
 // pollLoop re-opens the state store every tick — state.Open reads
 // state.json once per call (it is not a live handle), so this is the only
 // way a second process notices pending actions the running fbmcp server
-// added after this process started. New Tier >= 2 ids are queued once each;
+// added after this process started. New Tier >= 2 ids, and OOB-only ids of
+// any tier (phase 12 B8: an autonomous key's Tier-1 request waits for the
+// operator), are queued once each;
 // ids leave the shown/snooze sets when they leave Pending() (consumed by
 // approval/denial/expiry). Ids are never reused (gate.newID is 12 random
 // bytes), so pruning is only about bounding memory.
@@ -76,7 +78,7 @@ func pollOnce(stateDir string, tr *tracker, queue chan<- state.PendingAction) {
 	live := map[string]bool{}
 	count := 0
 	for _, p := range st.Pending() {
-		if p.Tier < 2 {
+		if !needsOperator(p) {
 			continue
 		}
 		live[p.ID] = true
@@ -122,4 +124,10 @@ func updateTooltip(count int) {
 		return
 	}
 	systray.SetTooltip(fmt.Sprintf("fbmcp — %d pending approval(s)", count))
+}
+
+// needsOperator: Tier 2+ always waits for the operator; a lower tier waits
+// only when the requester may not confirm in-band (OOBOnly, B8).
+func needsOperator(p state.PendingAction) bool {
+	return p.Tier >= 2 || p.OOBOnly
 }

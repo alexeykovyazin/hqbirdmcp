@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -132,7 +134,7 @@ func registerScheduleList(server *mcp.Server, gt *gatedTools) {
 		if n == 0 {
 			return text("(no schedules)"), nil, nil
 		}
-		gt.aud.Log(audit.Entry{Identity: "local", Database: a.Db, Tool: "fb_schedule_list", Tier: 0, Decision: "allow"})
+		gt.aud.Log(audit.Entry{Identity: identity.Caller(ctx).Name, Database: a.Db, Tool: "fb_schedule_list", Tier: 0, Decision: "allow"})
 		return text(b.String()), nil, nil
 	})
 }
@@ -187,7 +189,7 @@ func registerScheduleCreate(server *mcp.Server, gt *gatedTools) {
 		gt.mu.Unlock()
 		var b strings.Builder
 		b.WriteString(gate.ImpactStatement(p))
-		if tier <= 1 {
+		if tier <= 1 && !p.OOBOnly {
 			fmt.Fprintf(&b, "In-band token (Tier 1 only): %s\n", gate.IssueToken(p.ID, argHash))
 		}
 		return text(b.String()), nil, nil
@@ -379,35 +381,134 @@ func (gt *gatedTools) runServiceControl(ctx context.Context, dbID string, args m
 
 func controlService(ctx context.Context, svc, action string) (string, error) {
 	if runtime.GOOS == "windows" {
-		bin := `C:\Windows\System32\sc.exe`
-		switch action {
-		case "start":
-			res := adminexec.Run(ctx, bin, []string{"start", svc}, 60*time.Second, 64<<10, nil)
-			if res.Err != nil {
-				return "", fmt.Errorf("sc start: %s %v", res.Output, res.Err)
-			}
-			return strings.TrimSpace(res.Output), nil
-		case "stop":
-			res := adminexec.Run(ctx, bin, []string{"stop", svc}, 60*time.Second, 64<<10, nil)
-			if res.Err != nil {
-				return "", fmt.Errorf("sc stop: %s %v", res.Output, res.Err)
-			}
-			return strings.TrimSpace(res.Output), nil
-		case "restart":
-			_ = adminexec.Run(ctx, bin, []string{"stop", svc}, 60*time.Second, 64<<10, nil)
-			res := adminexec.Run(ctx, bin, []string{"start", svc}, 60*time.Second, 64<<10, nil)
-			if res.Err != nil {
-				return "", fmt.Errorf("sc restart: %s %v", res.Output, res.Err)
-			}
-			return strings.TrimSpace(res.Output), nil
-		}
+		return controlServiceSC(ctx, svc, action)
 	}
-	bin := "/bin/systemctl"
-	res := adminexec.Run(ctx, bin, []string{action, svc}, 60*time.Second, 64<<10, nil)
+	bin, args := systemctlArgv(action, svc)
+	res := adminexec.Run(ctx, bin, args, 60*time.Second, 64<<10, nil)
 	if res.Err != nil {
 		return "", fmt.Errorf("systemctl %s: %s %v", action, res.Output, res.Err)
 	}
 	return strings.TrimSpace(res.Output), nil
+}
+
+// scRun runs sc.exe; scPoll is the wait between state queries; scLimit
+// bounds each wait for a final state (test seams).
+var (
+	scRun = func(ctx context.Context, args ...string) adminexec.Result {
+		return adminexec.Run(ctx, `C:\Windows\System32\sc.exe`, args, 60*time.Second, 64<<10, nil)
+	}
+	scPoll    = 500 * time.Millisecond
+	scLimit   = 60 * time.Second
+	scStateRe = regexp.MustCompile(`STATE\s*:\s*(\d+)`)
+)
+
+// SCM state codes as `sc query` prints them.
+const (
+	scStopped = 1
+	scRunning = 4
+)
+
+var scStateNames = map[int]string{1: "STOPPED", 2: "START_PENDING", 3: "STOP_PENDING", 4: "RUNNING", 5: "CONTINUE_PENDING", 6: "PAUSE_PENDING", 7: "PAUSED"}
+
+func scState(ctx context.Context, svc string) (int, error) {
+	res := scRun(ctx, "query", svc)
+	m := scStateRe.FindStringSubmatch(res.Output)
+	if res.Err != nil || m == nil {
+		return 0, fmt.Errorf("sc query %s: %s %v", svc, strings.TrimSpace(res.Output), res.Err)
+	}
+	n, _ := strconv.Atoi(m[1])
+	return n, nil
+}
+
+// scWait polls until the service reaches state want.
+func scWait(ctx context.Context, svc string, want int, limit time.Duration) error {
+	deadline := time.Now().Add(limit)
+	for {
+		st, err := scState(ctx, svc)
+		if err != nil {
+			return err
+		}
+		if st == want {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%s is %s, not %s, after %s", svc, scStateNames[st], scStateNames[want], limit)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(scPoll):
+		}
+	}
+}
+
+// controlServiceSC: sc.exe returns at once (START_PENDING / STOP_PENDING),
+// so every action waits for the final state. A restart waits for STOPPED
+// before the start: a start during STOP_PENDING fails with 1056 and left
+// Firebird stopped (phase 12 test W). A 1056 start still gets one retry
+// after the service has stopped (the same rule as the agent path).
+func controlServiceSC(ctx context.Context, svc, action string) (string, error) {
+	limit := scLimit
+	stop := func() error {
+		res := scRun(ctx, "stop", svc)
+		// 1062: not started; 1061: a stop is already pending — wait for it.
+		if res.Err != nil && !strings.Contains(res.Output, "1062") && !strings.Contains(res.Output, "1061") {
+			return fmt.Errorf("sc stop: %s %v", strings.TrimSpace(res.Output), res.Err)
+		}
+		return scWait(ctx, svc, scStopped, limit)
+	}
+	start := func() (string, error) {
+		for attempt := 1; ; attempt++ {
+			res := scRun(ctx, "start", svc)
+			if res.Err == nil {
+				return "", scWait(ctx, svc, scRunning, limit)
+			}
+			if !strings.Contains(res.Output, "1056") {
+				return "", fmt.Errorf("sc start: %s %v", strings.TrimSpace(res.Output), res.Err)
+			}
+			if st, err := scState(ctx, svc); err == nil && st == scRunning {
+				return " (it was already running)", nil
+			}
+			if attempt == 2 {
+				return "", fmt.Errorf("sc start: %s %v (after one retry)", strings.TrimSpace(res.Output), res.Err)
+			}
+			if err := scWait(ctx, svc, scStopped, limit); err != nil {
+				return "", fmt.Errorf("sc start: 1056 and %w", err)
+			}
+		}
+	}
+	switch action {
+	case "stop":
+		if err := stop(); err != nil {
+			return "", err
+		}
+		return svc + ": STOPPED", nil
+	case "start":
+		note, err := start()
+		if err != nil {
+			return "", err
+		}
+		return svc + ": RUNNING" + note, nil
+	case "restart":
+		if err := stop(); err != nil {
+			return "", fmt.Errorf("restart: %w", err)
+		}
+		if _, err := start(); err != nil {
+			return "", fmt.Errorf("restart: %s is stopped now: %w", svc, err)
+		}
+		return svc + ": restarted (STOPPED, then RUNNING)", nil
+	}
+	return "", fmt.Errorf("unknown service action %q", action)
+}
+
+// systemctlArgv: root runs systemctl itself; a service user (R7, e.g.
+// firebird) goes through sudo -n with the sudoers.fbmcp rule (phase 12
+// B10 / R9). -n: never wait for a password, fail at once.
+func systemctlArgv(action, svc string) (string, []string) {
+	if os.Geteuid() == 0 {
+		return "/bin/systemctl", []string{action, svc}
+	}
+	return "/usr/bin/sudo", []string{"-n", "/bin/systemctl", action, svc}
 }
 
 func fmtTime(t time.Time) string {

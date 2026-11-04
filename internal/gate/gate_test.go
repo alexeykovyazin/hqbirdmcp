@@ -108,3 +108,27 @@ func TestChannelsAdvertised(t *testing.T) {
 		t.Fatalf("tier1 channels: %v", c)
 	}
 }
+
+// Phase 12 B8: an out-of-band-only identity (profile autonomous or
+// inband_confirm: false) cannot confirm a Tier-1 action in-band; the
+// action survives and the operator approves it out of band.
+func TestOOBOnlyIdentityTier1(t *testing.T) {
+	g, _, _ := newGate(t)
+	p, err := g.Request(policy.Identity{Name: "bot", MaxTier: 1, OOBOnly: true, Profile: "autonomous"}, "spike5", demoMeta, "demo impact", "ah", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.OOBOnly {
+		t.Fatal("pending action lost the OOBOnly flag")
+	}
+	if !strings.Contains(ImpactStatement(p), "out-of-band") {
+		t.Fatalf("impact statement must tell the operator: %q", ImpactStatement(p))
+	}
+	tok := IssueToken(p.ID, "ah")
+	if _, err := g.Confirm(p.ID, "bot", ChannelInBand, tok); err != ErrOOBOnly {
+		t.Fatalf("in-band confirm by an OOB-only identity: err=%v, want ErrOOBOnly", err)
+	}
+	if _, err := g.Confirm(p.ID, "bot", ChannelOutOfBand, ""); err != nil {
+		t.Fatalf("out-of-band approve: %v", err)
+	}
+}

@@ -155,4 +155,34 @@ If Claude cannot start the server, check:
 | Firebird offline | HQbird services on ports 3053/3054/3055; `fb_db_health` |
 | Tier-2 “confirmation rejected” | Expected in-band. Use `fbmcpctl approve` |
 
-Remote `/mcp` HTTP is **not** what Claude Desktop uses. Leave `listen` empty.
+Remote `/mcp` HTTP is **not** what this local setup uses. Leave `listen` empty.
+
+## 8. Remote server (fbmcp on another host)
+
+When fbmcp runs on the database server in remote mode
+([`remote.md`](remote.md)), Claude Desktop connects through the bridge.
+Store the API key once: `fbmcpctl secret set FBMCP_KEY_SRV1` (stdin).
+
+```json
+{
+  "mcpServers": {
+    "fb-srv1": {
+      "command": "C:\fbmcp\fbmcp.exe",
+      "args": ["bridge", "--url", "https://srv1:8443/mcp",
+               "--key-env", "FBMCP_KEY_SRV1", "--pin", "sha256:<hex>"]
+    }
+  }
+}
+```
+
+The pin comes from the server admin (`fbmcpctl tls selfsign` prints it).
+Claude Code can connect directly over HTTP; keep the key out of the file
+with an env reference (the variable must be set for your user):
+
+```json
+{"mcpServers": {"fb-srv1": {"type": "http", "url": "https://srv1:8443/mcp",
+  "headers": {"Authorization": "Bearer ${FBMCP_KEY_SRV1}"}}}}
+```
+
+A self-signed cert then needs `NODE_EXTRA_CA_CERTS=<srv1.crt>`. Tier 2
+approvals still happen on the server (tray or `fbmcpctl approve`).

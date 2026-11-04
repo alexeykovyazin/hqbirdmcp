@@ -8,3 +8,7 @@
 *.syso binary
 *.ico binary
 **/testdata/fuzz/** -text
+# Linux packaging must keep LF (phase 12 F19: CRLF breaks systemd, sudo, sh).
+*.service text eol=lf
+*.sh text eol=lf
+packaging/posture/sudoers.* text eol=lf

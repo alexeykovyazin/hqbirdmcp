@@ -146,7 +146,7 @@ func TestCompareListenAuthNotify(t *testing.T) {
 	a, b := testSnap(), testSnap()
 	b.Listen = "10.0.0.5:8443"
 	b.TLS = TLS{Cert: "c", Key: "k"}
-	b.Identities = []APIIdentity{{Name: "op", KeyEnv: "K", MaxTier: 2}}
+	b.Identities = []APIIdentity{{Name: "op", KeyEnv: "K", MaxTier: Tier(2)}}
 	b.Notify.WebhookURL = "https://example"
 	d := CompareSnapshots(a, b)
 	if !d.Listener || !d.Auth || !d.Notify {
