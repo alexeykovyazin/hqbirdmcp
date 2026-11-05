@@ -88,8 +88,15 @@ func (h *linuxHqbirdHost) PrepareFolders(p hqbirdsetup.Paths) error {
 		{p.StateDir, uid, gid, 0o700},
 		{p.SecretsDir, uid, gid, 0o700},
 		{p.TLSDir, 0, gid, 0o750},
+		// backups and work files of the registered databases: fbmcp and
+		// the Firebird server (same account) write there
+		{p.BackupRoot, uid, gid, 0o750},
+		{p.WorkRoot, uid, gid, 0o750},
 	}
 	for _, d := range dirs {
+		if d.path == "" {
+			continue
+		}
 		if err := os.MkdirAll(d.path, d.mode); err != nil {
 			return err
 		}

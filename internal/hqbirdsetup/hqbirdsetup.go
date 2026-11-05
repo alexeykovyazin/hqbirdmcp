@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/aleks/fbmcp/internal/config"
+	"github.com/aleks/fbmcp/internal/configedit"
 )
 
 // DefaultPort is the remote-mode port (8443 and 9443 belong to goafts).
@@ -33,6 +34,10 @@ type Paths struct {
 	SecretsDir  string
 	TLSDir      string
 	ConnectFile string
+	// BackupRoot and WorkRoot hold one folder per instance: the default
+	// backup_dir and work_dir of the databases hqbird-install registers.
+	BackupRoot string
+	WorkRoot   string
 }
 
 // ManagedFile lists the entries this command owns.
@@ -43,14 +48,16 @@ func (p Paths) ManagedFile() string { return filepath.Join(p.StateDir, "hqbird-m
 func DefaultPaths(goos, dataDir string) Paths {
 	if dataDir == "" && goos == "linux" {
 		return Paths{Config: "/etc/fbmcp/fbmcp.yaml", StateDir: "/var/lib/fbmcp", SecretsDir: "/etc/fbmcp/secrets",
-			TLSDir: "/etc/fbmcp/tls", ConnectFile: "/etc/fbmcp/connect.txt"}
+			TLSDir: "/etc/fbmcp/tls", ConnectFile: "/etc/fbmcp/connect.txt",
+			// the unit's ReadWritePaths
+			BackupRoot: "/var/lib/fbmcp-backups", WorkRoot: "/var/lib/fbmcp-work"}
 	}
 	if dataDir == "" {
 		dataDir = `C:\HQbirdData\fbmcp`
 	}
 	j := func(s string) string { return joinFor(goos, dataDir, s) }
 	return Paths{DataDir: dataDir, Config: j("fbmcp.yaml"), StateDir: j("state"), SecretsDir: j("secrets"),
-		TLSDir: j("tls"), ConnectFile: j("connect.txt")}
+		TLSDir: j("tls"), ConnectFile: j("connect.txt"), BackupRoot: j("backups"), WorkRoot: j("work")}
 }
 
 // joinFor joins with the separator of goos, so the Windows layout is right
@@ -76,6 +83,9 @@ type Line struct {
 	InstanceID      string `json:"instance_id,omitempty"`
 	SysdbaUser      string `json:"sysdba_user,omitempty"`
 	SysdbaPassword  string `json:"sysdba_password,omitempty"`
+	// Databases are the database files of the line: databases.conf and
+	// the agent's list of recently attached databases.
+	Databases []string `json:"databases,omitempty"`
 	// LocalAPIOff: local_api.enabled is false in agent_config.json.
 	LocalAPIOff bool `json:"-"`
 }
@@ -112,6 +122,9 @@ func (l *Line) Merge(o Line) {
 	str(&l.InstanceID, o.InstanceID)
 	str(&l.SysdbaUser, o.SysdbaUser)
 	str(&l.SysdbaPassword, o.SysdbaPassword)
+	if len(l.Databases) == 0 {
+		l.Databases = o.Databases
+	}
 	l.LocalAPIOff = l.LocalAPIOff || o.LocalAPIOff
 }
 
@@ -132,6 +145,9 @@ type agentFile struct {
 		Token      string `json:"token"`
 		InstanceID string `json:"instance_id"`
 	} `json:"local_api"`
+	Storage struct {
+		DataPath string `json:"data_path"`
+	} `json:"storage"`
 }
 
 // firebirdRecord is hqbird2027-firebird.json in the agent folder (the
@@ -200,6 +216,13 @@ func (l *Line) FillFromFiles(findService func(installPath string) string) []stri
 	}
 	if l.InstanceID == "" {
 		l.InstanceID = firstNonEmpty(af.LocalAPI.InstanceID, af.Agent.ID)
+	}
+	if len(l.Databases) == 0 && l.FirebirdBin != "" {
+		data := af.Storage.DataPath
+		if data != "" && !filepath.IsAbs(data) {
+			data = filepath.Join(dir, data) // fbagent resolves it from its folder
+		}
+		l.Databases = lineDatabases(configedit.DatabasesConfPath(l.FirebirdBin), data)
 	}
 	return notes
 }
@@ -295,6 +318,9 @@ type Managed struct {
 	Instances []string `json:"instances,omitempty"`
 	Agents    []string `json:"agents,omitempty"`
 	Secrets   []string `json:"secrets,omitempty"`
+	// Databases are the ids of the databases registered from the lines
+	// (databases.conf, recently attached); they go with their line.
+	Databases []string `json:"databases,omitempty"`
 	Remote    Remote   `json:"remote,omitempty"`
 	// Firewall are the Linux firewall rules added (removed with the last
 	// line). Windows uses the rule name fbmcp-remote.
@@ -431,6 +457,7 @@ func Reconcile(old *config.Config, m Managed, lines []Line, p Paths, haveSecret 
 	}
 	managedInst := set(m.Instances)
 	managedAgent := set(m.Agents)
+	lineDBs := map[string][]string{}
 
 	sort.Slice(lines, func(i, j int) bool { return lines[i].FirebirdPort < lines[j].FirebirdPort })
 	wantInst := map[string]config.FBInstance{}
@@ -461,13 +488,20 @@ func Reconcile(old *config.Config, m Managed, lines []Line, p Paths, haveSecret 
 			user := firstNonEmpty(l.SysdbaUser, "SYSDBA")
 			in.ServiceUser, in.ServiceSecretEnv = user, env
 			in.DefaultAdminUser, in.DefaultAdminSecretEnv = user, env
+			// The read pool uses SYSDBA too, always in a read-only
+			// transaction (owner 2026-11-05; doctor warns about it).
+			in.DefaultROUser, in.DefaultROSecretEnv = user, env
 			if l.SysdbaPassword != "" {
 				pl.Secrets[env] = l.SysdbaPassword
 			}
 		} else {
 			pl.Notes = append(pl.Notes, fmt.Sprintf("line %s: no SYSDBA password; Services API tools need: fbmcp ctl secret set --dir %s %s", l.Line, cfg.Secrets.Dir, env))
 		}
+		if p.BackupRoot != "" && p.WorkRoot != "" {
+			in.DefaultBackupDir, in.DefaultWorkDir = joinLike(p.BackupRoot, id), joinLike(p.WorkRoot, id)
+		}
 		wantInst[id] = in
+		lineDBs[id] = l.Databases
 		pline := PlanLine{Line: l.Line, Instance: id, FirebirdPort: l.FirebirdPort, FirebirdService: l.FirebirdService, AgentConfig: l.AgentConfig}
 
 		aid := AgentID(l.FirebirdPort)
@@ -493,6 +527,22 @@ func Reconcile(old *config.Config, m Managed, lines []Line, p Paths, haveSecret 
 		}
 		pl.Lines = append(pl.Lines, pline)
 	}
+
+	// Databases of a line that is gone go with it; an instance they used is
+	// then free to go too.
+	managedDB := set(m.Databases)
+	var dbs []config.Database
+	for _, d := range cfg.Databases {
+		if _, live := wantInst[d.Instance]; managedDB[d.ID] && managedInst[d.Instance] && !live {
+			pl.Changes = append(pl.Changes, "remove database "+d.ID)
+			continue
+		}
+		if managedDB[d.ID] {
+			pl.Managed.Databases = append(pl.Managed.Databases, d.ID)
+		}
+		dbs = append(dbs, d)
+	}
+	cfg.Databases = dbs
 
 	// Instances: update or drop the managed ones, keep the operator's, add new.
 	used := map[string]bool{}
@@ -532,6 +582,7 @@ func Reconcile(old *config.Config, m Managed, lines []Line, p Paths, haveSecret 
 		}
 	}
 	cfg.Instances = insts
+	pl.addDatabases(&cfg, lineDBs)
 
 	var agents []config.Agent
 	for _, ag := range cfg.Agents {
@@ -585,6 +636,73 @@ func Reconcile(old *config.Config, m Managed, lines []Line, p Paths, haveSecret 
 	return pl
 }
 
+// addDatabases registers the databases of the managed lines that no entry
+// holds yet. A line with no SYSDBA password gets none: a database needs a
+// read and an admin user.
+func (pl *Plan) addDatabases(cfg *config.Config, lineDBs map[string][]string) {
+	takenID := map[string]bool{}
+	takenPath := map[string]bool{}
+	for _, d := range cfg.Databases {
+		takenID[strings.ToLower(d.ID)] = true
+		takenPath[config.NormalizeDBPath(d.Path)] = true
+	}
+	for _, l := range pl.Lines {
+		var paths []string
+		for _, path := range lineDBs[l.Instance] {
+			if !takenPath[config.NormalizeDBPath(path)] {
+				paths = append(paths, path)
+			}
+		}
+		if len(paths) == 0 {
+			continue
+		}
+		in, err := cfg.Instance(l.Instance)
+		if err == nil {
+			err = in.ValidateRegistrationDefaults()
+		}
+		if err != nil {
+			pl.Notes = append(pl.Notes, fmt.Sprintf("line %s: %d database(s) not registered: no SYSDBA password", l.Line, len(paths)))
+			continue
+		}
+		for _, path := range paths {
+			id := uniqueDBID(config.SuggestedDBID(path), l.Instance, takenID)
+			db, err := config.MaterializeDatabase(cfg, config.RegisterOptions{InstanceID: l.Instance, DBID: id, Path: path})
+			if err != nil {
+				pl.Notes = append(pl.Notes, fmt.Sprintf("line %s: database %s not registered: %v", l.Line, path, err))
+				continue
+			}
+			takenID[id] = true
+			takenPath[config.NormalizeDBPath(path)] = true
+			cfg.Databases = append(cfg.Databases, db)
+			pl.Managed.Databases = append(pl.Managed.Databases, id)
+			pl.Changes = append(pl.Changes, fmt.Sprintf("add database %s (%s)", id, path))
+		}
+	}
+}
+
+// uniqueDBID is base, else base_<instance>, else base_<instance>_2 and on,
+// cut to the 64 characters an id may have.
+func uniqueDBID(base, inst string, taken map[string]bool) string {
+	cut := func(s, suffix string) string {
+		if len(s)+len(suffix) > 64 {
+			s = s[:64-len(suffix)]
+		}
+		return s + suffix
+	}
+	if id := cut(base, ""); !taken[id] {
+		return id
+	}
+	for n := 1; ; n++ {
+		suffix := "_" + inst
+		if n > 1 {
+			suffix += fmt.Sprintf("_%d", n)
+		}
+		if id := cut(base, suffix); !taken[id] {
+			return id
+		}
+	}
+}
+
 // StaleSecrets are secret files this command wrote that no entry uses now.
 func StaleSecrets(old, now Managed) []string {
 	keep := set(now.Secrets)
@@ -613,6 +731,12 @@ func mergeInstance(have, want config.FBInstance) config.FBInstance {
 		if out.DefaultAdminUser == "" || out.DefaultAdminSecretEnv == want.ServiceSecretEnv {
 			out.DefaultAdminUser, out.DefaultAdminSecretEnv = want.DefaultAdminUser, want.DefaultAdminSecretEnv
 		}
+		if out.DefaultROUser == "" || out.DefaultROSecretEnv == want.ServiceSecretEnv {
+			out.DefaultROUser, out.DefaultROSecretEnv = want.DefaultROUser, want.DefaultROSecretEnv
+		}
+	}
+	if out.DefaultBackupDir == "" && out.DefaultWorkDir == "" {
+		out.DefaultBackupDir, out.DefaultWorkDir = want.DefaultBackupDir, want.DefaultWorkDir
 	}
 	return out
 }

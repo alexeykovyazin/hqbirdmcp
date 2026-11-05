@@ -23,6 +23,8 @@ type fakeHost struct {
 	calls    []string
 	state    string
 	firewall []string
+	// fwErr: the firewall is off (ufw inactive, no firewalld or ufw).
+	fwErr error
 }
 
 func (f *fakeHost) note(s string) { f.calls = append(f.calls, s) }
@@ -56,7 +58,7 @@ func (f *fakeHost) Firewall(port int, allow []string, _ string, m *hqbirdsetup.M
 	f.note("firewall:" + strconv.Itoa(port) + ":" + strings.Join(allow, ","))
 	m.Firewall = []string{"fbmcp-remote"}
 	f.firewall = m.Firewall
-	return nil
+	return f.fwErr
 }
 func (f *fakeHost) RemoveFirewall(m *hqbirdsetup.Managed) error {
 	if len(m.Firewall) > 0 {
@@ -314,6 +316,66 @@ func TestHqbirdInstallRemote(t *testing.T) {
 	}
 	if res.Remote.Enabled || h.config().Listen != "" || !h.host.did("firewall-off") {
 		t.Fatalf("after doctor FAIL: %+v listen %q calls %v", res.Remote, h.config().Listen, h.host.calls)
+	}
+}
+
+func TestHqbirdInstallRemoteNoFirewall(t *testing.T) {
+	h := newHQTest(t)
+	h.addLine("fb50", 3050)
+	if _, err := h.run("--allow-from", "10.0.0.0/24"); err != nil {
+		t.Fatal(err)
+	}
+	addIdentity(t, filepath.Join(h.dataDir(), "fbmcp.yaml"))
+
+	// The firewall is off: the allow-from list would limit nothing, so
+	// remote mode stays off and the rule goes again.
+	h.host.fwErr = errors.New("ufw is inactive")
+	res, err := h.run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Remote.Enabled || h.config().Listen != "" || !h.host.did("firewall-off") || len(h.host.firewall) != 0 {
+		t.Fatalf("no firewall: %+v listen %q calls %v", res.Remote, h.config().Listen, h.host.calls)
+	}
+	if !strings.Contains(strings.Join(res.Warnings, "|"), "remote mode stays off: firewall: ufw is inactive") {
+		t.Fatalf("warnings: %q", res.Warnings)
+	}
+	for _, c := range res.Changes {
+		if strings.HasPrefix(c, "set listen") {
+			t.Fatalf("changes: %q", res.Changes)
+		}
+	}
+
+	// The firewall is on now: the next run turns remote mode on.
+	h.host.fwErr = nil
+	if res, err = h.run(); err != nil || !res.Remote.Enabled || h.config().Listen != "10.0.0.5:8650" {
+		t.Fatalf("firewall on: %v %+v", err, res.Remote)
+	}
+}
+
+func TestHqbirdInstallDatabases(t *testing.T) {
+	h := newHQTest(t)
+	h.addLine("fb50", 3050)
+	db := filepath.Join(h.root, "db", "sales.fdb")
+	if err := os.MkdirAll(filepath.Dir(db), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(db, []byte("x"), 0o644)
+	conf := "sales = " + db + "\nsecurity.db = $(dir_secDb)/security5.fdb\n"
+	_ = os.WriteFile(filepath.Join(h.root, "firebird", "fb50", "databases.conf"), []byte(conf), 0o644)
+	h.stdin = `{"lines":[{"agent_config":` + strconv.Quote(h.cands[0].ConfigPath) + `,"sysdba_password":"mk"}]}`
+
+	res, err := h.run("--lines-stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := h.config()
+	if len(cfg.Databases) != 1 || cfg.Databases[0].ID != "sales" || cfg.Databases[0].ROUser != "SYSDBA" || cfg.Databases[0].BackupDir == "" {
+		t.Fatalf("databases: %+v changes %v", cfg.Databases, res.Changes)
+	}
+	m, err := hqbirdsetup.ReadManaged(filepath.Join(h.dataDir(), "state", "hqbird-managed.json"))
+	if err != nil || strings.Join(m.Databases, ",") != "sales" {
+		t.Fatalf("managed: %+v %v", m, err)
 	}
 }
 

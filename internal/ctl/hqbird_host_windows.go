@@ -79,8 +79,15 @@ func (h *winHqbirdHost) PrepareFolders(p hqbirdsetup.Paths) error {
 		{p.StateDir, accessModify},
 		{p.SecretsDir, accessRead},
 		{p.TLSDir, accessRead},
+		// backups and work files of the registered databases (the
+		// Firebird service runs as LocalSystem: SY has full access)
+		{p.BackupRoot, accessModify},
+		{p.WorkRoot, accessModify},
 	}
 	for _, d := range dirs {
+		if d.path == "" {
+			continue
+		}
 		if err := os.MkdirAll(d.path, 0o750); err != nil {
 			return err
 		}
@@ -213,7 +220,26 @@ func (h *winHqbirdHost) Firewall(port int, allow []string, exe string, m *hqbird
 		return fmt.Errorf("netsh: %s", strings.TrimSpace(string(out)))
 	}
 	m.Firewall = []string{firewallRule}
+	// A rule of a switched-off firewall limits nothing.
+	off, err := firewallProfilesOff()
+	if err != nil {
+		return fmt.Errorf("cannot read the Windows Firewall state: %v", err)
+	}
+	if off != "" {
+		return fmt.Errorf("Windows Firewall is off for the profile(s) %s: the rule limits nothing", off)
+	}
 	return nil
+}
+
+// firewallProfilesOff lists the Windows Firewall profiles that are off
+// (netsh prints the state in the language of Windows; this does not).
+func firewallProfilesOff() (string, error) {
+	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
+		"(Get-NetFirewallProfile | Where-Object { $_.Enabled -eq 'False' } | ForEach-Object { $_.Name }) -join ','").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func (h *winHqbirdHost) RemoveFirewall(m *hqbirdsetup.Managed) error {

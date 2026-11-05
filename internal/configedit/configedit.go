@@ -273,6 +273,7 @@ func AtomicWrite(path string, body string) error {
 			return err
 		}
 		if err := os.WriteFile(prev, data, 0o644); err != nil {
+			_ = os.Remove(neu) // no stray .new beside a config that did not change
 			return notWritable(path, err)
 		}
 	}

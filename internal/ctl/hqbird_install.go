@@ -416,6 +416,25 @@ func runHqbirdInstall(o hqbirdOpts, env hqbirdEnv) (hqbirdResult, error) {
 		}
 	}
 
+	// The allow-from list lives only in the firewall rule: the kernel does
+	// not check source addresses. So remote mode needs a working firewall
+	// (lab 2026-11: ufw inactive, every address reached the port). The rule
+	// goes first; the config with listen is written only after it.
+	if host && rs.Listen != "" {
+		if err := env.host.Firewall(portOf(rs.Listen), plan.Managed.Remote.AllowFrom, env.exe, &plan.Managed); err != nil {
+			if plan.Managed.Remote.On() {
+				warn("remote mode stays off: firewall: %v; turn the firewall on, then run fbmcp ctl hqbird-install again", err)
+				_ = env.host.RemoveFirewall(&plan.Managed)
+				plan.Managed.Firewall = nil
+				cfg.Listen, rs.Listen = "", ""
+				changes = dropPrefix(changes, "set listen ")
+			} else {
+				// A listen the operator set: theirs to protect.
+				warn("firewall: %v", err)
+			}
+		}
+	}
+
 	// 4. Secrets and config.
 	if err := cfg.Validate(); err != nil {
 		return res, fmt.Errorf("the new config is invalid (nothing was changed): %v", err)
@@ -495,9 +514,6 @@ func runHqbirdInstall(o hqbirdOpts, env hqbirdEnv) (hqbirdResult, error) {
 			warn("the fbmcp kernel does not answer: %v", err)
 		}
 		if rs.Listen != "" {
-			if err := env.host.Firewall(portOf(rs.Listen), plan.Managed.Remote.AllowFrom, env.exe, &plan.Managed); err != nil {
-				warn("firewall: %v", err)
-			}
 			// The kernel applies a new listen within seconds (hot reload).
 			time.Sleep(env.settle)
 			if env.doctor(p.Config) != 0 {
@@ -516,11 +532,18 @@ func runHqbirdInstall(o hqbirdOpts, env hqbirdEnv) (hqbirdResult, error) {
 	// 6. Result, connect.txt, managed list.
 	res.Remote = hqbirdRemote{Enabled: rs.Listen != "", Pending: rs.Pending, AllowFrom: plan.Managed.Remote.AllowFrom}
 	if rs.Listen != "" {
-		res.Remote.URL = hqbirdsetup.URL(rs.Listen, firstNonEmptyStr(firstStr(plan.Managed.Remote.DNS), env.hostName()))
+		// A name from --dns, else the --ip the operator gave (the host name
+		// often does not resolve on the admin PC), else the host name.
+		res.Remote.URL = hqbirdsetup.URL(rs.Listen, firstNonEmptyStr(firstStr(plan.Managed.Remote.DNS), plan.Managed.Remote.IP, env.hostName()))
 		res.Remote.Pin = pin
 	}
 	if rs.Pending {
-		warn("remote mode needs one API key first: fbmcp ctl apikey new <name> --max-tier 2 --config %q, then fbmcp ctl hqbird-install", p.Config)
+		// apikey new writes fbmcp.yaml: the service account may not.
+		asAdmin := "sudo fbmcp ctl"
+		if env.goos == "windows" {
+			asAdmin = "in an Administrator prompt: fbmcp ctl"
+		}
+		warn("remote mode needs one API key first: %s apikey new <name> --max-tier 2 --config %q, then the same way fbmcp ctl hqbird-install", asAdmin, p.Config)
 	}
 	text := hqbirdsetup.RenderConnect(hqbirdsetup.ConnectInfo{Server: cfg.ServerNameOrDefault(), URL: res.Remote.URL, Pin: pin,
 		AllowFrom: plan.Managed.Remote.AllowFrom, Pending: rs.Pending, Config: p.Config, StateDir: cfg.State.Dir, Windows: env.goos == "windows"})
@@ -626,6 +649,17 @@ func firstStr(list []string) string {
 		return ""
 	}
 	return list[0]
+}
+
+// dropPrefix returns list without the items that start with prefix.
+func dropPrefix(list []string, prefix string) []string {
+	var out []string
+	for _, s := range list {
+		if !strings.HasPrefix(s, prefix) {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func firstNonEmptyStr(v ...string) string {

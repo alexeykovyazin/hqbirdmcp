@@ -80,7 +80,20 @@ Exit codes: `0` done (there can be warnings), `1` failed, `2` usage error.
      `p<port>`;
    - agent id: `agent_p<firebird port>`; token secret:
      `FBMCP_AGENT_TOKEN_P<port>`; SYSDBA secret: `FBMCP_FB_P<port>_SYSDBA`.
-   Each instance gets `service` (the Firebird service of the line).
+   Each instance gets `service` (the Firebird service of the line). With
+   a SYSDBA password, SYSDBA is also the default read and admin user
+   (reads always run in a read-only transaction; `doctor` warns), and the
+   default `backup_dir` / `work_dir` are `<backups>/<instance>` and
+   `<work>/<instance>` (Linux `/var/lib/fbmcp-backups`,
+   `/var/lib/fbmcp-work`; Windows `<data-dir>\backups`, `<data-dir>\work`).
+   **Databases** of each line are registered: the aliases of
+   `databases.conf` (not `security.db`, `$(macro)` or remote paths) and
+   the databases the agent saw attached lately (newest
+   `<storage.data_path>/server_level/GetActiveDatabases/getactdb_*.jsonl`).
+   Only files that exist and no entry holds yet; the id is the file name
+   (`sales`, else `sales_<instance>`). They are listed in
+   `hqbird-managed.json` and go with their line. A line with no SYSDBA
+   password gets no databases (a note says so).
 3. **Secrets** go to the secrets folder: the Local API token of each line
    (from stdin, else from `agent_config.json` when it is plain text) and
    the SYSDBA password (stdin only).
@@ -94,8 +107,12 @@ Exit codes: `0` done (there can be warnings), `1` failed, `2` usage error.
 6. **Remote mode** only with `--allow-from` (or when it is already on):
    `listen`, self-signed certificate and pin, `allowed_origins`,
    `server_name`, firewall rule `fbmcp-remote` for the allowed addresses
-   only, `doctor --remote`. A FAIL turns remote mode off again and is a
-   warning. API keys are never made here: `fbmcp ctl apikey new <name>
+   only, `doctor --remote`. The allowed addresses are checked only by the
+   firewall, so remote mode needs a working one: when the rule cannot be
+   added or does not apply (ufw inactive, no firewalld or ufw, a Windows
+   Firewall profile off), remote mode stays off with a warning; turn the
+   firewall on and run `hqbird-install` again. A FAIL of `doctor --remote`
+   turns remote mode off again and is a warning. API keys are never made here: `fbmcp ctl apikey new <name>
    --max-tier 2 --config <fbmcp.yaml>` stores the key in `secrets.dir` and
    adds the identity; the next `hqbird-install` turns remote mode on.
 7. **Start and check.** Starts the service, waits for `fbmcp ctl ping`,

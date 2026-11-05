@@ -103,9 +103,11 @@ type ConnectInfo struct {
 // It never holds a key value.
 func RenderConnect(ci ConnectInfo) string {
 	var b strings.Builder
-	ctl := "fbmcp ctl"
+	// adm runs the commands that change fbmcp.yaml: root or an
+	// Administrator prompt, never the service account.
+	ctl, adm := "fbmcp ctl", "sudo fbmcp ctl"
 	if ci.Windows {
-		ctl = "fbmcp.exe ctl"
+		ctl, adm = "fbmcp.exe ctl", "fbmcp.exe ctl"
 	}
 	name := "fb-" + strings.ToLower(ci.Server)
 	keyEnv := "FBMCP_KEY_" + strings.ToUpper(strings.NewReplacer("-", "_", ".", "_").Replace(ci.Server))
@@ -113,17 +115,17 @@ func RenderConnect(ci ConnectInfo) string {
 	switch {
 	case ci.URL == "" && !ci.Pending:
 		fmt.Fprintf(&b, "Remote mode is off. Turn it on (Administrator/root), with the admin addresses:\n")
-		fmt.Fprintf(&b, "  %s hqbird-install --allow-from <CIDR>\n", ctl)
+		fmt.Fprintf(&b, "  %s hqbird-install --allow-from <CIDR>\n", adm)
 		fmt.Fprintf(&b, "Local clients on this server: %s (stdio) with -config %s\n", "fbmcp", ci.Config)
 		return b.String()
 	case ci.Pending:
 		fmt.Fprintf(&b, "Remote mode is ready but off: it needs one API key first.\n")
-		fmt.Fprintf(&b, "  1. %s apikey new <name> --max-tier 2 --config \"%s\"\n", ctl, ci.Config)
-		fmt.Fprintf(&b, "  2. %s hqbird-install\n\n", ctl)
+		fmt.Fprintf(&b, "  1. %s apikey new <name> --max-tier 2 --config \"%s\"\n", adm, ci.Config)
+		fmt.Fprintf(&b, "  2. %s hqbird-install\n\n", adm)
 		return b.String()
 	}
 	fmt.Fprintf(&b, "URL:  %s\nPin:  %s\nOpen to: %s\n\n", ci.URL, ci.Pin, strings.Join(ci.AllowFrom, ", "))
-	fmt.Fprintf(&b, "1. Personal key (on this server, Administrator/root):\n   %s apikey new <name> --max-tier 2 --config \"%s\"\n", ctl, ci.Config)
+	fmt.Fprintf(&b, "1. Personal key (on this server, Administrator/root):\n   %s apikey new <name> --max-tier 2 --config \"%s\"\n", adm, ci.Config)
 	fmt.Fprintf(&b, `2. On the admin PC: copy fbmcp.exe to C:\fbmcp\ and store the key:`+"\n"+`   C:\fbmcp\fbmcp.exe ctl secret set %s`+"\n", keyEnv)
 	fmt.Fprintf(&b, "3. Claude Desktop, Cursor, Codex (claude_desktop_config.json):\n")
 	fmt.Fprintf(&b, `   {"mcpServers": {%q: {"command": "C:\\fbmcp\\fbmcp.exe",`+"\n", name)
