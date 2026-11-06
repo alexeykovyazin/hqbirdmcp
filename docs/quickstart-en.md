@@ -21,19 +21,36 @@ lines): see [`hqbird.md`](hqbird.md) instead of sections 3–4.
 | Local (stdio) | On the same PC as the client | Firebird on your PC or in the local network |
 | Remote (HTTPS + API keys) | A service on the database server | Several admins, a distant server, agents |
 
-## 2. Build
+## 2. Get and build
 
-You need Go ≥ 1.25.13. CGO is not needed.
+1. Install **git** and **Go ≥ 1.25.13** (CGO is not needed). Windows:
+   ```powershell
+   winget install Git.Git
+   winget install GoLang.Go
+   go version        # go1.25.13 or later; if "go" is not found, open a new window
+   ```
+   Linux: git from your packages, Go from https://go.dev/dl/.
+2. Get the source and build:
+   ```powershell
+   git clone https://github.com/alexeykovyazin/hqbirdmcp.git
+   cd hqbirdmcp
+   $env:CGO_ENABLED = "0"
+   go build -trimpath -o dist/fbmcp.exe ./cmd/fbmcp          # server
+   go build -trimpath -o dist/fbmcpctl.exe ./cmd/fbmcpctl    # operator CLI
+   go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist/fbmcp-tray.exe ./cmd/fbmcp-tray  # tray (Windows)
+   ```
+3. Copy the programs to a folder of their own (all examples use `C:\fbmcp\`):
+   ```powershell
+   mkdir C:\fbmcp
+   copy dist\*.exe C:\fbmcp\
+   ```
 
-```powershell
-cd fbmcp
-$env:CGO_ENABLED = "0"
-go build -trimpath -o dist/fbmcp.exe ./cmd/fbmcp          # server
-go build -trimpath -o dist/fbmcpctl.exe ./cmd/fbmcpctl    # operator CLI
-go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist/fbmcp-tray.exe ./cmd/fbmcp-tray  # tray (Windows)
-```
+On Linux, build `fbmcp` and `fbmcpctl` the same way (no `.exe`, no tray)
+and copy them to `/usr/local/bin/`.
 
-On Linux, build `fbmcp` and `fbmcpctl` the same way (no `.exe`, no tray).
+`fbmcpctl` and `fbmcp ctl` are the same program:
+`C:\fbmcp\fbmcp.exe ctl doctor` = `C:\fbmcp\fbmcpctl.exe doctor`.
+`fbmcpctl help` lists the commands; `fbmcpctl <command> -h` shows one.
 
 ## 3. Local install (Windows)
 
@@ -58,14 +75,50 @@ On Linux, build `fbmcp` and `fbmcpctl` the same way (no `.exe`, no tray).
        admin_user: SYSDBA
        admin_secret_env: FBMCP_MAIN_ADMIN_PW
    ```
-2. **Passwords** do not go in the YAML. Store them in the Windows credential
+   Make the folders from the config (`doctor` also makes the state folder):
+   ```powershell
+   mkdir C:\ProgramData\fbmcp\state, D:\fbmcp\backups, D:\fbmcp\work
+   ```
+2. **Read-only user.** `ro_user` is a Firebird user that can only read.
+   Create it once, as SYSDBA, in isql
+   (`isql -user SYSDBA -password <password> localhost/3050:D:\Data\main.fdb`):
+   ```sql
+   CREATE USER FBMCP_RO PASSWORD 'choose-a-password';
+   COMMIT;
+   -- read access to all tables and views of this database;
+   -- run it in every database, and again after you add tables
+   SET TERM ^ ;
+   EXECUTE BLOCK AS
+     DECLARE r VARCHAR(63);
+   BEGIN
+     FOR SELECT TRIM(RDB$RELATION_NAME) FROM RDB$RELATIONS
+         WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 INTO :r DO
+       EXECUTE STATEMENT 'GRANT SELECT ON "' || r || '" TO FBMCP_RO';
+   END^
+   SET TERM ; ^
+   COMMIT;
+   ```
+   Firebird 2.5: if `CREATE USER` fails, use gsec:
+   `gsec -user SYSDBA -password <password> -add FBMCP_RO -pw <new password>`.
+   A user that is not SYSDBA and not the database owner sees only its own
+   connections in the MON$ tables, so `fb_sessions` shows less. On Firebird
+   4.0 and 5.0, let it see all connections (in every database):
+   ```sql
+   CREATE ROLE FBMCP_MONITOR SET SYSTEM PRIVILEGES TO MONITOR_ANY_ATTACHMENT;
+   GRANT DEFAULT FBMCP_MONITOR TO USER FBMCP_RO;
+   COMMIT;
+   ```
+3. **Passwords** do not go in the YAML. Store them in the Windows credential
    store (type the value, then Ctrl+Z, Enter):
    ```powershell
    C:\fbmcp\fbmcpctl.exe secret set FBMCP_MAIN_RO_PW
    C:\fbmcp\fbmcpctl.exe secret set FBMCP_MAIN_ADMIN_PW
    ```
-3. **Check:** `C:\fbmcp\fbmcpctl.exe doctor C:\fbmcp\fbmcp.yaml` → the last line is `doctor: green`.
-4. **Claude Desktop:** Settings → Developer → Edit Config, add to `mcpServers`:
+4. **Check:** `C:\fbmcp\fbmcpctl.exe doctor`. It finds `C:\fbmcp\fbmcp.yaml`
+   next to the program (or give `--config <file>`) and logs in to every
+   database with both users. Each FAIL line ends with `Fix:` and the command
+   to run. Repeat until the last line is `doctor: green`.
+5. **Claude Desktop:** Settings → Developer → Edit Config, add to `mcpServers`:
    ```json
    "fbmcp": {
      "command": "C:\\fbmcp\\fbmcp.exe",
@@ -73,14 +126,14 @@ On Linux, build `fbmcp` and `fbmcpctl` the same way (no `.exe`, no tray).
    }
    ```
    Quit Claude Desktop fully (the tray icon too) and start it again.
-5. **Claude Code:**
+6. **Claude Code:**
    ```powershell
    claude mcp add --transport stdio fbmcp -- "C:\fbmcp\fbmcp.exe" -config "C:\fbmcp\fbmcp.yaml"
    ```
-6. **Tray for approvals** (Tier 2): `C:\fbmcp\fbmcp-tray.exe C:\fbmcp\fbmcp.yaml`.
+7. **Tray for approvals** (Tier 2): `C:\fbmcp\fbmcp-tray.exe C:\fbmcp\fbmcp.yaml`.
 
 Use absolute paths everywhere. Do not set `listen` in local mode.
-The passwords are in the Windows credential store (step 2), so the client
+The passwords are in the Windows credential store (step 3), so the client
 settings need no `env` block.
 
 ### Cursor
@@ -194,7 +247,7 @@ Ask in plain words. Examples:
 |---|---|---|
 | 0 | Reads | Not needed |
 | 1 | Changes (DML, DDL, backup) | The client shows a request id and a token; you agree, the client calls `fb_confirm` |
-| 2 | High-risk actions (service restart, restore-replace, config) | Only outside the chat: tray (Approve) or `fbmcpctl approve <state_dir> <id>` |
+| 2 | High-risk actions (service restart, restore-replace, config) | Only outside the chat: tray (Approve) or `fbmcpctl approve <id>` on the server |
 | 3 | Critical | Disabled |
 
 Tier 2 usually needs an open maintenance window (`fb_window_open`) and a
@@ -204,11 +257,16 @@ A request expires after 15 minutes. You can run any risky call first with
 
 ## 6. Daily operations
 
-- **Approve a request:** `fbmcpctl approve <state_dir>` (list), `fbmcpctl approve <state_dir> <id>`.
+- **Approve a request:** `fbmcpctl approve` lists the requests with the exact commands;
+  `fbmcpctl approve <id>` shows the request, asks y/N and approves;
+  `fbmcpctl approve --deny <id> --reason "..."` denies. `--yes` does not ask (scripts, `ssh`).
+- **Which config:** every command takes `--config <file>`. Without it: `FBMCP_CONFIG`, then
+  `fbmcp.yaml` in the current folder, then next to the program, then the HQbird default.
+  The command prints `using config <path>`.
 - **Rotate a key:** `fbmcpctl apikey rotate alice --config <fbmcp.yaml>`. The old key stops working in a few seconds.
-- **List keys:** `fbmcpctl apikey list <fbmcp.yaml>` (values are never shown).
+- **List keys:** `fbmcpctl apikey list` (values are never shown).
 - **Renew the certificate:** `fbmcpctl tls selfsign --renew --out <dir> --dns ... --ip ...` (the pin does not change).
-- **Check the audit:** `fbmcpctl verify <fbmcp.yaml>`.
+- **Check the audit:** `fbmcpctl verify`.
 - **Logs:** Windows `<state_dir>\fbmcp.log`; Linux `journalctl -u fbmcp`.
 - **Upgrade fbmcp:** stop the service, replace the exe files, start, run `doctor --remote`.
 
@@ -217,7 +275,7 @@ A request expires after 15 minutes. You can run any risky call first with
 | Symptom | What to do |
 |---|---|
 | Tools do not appear in the client | Check the JSON, the absolute paths; restart the client fully |
-| The server exits at once | `fbmcpctl doctor <fbmcp.yaml>`; a password is missing in the store |
+| The server exits at once | `fbmcpctl doctor`: each FAIL line ends with `Fix:` and the command |
 | 401 | Wrong key: `fbmcpctl apikey list`, `doctor --remote` |
 | 403 | Your IP is not in `allow_from` or in the firewall rule |
 | Pin mismatch | The server certificate key changed: get the new pin from the admin |

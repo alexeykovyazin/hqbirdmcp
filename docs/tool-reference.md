@@ -10,7 +10,7 @@ On this host, instance ids are **`fb3`**, **`fb4`**, **`fb5`**; database ids are
 |---|---|---|
 | 0 | Read / gate entry | No confirm |
 | 1 | Mutation | In-band: `fb_confirm` with `request_id` + token from the pending statement |
-| 2 | High impact | **Out-of-band only:** `fbmcpctl approve <state_dir> <request_id>` |
+| 2 | High impact | **Out-of-band only:** the tray, or `fbmcpctl approve <request_id>` on the server |
 | 3 | Critical | Compiled in, **disabled** (`fb_db_drop`) |
 
 Gated tools (tier ≥ 1) also accept `mode`: `preview` (impact text only) or `execute` (default → pending action). Nested parameters go in `args`.
@@ -46,7 +46,7 @@ Refused: `state.dir` change; ADR-022 (loopback bind, missing cert/key, zero iden
 | `fb_cancel` | 0 | `request_id` | Cancel a pending action or a job |
 | `fb_job_status` | 0 | `job_id` | Job state / progress |
 | `fb_config_reload` | 0 | — | Re-read `fbmcp.yaml` and apply to the live kernel (no Claude/process restart) |
-| `fb_demo_write` | 1 | `db` | Demo gate path; **no real mutation** |
+| `fb_demo_write` | 1 | `db` | Demo gate path; **no real mutation**; listed only with `FBMCP_DEMO_TOOLS=1` |
 
 ---
 
@@ -252,11 +252,16 @@ executes under the agent's own scheduler and policy, outside fbmcp's gate.
 These are host commands, not tools Claude can call:
 
 ```
-fbmcpctl approve <state_dir> [request_id]
-fbmcpctl status [config]
-fbmcpctl setup [--write-posture] [config]
-fbmcpctl doctor [config]
+fbmcpctl approve [request_id] [--yes]          # list, or approve one (asks y/N)
+fbmcpctl approve --deny <request_id> [--reason TEXT] [--yes]
+fbmcpctl status
+fbmcpctl setup [--write-posture]
+fbmcpctl doctor [--remote]
 ```
+
+`fbmcp ctl` = `fbmcpctl`. Each command takes `--config <file>`; without it
+the config is found as in the README (`FBMCP_CONFIG`, current folder, next
+to the program, HQbird default). `fbmcpctl help` lists all commands.
 
 Spike state dir: `C:\HQbirdData\output\fbmcp-spike\state`.
 

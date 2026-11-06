@@ -82,7 +82,7 @@ Merge this entry into `mcpServers` (keep any other servers you already have):
 }
 ```
 
-A copy lives at [`packaging/claude_desktop_config.example.json`](claude_desktop_config.example.json).
+A copy lives at [`packaging/claude_desktop_config.example.json`](../packaging/claude_desktop_config.example.json).
 
 **Fully quit Claude Desktop** (tray icon too) and start it again. Servers load only at startup.
 
@@ -122,9 +122,12 @@ Then set `FBMCP_DEV_PW` in that server’s env (Claude Code settings or the JSON
 |---|---|
 | 0 (reads) | No confirm |
 | 1 | In-band: Claude shows a request id + token; you confirm with `fb_confirm` |
-| ≥ 2 | **Out-of-band only.** Claude cannot confirm. On the host: `fbmcpctl approve <state_dir> <request_id>` |
+| ≥ 2 | **Out-of-band only.** Claude cannot confirm. On the host: `fbmcpctl approve <request_id>` (or the tray) |
 
 State dir for the spike config: `C:\HQbirdData\output\fbmcp-spike\state`.
+
+`fb_demo_write` (a gate demo that changes nothing) is listed only when the
+kernel runs with `FBMCP_DEMO_TOOLS=1` (the smoke and kill harnesses set it).
 
 ```powershell
 .\dist\fbmcpctl.exe approve C:\HQbirdData\output\fbmcp-spike\state
@@ -150,7 +153,7 @@ If Claude cannot start the server, check:
 | Symptom | What to check |
 |---|---|
 | Tools never appear | JSON syntax (no trailing commas); absolute paths; full restart; `main.log` `Connected to fbmcp` |
-| Server exits immediately | `%APPDATA%\Claude\logs\` MCP logs; `fbmcpctl doctor`; missing `FBMCP_DEV_PW` |
+| Server exits immediately | `%APPDATA%\Claude\logs\` MCP logs; `fbmcpctl doctor` (each FAIL says the fix) |
 | `CONNECTION_CLOSED` / “another fbmcp instance is active” | Rebuild so attach is in the binary; stop a leftover `fbmcp.exe`; or use a different `state.dir` |
 | Firebird offline | HQbird services on ports 3053/3054/3055; `fb_db_health` |
 | Tier-2 “confirmation rejected” | Expected in-band. Use `fbmcpctl approve` |
@@ -167,7 +170,7 @@ Store the API key once: `fbmcpctl secret set FBMCP_KEY_SRV1` (stdin).
 {
   "mcpServers": {
     "fb-srv1": {
-      "command": "C:\fbmcp\fbmcp.exe",
+      "command": "C:\\fbmcp\\fbmcp.exe",
       "args": ["bridge", "--url", "https://srv1:8443/mcp",
                "--key-env", "FBMCP_KEY_SRV1", "--pin", "sha256:<hex>"]
     }

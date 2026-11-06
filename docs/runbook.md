@@ -95,7 +95,14 @@ go build -trimpath -ldflags "-s -w" -o dist/fbmcpctl ./cmd/fbmcpctl
 
 Checksums: `Get-FileHash dist/*` or `sha256sum dist/*`. More targets:
 [packaging/README.md](../packaging/README.md). Put the binaries in a folder
-of their own (examples use `C:\fbmcp\`).
+of their own (examples use `C:\fbmcp\`): `mkdir C:\fbmcp; copy dist\*.exe C:\fbmcp\`
+(Linux: `install -m 0755 dist/fbmcp dist/fbmcpctl /usr/local/bin/`).
+
+`fbmcp ctl` and `fbmcpctl` are the same program. `fbmcpctl help` lists the
+commands. Commands that read the config take `--config <file>`; without it
+they use `FBMCP_CONFIG`, then `fbmcp.yaml` in the current folder, then next
+to the program, then the HQbird default (`C:\HQbirdData\fbmcp\fbmcp.yaml`,
+`/etc/fbmcp/fbmcp.yaml`), and print `using config <path>`.
 
 ## 5. Configure `fbmcp.yaml`
 
@@ -145,16 +152,21 @@ A service account (LocalSystem, `NT SERVICE\...`) cannot see your keyring:
 use `secrets.dir` for services. A changed secret file applies in a few
 seconds without a restart.
 
-**Read-only user.** Create a separate Firebird user for `ro_user`. SYSDBA as
-the RO user is for dev only; `doctor` warns about it.
+**Read-only user.** Create a separate Firebird user for `ro_user` (SQL:
+[quickstart-en.md §3 step 2](quickstart-en.md#3-local-install-windows):
+`CREATE USER FBMCP_RO`, `GRANT SELECT` on every table, and on Firebird 4.0+
+a role with `MONITOR_ANY_ATTACHMENT` so `fb_sessions` sees all connections).
+SYSDBA as the RO user is for dev only; `doctor` warns about it.
 
 **Live reload.** fbmcp applies changes to `fbmcp.yaml` by itself (file
 watcher), or on `fb_config_reload`. No client or process restart. A reload
 waits for jobs on the changed databases (30 s), then applies. Refused:
 a `state.dir` change, duplicate database paths, an insecure remote config.
 
-**Check:** `C:\fbmcp\fbmcpctl.exe doctor C:\fbmcp\fbmcp.yaml` must end with
-`doctor: green` (remote mode: `doctor --remote`, no FAIL lines).
+**Check:** `C:\fbmcp\fbmcpctl.exe doctor` must end with `doctor: green`
+(remote mode: `doctor --remote`, no FAIL lines). It makes a missing state
+folder, logs in to every database with both users, and each FAIL line ends
+with `Fix:` and the command to run.
 
 ## 6. Setup A — local stdio
 
@@ -209,7 +221,7 @@ Full procedure: [remote.md](remote.md). Short form:
 **Windows server** (elevated):
 1. Binaries and `fbmcp.yaml` in `C:\fbmcp\` (template: remote.md §3: `listen`, `tls`, `identities`, `allowed_origins`, `secrets.dir`).
 2. `C:\fbmcp\fbmcpctl.exe tls selfsign --out C:\fbmcp\tls --dns srv1 --ip 10.0.0.5 --grant "NT SERVICE\fbmcp"` — note the pin `sha256:...`.
-3. One key per person or agent: `C:\fbmcp\fbmcpctl.exe apikey new alice --max-tier 2 --secrets-dir C:\ProgramData\fbmcp\secrets` (printed once; paste the printed YAML into `identities:`).
+3. One key per person or agent: `C:\fbmcp\fbmcpctl.exe apikey new alice --max-tier 2 --secrets-dir C:\ProgramData\fbmcp\secrets` (printed once). With `--config C:\fbmcp\fbmcp.yaml` it also adds the `identities:` entry and uses `secrets.dir`.
 4. Passwords and agent tokens: `fbmcpctl secret set --dir C:\ProgramData\fbmcp\secrets NAME`.
 5. `.\packaging\windows\install-remote.ps1 -Port 8443 -AllowFrom 10.0.0.0/24 -FirebirdService FirebirdServerDefaultInstance -WhatIf`, then without `-WhatIf`. It creates the service, the firewall rule, the folder ACLs and the Firebird service rights.
 6. `C:\fbmcp\fbmcpctl.exe doctor --remote C:\fbmcp\fbmcp.yaml` → no FAIL; `curl.exe --cacert C:\fbmcp\tls\tls.crt https://srv1:8443/healthz` → `ok`.
@@ -227,7 +239,7 @@ The script makes the folders, the certificate, a first config with an
 `admin` key (printed once), the systemd unit, the sudo rule for the
 Firebird unit and the ufw rule, then runs `doctor --remote`. Add
 `databases:` and `agents:` to `/etc/fbmcp/fbmcp.yaml`. Approvals on Linux:
-`sudo -u firebird fbmcpctl approve /var/lib/fbmcp [id]` (no tray).
+`sudo -u firebird fbmcpctl approve /var/lib/fbmcp [id]` (no tray; it asks y/N, `--yes` does not ask).
 
 **Admin PC:**
 1. `C:\fbmcp\fbmcpctl.exe secret set FBMCP_KEY_SRV1` (the key you got).
@@ -302,14 +314,14 @@ waits until the service is stopped and running again.
 
 | Task | Command |
 |---|---|
-| List / approve requests | `fbmcpctl approve <state_dir>`; `fbmcpctl approve <state_dir> <id>` (or the tray) |
+| List / approve / deny requests | `fbmcpctl approve`; `fbmcpctl approve <id>`; `fbmcpctl approve --deny <id> --reason "..."` (or the tray) |
 | Rotate a key | `fbmcpctl apikey rotate alice --config <fbmcp.yaml>` (old key stops in seconds) |
-| List keys | `fbmcpctl apikey list <fbmcp.yaml>` (names, sources, tiers; never values) |
+| List keys | `fbmcpctl apikey list` (names, sources, tiers; never values) |
 | Remove a person | delete the `identities:` entry, then `fbmcpctl secret drop --dir <dir> NAME` |
 | Renew the certificate | `fbmcpctl tls selfsign --renew --out <dir> --dns ... --ip ...` (pin unchanged, no restart) |
-| Check the audit chain | `fbmcpctl verify <fbmcp.yaml>` |
-| Is the kernel alive? | `fbmcpctl ping <fbmcp.yaml>`; `fbmcpctl status <fbmcp.yaml>` (offline read of the state) |
-| Allow service control | `packaging/posture/verify.ps1` or `verify.sh`, then `fbmcpctl setup --write-posture <fbmcp.yaml>` |
+| Check the audit chain | `fbmcpctl verify` |
+| Is the kernel alive? | `fbmcpctl ping`; `fbmcpctl status` (offline read of the state) |
+| Allow service control | `packaging/posture/verify.ps1` or `verify.sh`, then `fbmcpctl setup --write-posture` |
 | Upgrade | stop the service (or the clients), replace the binaries, start, `doctor` |
 | Remove | Windows: `sc.exe stop fbmcp; sc.exe delete fbmcp; Remove-NetFirewallRule -DisplayName fbmcp-remote`. Linux: remote.md §10. Keep the state dir (audit) unless the owner says otherwise |
 

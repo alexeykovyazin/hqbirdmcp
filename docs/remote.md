@@ -37,9 +37,10 @@ with `fbmcp ctl hqbird-install --allow-from <CIDR>` and one API key
    ```
    The grant works before the service exists (the virtual-account SID is computed).
 4. One API key per person or agent. The value is printed once; give it to
-   the person over a safe channel, then paste the printed YAML into `identities:`:
+   the person over a safe channel. `--config` adds the `identities:` entry
+   and stores the key in `secrets.dir`:
    ```
-   C:\fbmcp\fbmcpctl.exe apikey new alice --max-tier 2 --secrets-dir C:\ProgramData\fbmcp\secrets
+   C:\fbmcp\fbmcpctl.exe apikey new alice --max-tier 2 --config C:\fbmcp\fbmcp.yaml
    ```
 5. Agent token and DB passwords. Paste the value, then Ctrl+Z, Enter (it is read from stdin):
    ```
@@ -97,7 +98,8 @@ with `fbmcp ctl hqbird-install --allow-from <CIDR>` and one API key
 6. Check: `fbmcpctl doctor --remote /etc/fbmcp/fbmcp.yaml`; `journalctl -u fbmcp -n 50`.
 7. Approvals (no tray on Linux): `sudo -u firebird fbmcpctl approve /var/lib/fbmcp`
    lists pending requests; add the request id to approve one. From a
-   workstation: `ssh srv1 sudo -u firebird fbmcpctl approve /var/lib/fbmcp <id>`.
+   workstation: `ssh -t srv1 sudo -u firebird fbmcpctl approve /var/lib/fbmcp <id>`
+   (`approve` asks y/N; without a terminal add `--yes`). Deny: `... approve /var/lib/fbmcp --deny <id> --reason "..."`.
    A request expires after 15 minutes; then `approve` says
    `no such pending action` and exits 1. Ask the client to repeat the call.
 
@@ -182,7 +184,7 @@ starts a new session by itself once when the server restarted.
 ## 5. Daily operations
 
 - **Approve Tier 2:** the webhook says a request waits (it expires in 15 min).
-  Windows: tray. Both OS: `fbmcpctl approve <state_dir> <id>` on the server.
+  Windows: tray. Both OS: `fbmcpctl approve <id>` on the server (`--deny <id> --reason ...` to refuse).
 - **Rotate a key:** `fbmcpctl apikey rotate alice --config <fbmcp.yaml>` on the
   server. With the secrets dir it applies in seconds; the old key stops
   working then. Give the new value to Alice. It refuses when an env var with

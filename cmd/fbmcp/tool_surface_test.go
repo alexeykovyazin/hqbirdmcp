@@ -9,8 +9,9 @@ import (
 )
 
 // TestToolSurfaceDrift (D6.2 / gate §9 item 7): the live toolMeta surface
-// must be stated exactly once in README.md and docs/tool-reference.md —
-// every toolMeta name appears in both, and every fb_* table row in the
+// is stated once, in docs/tool-reference.md (the README keeps only the
+// counts, TestREADMEToolCounts; UX W1.7) — every toolMeta name has a
+// table row there, and every fb_* table row in the
 // tool reference exists in toolMeta (the reverse, phantom direction, is
 // covered by TestPlaybookHonestyLint). The per-tier counts logged at the
 // end are the LIVE Appendix A statement the M9 gate compares against the
@@ -28,7 +29,6 @@ func TestToolSurfaceDrift(t *testing.T) {
 		}
 		return string(b)
 	}
-	readme := read("README.md")
 	ref := read("docs/tool-reference.md")
 
 	// first table cell of every "| `fb_xxx` | ..." row
@@ -49,9 +49,6 @@ func TestToolSurfaceDrift(t *testing.T) {
 		inToolMeta[m.Name] = true
 		perTier[m.Tier]++
 
-		if !strings.Contains(readme, "`"+m.Name+"`") {
-			t.Errorf("%s missing from README.md (every toolMeta name must appear there)", m.Name)
-		}
 		if !refTools[m.Name] {
 			t.Errorf("%s missing from docs/tool-reference.md table", m.Name)
 		}

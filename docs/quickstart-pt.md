@@ -22,19 +22,36 @@ Firebird): veja [`hqbird.md`](hqbird.md) em vez das seções 3–4.
 | Local (stdio) | No mesmo PC do cliente | Firebird no seu PC ou na rede local |
 | Remoto (HTTPS + chaves de API) | Serviço no servidor do banco | Vários administradores, servidor distante, agentes |
 
-## 2. Compilação
+## 2. Obter e compilar
 
-É preciso Go ≥ 1.25.13. CGO não é necessário.
+1. Instale o **git** e o **Go ≥ 1.25.13** (CGO não é necessário). Windows:
+   ```powershell
+   winget install Git.Git
+   winget install GoLang.Go
+   go version        # go1.25.13 ou mais novo; se "go" não for encontrado, abra uma nova janela
+   ```
+   Linux: git pelos pacotes da distribuição, Go em https://go.dev/dl/.
+2. Baixe o código e compile:
+   ```powershell
+   git clone https://github.com/alexeykovyazin/hqbirdmcp.git
+   cd hqbirdmcp
+   $env:CGO_ENABLED = "0"
+   go build -trimpath -o dist/fbmcp.exe ./cmd/fbmcp          # servidor
+   go build -trimpath -o dist/fbmcpctl.exe ./cmd/fbmcpctl    # CLI do operador
+   go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist/fbmcp-tray.exe ./cmd/fbmcp-tray  # bandeja (Windows)
+   ```
+3. Copie os programas para uma pasta própria (todos os exemplos usam `C:\fbmcp\`):
+   ```powershell
+   mkdir C:\fbmcp
+   copy dist\*.exe C:\fbmcp\
+   ```
 
-```powershell
-cd fbmcp
-$env:CGO_ENABLED = "0"
-go build -trimpath -o dist/fbmcp.exe ./cmd/fbmcp          # servidor
-go build -trimpath -o dist/fbmcpctl.exe ./cmd/fbmcpctl    # CLI do operador
-go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist/fbmcp-tray.exe ./cmd/fbmcp-tray  # bandeja (Windows)
-```
+No Linux, compile `fbmcp` e `fbmcpctl` da mesma forma (sem `.exe`, sem
+bandeja) e copie-os para `/usr/local/bin/`.
 
-No Linux, compile `fbmcp` e `fbmcpctl` da mesma forma (sem `.exe`, sem bandeja).
+`fbmcpctl` e `fbmcp ctl` são o mesmo programa:
+`C:\fbmcp\fbmcp.exe ctl doctor` = `C:\fbmcp\fbmcpctl.exe doctor`.
+`fbmcpctl help` lista os comandos; `fbmcpctl <comando> -h` mostra um.
 
 ## 3. Instalação local (Windows)
 
@@ -59,14 +76,50 @@ No Linux, compile `fbmcp` e `fbmcpctl` da mesma forma (sem `.exe`, sem bandeja).
        admin_user: SYSDBA
        admin_secret_env: FBMCP_MAIN_ADMIN_PW
    ```
-2. **Senhas** não vão no YAML. Guarde-as no cofre de credenciais do Windows
+   Crie as pastas da configuração (o `doctor` também cria a pasta state):
+   ```powershell
+   mkdir C:\ProgramData\fbmcp\state, D:\fbmcp\backups, D:\fbmcp\work
+   ```
+2. **Usuário somente leitura.** `ro_user` é um usuário do Firebird que só
+   pode ler. Crie-o uma vez, como SYSDBA, no isql
+   (`isql -user SYSDBA -password <password> localhost/3050:D:\Data\main.fdb`):
+   ```sql
+   CREATE USER FBMCP_RO PASSWORD 'escolha-uma-senha';
+   COMMIT;
+   -- leitura de todas as tabelas e views deste banco;
+   -- rode em cada banco, e de novo depois de criar tabelas
+   SET TERM ^ ;
+   EXECUTE BLOCK AS
+     DECLARE r VARCHAR(63);
+   BEGIN
+     FOR SELECT TRIM(RDB$RELATION_NAME) FROM RDB$RELATIONS
+         WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 INTO :r DO
+       EXECUTE STATEMENT 'GRANT SELECT ON "' || r || '" TO FBMCP_RO';
+   END^
+   SET TERM ; ^
+   COMMIT;
+   ```
+   Firebird 2.5: se `CREATE USER` falhar, use o gsec:
+   `gsec -user SYSDBA -password <senha> -add FBMCP_RO -pw <nova senha>`.
+   Um usuário que não é SYSDBA nem dono do banco vê nas tabelas MON$ só as
+   próprias conexões, então o `fb_sessions` mostra menos. No Firebird 4.0 e
+   5.0, permita que ele veja todas as conexões (em cada banco):
+   ```sql
+   CREATE ROLE FBMCP_MONITOR SET SYSTEM PRIVILEGES TO MONITOR_ANY_ATTACHMENT;
+   GRANT DEFAULT FBMCP_MONITOR TO USER FBMCP_RO;
+   COMMIT;
+   ```
+3. **Senhas** não vão no YAML. Guarde-as no cofre de credenciais do Windows
    (digite o valor, depois Ctrl+Z, Enter):
    ```powershell
    C:\fbmcp\fbmcpctl.exe secret set FBMCP_MAIN_RO_PW
    C:\fbmcp\fbmcpctl.exe secret set FBMCP_MAIN_ADMIN_PW
    ```
-3. **Verificação:** `C:\fbmcp\fbmcpctl.exe doctor C:\fbmcp\fbmcp.yaml` → a última linha é `doctor: green`.
-4. **Claude Desktop:** Settings → Developer → Edit Config, adicione em `mcpServers`:
+4. **Verificação:** `C:\fbmcp\fbmcpctl.exe doctor`. Ele encontra `C:\fbmcp\fbmcp.yaml`
+   ao lado do programa (ou use `--config <arquivo>`) e conecta em cada banco
+   com os dois usuários. Cada linha FAIL termina com `Fix:` e o comando a
+   rodar. Repita até a última linha ser `doctor: green`.
+5. **Claude Desktop:** Settings → Developer → Edit Config, adicione em `mcpServers`:
    ```json
    "fbmcp": {
      "command": "C:\\fbmcp\\fbmcp.exe",
@@ -74,14 +127,14 @@ No Linux, compile `fbmcp` e `fbmcpctl` da mesma forma (sem `.exe`, sem bandeja).
    }
    ```
    Feche o Claude Desktop por completo (inclusive o ícone na bandeja) e abra de novo.
-5. **Claude Code:**
+6. **Claude Code:**
    ```powershell
    claude mcp add --transport stdio fbmcp -- "C:\fbmcp\fbmcp.exe" -config "C:\fbmcp\fbmcp.yaml"
    ```
-6. **Bandeja para aprovações** (Tier 2): `C:\fbmcp\fbmcp-tray.exe C:\fbmcp\fbmcp.yaml`.
+7. **Bandeja para aprovações** (Tier 2): `C:\fbmcp\fbmcp-tray.exe C:\fbmcp\fbmcp.yaml`.
 
 Use caminhos absolutos em todo lugar. Não defina `listen` no modo local.
-As senhas estão no cofre de credenciais do Windows (passo 2), então as
+As senhas estão no cofre de credenciais do Windows (passo 3), então as
 configurações dos clientes não precisam de bloco `env`.
 
 ### Cursor
@@ -194,7 +247,7 @@ Peça com palavras simples. Exemplos:
 |---|---|---|
 | 0 | Leitura | Não precisa |
 | 1 | Alterações (DML, DDL, backup) | O cliente mostra um request id e um token; você concorda, o cliente chama `fb_confirm` |
-| 2 | Ações de alto risco (reinício do serviço, restore-replace, configuração) | Só fora do chat: bandeja (Approve) ou `fbmcpctl approve <state_dir> <id>` |
+| 2 | Ações de alto risco (reinício do serviço, restore-replace, configuração) | Só fora do chat: bandeja (Approve) ou `fbmcpctl approve <id>` no servidor |
 | 3 | Críticas | Desativadas |
 
 O Tier 2 normalmente exige uma janela de manutenção aberta (`fb_window_open`)
@@ -204,11 +257,16 @@ pode ser vista antes com `mode: preview`: ela mostra o que será feito.
 
 ## 6. Operação diária
 
-- **Aprovar uma solicitação:** `fbmcpctl approve <state_dir>` (lista), `fbmcpctl approve <state_dir> <id>`.
+- **Aprovar uma solicitação:** `fbmcpctl approve` lista as solicitações com os comandos prontos;
+  `fbmcpctl approve <id>` mostra a solicitação, pergunta y/N e aprova;
+  `fbmcpctl approve --deny <id> --reason "..."` recusa. `--yes` não pergunta (scripts, `ssh`).
+- **Qual configuração:** todo comando aceita `--config <arquivo>`. Sem ele: `FBMCP_CONFIG`, depois
+  `fbmcp.yaml` na pasta atual, depois ao lado do programa, depois o padrão do HQbird.
+  O comando mostra `using config <caminho>`.
 - **Trocar uma chave:** `fbmcpctl apikey rotate alice --config <fbmcp.yaml>`. A chave antiga para de funcionar em poucos segundos.
-- **Listar chaves:** `fbmcpctl apikey list <fbmcp.yaml>` (os valores nunca aparecem).
+- **Listar chaves:** `fbmcpctl apikey list` (os valores nunca aparecem).
 - **Renovar o certificado:** `fbmcpctl tls selfsign --renew --out <dir> --dns ... --ip ...` (o pin não muda).
-- **Verificar a auditoria:** `fbmcpctl verify <fbmcp.yaml>`.
+- **Verificar a auditoria:** `fbmcpctl verify`.
 - **Logs:** Windows `<state_dir>\fbmcp.log`; Linux `journalctl -u fbmcp`.
 - **Atualizar o fbmcp:** pare o serviço, substitua os arquivos exe, inicie, rode `doctor --remote`.
 
@@ -217,7 +275,7 @@ pode ser vista antes com `mode: preview`: ela mostra o que será feito.
 | Sintoma | O que fazer |
 |---|---|
 | As ferramentas não aparecem no cliente | Verifique o JSON e os caminhos absolutos; reinicie o cliente por completo |
-| O servidor fecha logo após iniciar | `fbmcpctl doctor <fbmcp.yaml>`; falta uma senha no cofre |
+| O servidor fecha logo após iniciar | `fbmcpctl doctor`: cada linha FAIL termina com `Fix:` e o comando |
 | 401 | Chave errada: `fbmcpctl apikey list`, `doctor --remote` |
 | 403 | Seu IP não está em `allow_from` ou na regra do firewall |
 | Pin mismatch | A chave do certificado do servidor mudou: peça o novo pin ao administrador |
