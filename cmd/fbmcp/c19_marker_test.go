@@ -31,7 +31,7 @@ func TestC19ConsumeOnce(t *testing.T) {
 	spy := &spyExec{}
 	meta := policy.ToolMeta{Name: "fb_backup_start", Tier: 1, Scope: "database"}
 	gt.execs[meta.Name] = spy.wrap()
-	out := gt.requestGated(t.Context(), meta, "backup %s", "spike5", nil, "", nil)
+	out, _ := gt.requestGated(t.Context(), meta, "backup %s", "spike5", nil, "", nil)
 	if len(gt.st.Pending()) != 1 {
 		t.Fatalf("pending=%d out=%s", len(gt.st.Pending()), out)
 	}
@@ -86,7 +86,7 @@ func TestDenyConsumeOnce(t *testing.T) {
 	spy := &spyExec{}
 	meta := policy.ToolMeta{Name: "fb_backup_start", Tier: 1, Scope: "database"}
 	gt.execs[meta.Name] = spy.wrap()
-	out := gt.requestGated(t.Context(), meta, "backup %s", "spike5", nil, "", nil)
+	out, _ := gt.requestGated(t.Context(), meta, "backup %s", "spike5", nil, "", nil)
 	if len(gt.st.Pending()) != 1 {
 		t.Fatalf("pending=%d out=%s", len(gt.st.Pending()), out)
 	}

@@ -20,7 +20,7 @@ func TestC2InvokeWithoutConfirm(t *testing.T) {
 			continue
 		}
 		gt.execs[m.Name] = spy.wrap()
-		out := gt.requestGated(ctx, m, "impact %s", "spike5", nil, "", nil)
+		out, _ := gt.requestGated(ctx, m, "impact %s", "spike5", nil, "", nil)
 		n++
 		if strings.Contains(out, "spy-ran") {
 			t.Errorf("%s: executor result leaked into request path: %s", m.Name, out)
@@ -42,7 +42,7 @@ func TestC2UnknownDBNoExec(t *testing.T) {
 	spy := &spyExec{}
 	m := policy.ToolMeta{Name: "fb_backup_start", Tier: 1, Scope: "database"}
 	gt.execs[m.Name] = spy.wrap()
-	out := gt.requestGated(context.Background(), m, "x %s", "nope", nil, "", nil)
+	out, _ := gt.requestGated(context.Background(), m, "x %s", "nope", nil, "", nil)
 	if !strings.HasPrefix(out, "DENIED:") {
 		t.Fatalf("want DENIED, got %s", out)
 	}

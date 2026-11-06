@@ -292,12 +292,8 @@ func runForegroundCtx(ctx context.Context) {
 		if err != nil {
 			return errText("gate error: " + err.Error())
 		}
-		var b strings.Builder
-		b.WriteString(gate.ImpactStatement(p))
-		if !p.OOBOnly {
-			fmt.Fprintf(&b, "In-band token (Tier 1 only): %s\n", gate.IssueToken(p.ID, argHash))
-		}
-		return text(b.String()), nil, nil
+		gt.storeArgs(p.ID, nil)
+		return text(pendingReply(p, argHash)), nil, nil
 	})
 
 	type confirmArg struct {
@@ -322,7 +318,7 @@ func runForegroundCtx(ctx context.Context) {
 			if a.Wait {
 				return waitJobResult(ctx, req, runner, jobID)
 			}
-			return text(fmt.Sprintf("confirmed; job %s submitted — check fb_job_status", jobID)), nil, nil
+			return text(confirmedReply(jobID)), nil, nil
 		}
 		jobID, err := gt.dispatch(p)
 		if err != nil {
@@ -345,12 +341,24 @@ func runForegroundCtx(ctx context.Context) {
 	})
 
 	type jobArg struct {
-		JobID string `json:"job_id"`
+		JobID     string `json:"job_id,omitempty" jsonschema:"job id from fb_confirm or a job-starting tool"`
+		RequestID string `json:"request_id,omitempty" jsonschema:"request id from a pending reply; finds the job after an out-of-band approval"`
 	}
-	mcp.AddTool(server, &mcp.Tool{Name: "fb_job_status", Description: "Tier 0: job status (structured: id/type/db/state/progress/message/detail)"}, func(ctx context.Context, req *mcp.CallToolRequest, a jobArg) (*mcp.CallToolResult, any, error) {
-		j, ok := runner.Status(a.JobID)
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_job_status", Description: "Tier 0: job status by job_id, or by request_id after an out-of-band approval (structured: id/type/db/state/progress/message/detail)"}, func(ctx context.Context, req *mcp.CallToolRequest, a jobArg) (*mcp.CallToolResult, any, error) {
+		jobID := a.JobID
+		if jobID == "" && a.RequestID != "" {
+			id, msg := jobForRequest(st, a.RequestID)
+			if id == "" {
+				return text(msg), nil, nil
+			}
+			jobID = id
+		}
+		if jobID == "" {
+			return errText("invalid args for fb_job_status: give job_id or request_id")
+		}
+		j, ok := runner.Status(jobID)
 		if !ok {
-			return errText("unknown job")
+			return errText(fmt.Sprintf("unknown job %q: job ids come from fb_confirm or a job-starting tool; for an approved request use request_id", jobID))
 		}
 		return jobPayload(j), jobStruct(j), nil
 	})
@@ -535,12 +543,17 @@ func text(s string) *mcp.CallToolResult {
 // programmatically. The text is unchanged for backward compatibility.
 func errText(msg string) (*mcp.CallToolResult, map[string]any, error) {
 	env := map[string]any{"code": "fbmcp", "message": msg}
+	txt := msg
 	if d, ok := errdoc.Lookup(msg); ok {
 		env["code"] = d.Code
 		env["hint"] = d.Hint
 		env["remediation"] = d.Remediation
+		// Clients that show only the text still get the next step (W1.3).
+		if !strings.Contains(msg, "Next:") {
+			txt += "\n\nWhy: " + d.Hint + "\nNext: " + d.Remediation
+		}
 	}
-	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: msg}}}, env, nil
+	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: txt}}}, env, nil
 }
 
 // jobStruct is the structured payload for job results (D3.2).

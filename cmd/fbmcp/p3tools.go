@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -101,58 +100,45 @@ func (gt *gatedTools) registerToolEx(server *mcp.Server, meta policy.ToolMeta, i
 		Mode string         `json:"mode,omitempty" jsonschema:"preview or execute (default execute)"`
 		Args map[string]any `json:"args,omitempty"`
 	}
-	mcp.AddTool(server, &mcp.Tool{Name: meta.Name, Description: fmt.Sprintf("Tier %d (gated): %s", meta.Tier, meta.Name)}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
-		return text(gt.requestGated(ctx, meta, impactFmt, a.Db, a.Args, a.Mode, preview)), nil, nil
+	mcp.AddTool(server, &mcp.Tool{Name: meta.Name, Description: gatedDescription(meta.Name, meta.Tier, impactFmt)}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
+		msg, isErr := gt.requestGated(ctx, meta, impactFmt, a.Db, a.Args, a.Mode, preview)
+		if isErr {
+			return errText(msg)
+		}
+		return text(msg), nil, nil
 	})
 }
 
-// requestGated is the real tool path (C2/C22): policy + audit, then gate.Request.
-// The executor is never called from here.
-func (gt *gatedTools) requestGated(ctx context.Context, meta policy.ToolMeta, impactFmt, dbID string, args map[string]any, mode string, preview func(context.Context, string, map[string]any) string) string {
+// requestGated is the real tool path (C2/C22): args check (W1.1), policy +
+// audit, then gate.Request. The executor is never called from here.
+// Returns (text, isError).
+func (gt *gatedTools) requestGated(ctx context.Context, meta policy.ToolMeta, impactFmt, dbID string, args map[string]any, mode string, preview func(context.Context, string, map[string]any) string) (string, bool) {
 	if _, err := gt.cfg.DB(dbID); err != nil && meta.Scope == "database" {
-		return "DENIED: " + err.Error()
+		return "DENIED: " + err.Error() + "\nNext: " + denyHint(err.Error()) + "\n", true
 	}
 	id := identity.Caller(ctx)
+	if err := validateArgs(meta.Name, args); err != nil {
+		gt.aud.Log(audit.Entry{Identity: id.Name, Database: dbID, Tool: meta.Name, Tier: meta.Tier, Decision: "denied", Detail: map[string]interface{}{"reason": err.Error()}})
+		return "DENIED: " + err.Error() + "\nNext: " + denyHint("invalid args") + "\n", true
+	}
 	d := gt.eng.Evaluate(id, dbID, meta.Name)
-	if d.Outcome == "deny" {
-		gt.aud.Log(audit.Entry{Identity: id.Name, Database: dbID, Tool: meta.Name, Tier: meta.Tier, Decision: "denied", Detail: map[string]interface{}{"reason": d.Reason}})
-		return "DENIED: " + d.Reason
-	}
-	impact := fmt.Sprintf(impactFmt, dbID)
-	if preview != nil {
-		if extra := preview(ctx, dbID, args); extra != "" {
-			impact += "\n" + extra
+	impact := func() string {
+		s := fmt.Sprintf(impactFmt, dbID)
+		if preview != nil {
+			if extra := preview(ctx, dbID, args); extra != "" {
+				s += "\n" + extra
+			}
 		}
+		return s + "\nArguments: " + redactedArgs(meta.Name, args)
 	}
-	if strings.EqualFold(mode, "preview") {
-		var b strings.Builder
-		b.WriteString(impact)
-		fmt.Fprintf(&b, "\n\nmode=preview (informational — confirmation still required to execute)\nTier: %d | Database: %s\nAccepted confirmation channels: %s\n",
-			meta.Tier, dbID, strings.Join(gate.AllowedChannels(meta.Tier), ", "))
-		if len(d.FailedPreconditions) > 0 {
-			fmt.Fprintf(&b, "preconditions currently failing: %s\n", strings.Join(d.FailedPreconditions, "; "))
-		}
-		return b.String()
-	}
-	if len(d.FailedPreconditions) > 0 {
-		return "DENIED: " + d.Reason
-	}
-	argsJSON, _ := json.Marshal(args)
-	argHash := hashOf(dbID + string(argsJSON))
-	p, err := gt.g.Request(id, dbID, meta, impact, argHash, d.FailedPreconditions)
-	if err != nil {
-		return "gate error: " + err.Error()
-	}
-	gt.mu.Lock()
-	gt.args[p.ID] = args
-	gt.mu.Unlock()
-	var b strings.Builder
-	b.WriteString(gate.ImpactStatement(p))
-	if meta.Tier <= 1 && !p.OOBOnly {
-		fmt.Fprintf(&b, "In-band token (Tier 1 only): %s\n", gate.IssueToken(p.ID, argHash))
-	}
-	return b.String()
+	return gt.finishGated(id, meta, d, impact, dbID, args, mode)
 }
+
+// errArgsLost: the request's args lived in memory only (they can hold
+// secrets, so they are never written to state.json) and the kernel
+// restarted after the request. Running with empty args would apply
+// defaults the requester never asked for.
+var errArgsLost = fmt.Errorf("the arguments of this request were lost because the fbmcp server restarted after the request; nothing was run. Request the action again")
 
 // dispatch is called by fb_confirm after a successful confirmation.
 func (gt *gatedTools) dispatch(p state.PendingAction) (string, error) {
@@ -161,9 +147,12 @@ func (gt *gatedTools) dispatch(p state.PendingAction) (string, error) {
 		return "", fmt.Errorf("no executor registered for %q", p.Tool)
 	}
 	gt.mu.Lock()
-	args := gt.args[p.ID]
+	args, stored := gt.args[p.ID]
 	delete(gt.args, p.ID)
 	gt.mu.Unlock()
+	if !stored {
+		return "", errArgsLost
+	}
 	if args == nil {
 		args = map[string]any{}
 	}
@@ -179,7 +168,7 @@ func registerP3Tools(server *mcp.Server, gt *gatedTools) {
 	// P3.1 — fb_backup_start (Tier 1): full backup into the DB's backup dir,
 	// registered in the catalog (unverified until a test-restore).
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_backup_start", Tier: 1, Scope: "database"},
-		"Full gbak backup of %s to its configured backup dir (async job; args: {\"parallel_workers\": N} for HQBird/FB5 multi-thread backup, 1-64).",
+		"Full gbak backup of %s to its configured backup dir (async job).",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			c, db, err := gt.client(dbID)
 			if err != nil {
@@ -210,7 +199,7 @@ func registerP3Tools(server *mcp.Server, gt *gatedTools) {
 
 	// P3.1 leftover — nbackup levels 0–2.
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_backup_nbackup", Tier: 1, Scope: "database"},
-		"nbackup of %s (args: {\"level\": 0|1|2}). Level >0 requires a prior nbackup of level-1 in the catalog.",
+		"nbackup of %s. Level >0 requires a prior nbackup of level-1 in the catalog.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			level, ok := toInt(args["level"])
 			if !ok {
@@ -250,7 +239,7 @@ func registerP3Tools(server *mcp.Server, gt *gatedTools) {
 	// work dir, validate, mark verified (verification = successful
 	// test-restore per the P0.2 finding that gbak has no standalone verify).
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_restore_test", Tier: 1, Scope: "database"},
-		"Test-restore of the newest backup of %s into the work dir (never touches the source DB; args: {\"parallel_workers\": N} for HQBird/FB5 multi-thread index creation during restore, 1-64; {\"no_matviews\": true} to skip materialized-view refresh via gbak, FB 5.0+ only).",
+		"Test-restore of the newest backup of %s into the work dir (never touches the source DB); a good restore marks the backup verified.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			c, db, err := gt.client(dbID)
 			if err != nil {
@@ -355,7 +344,7 @@ func registerP3Tools(server *mcp.Server, gt *gatedTools) {
 
 	// P3.5 family — fb_set_forcewrite (Tier 1); args: {"on": true|false}.
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_set_forcewrite", Tier: 1, Scope: "database"},
-		"Toggle Forced Writes on %s (args: {\"on\": true|false}).",
+		"Set Forced Writes on %s.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			on, _ := args["on"].(bool)
 			c, db, err := gt.client(dbID)
@@ -370,7 +359,7 @@ func registerP3Tools(server *mcp.Server, gt *gatedTools) {
 
 	// P3.5 family — fb_set_readonly (Tier 1); args: {"readonly": bool}.
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_set_readonly", Tier: 1, Scope: "database"},
-		"Set %s access mode (args: {\"readonly\": true|false}); RO requires no other attachments.",
+		"Set the access mode of %s; READ ONLY requires no other attachments.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			ro, _ := args["readonly"].(bool)
 			c, db, err := gt.client(dbID)
@@ -385,7 +374,7 @@ func registerP3Tools(server *mcp.Server, gt *gatedTools) {
 
 	// P3.5 leftover — fb_set_page_buffers (Tier 1); args: {"buffers": N}.
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_set_page_buffers", Tier: 1, Scope: "database"},
-		"Set page buffers on %s (args: {\"buffers\": N}).",
+		"Set page buffers on %s.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			n, ok := toInt(args["buffers"])
 			if !ok || n <= 0 || n > 100000 {
@@ -503,7 +492,12 @@ func (gt *gatedTools) consumeApprovalMarkers() int {
 		os.Remove(filepath.Join(dir, id))
 		if _, err := gt.dispatch(p); err != nil {
 			gt.aud.Log(audit.Entry{Identity: "operator", Database: p.Database, Tool: p.Tool, Tier: p.Tier, Decision: "error",
-				Detail: map[string]interface{}{"error": err.Error()}})
+				Detail: map[string]interface{}{"error": err.Error(), "request_id": id}})
+			// The operator approved, but nothing ran: tell them (tray/webhook).
+			if gt.bus != nil {
+				_ = gt.bus.Emit(notify.Event{Type: "gate.dispatch_failed", Database: p.Database, Tool: p.Tool, Message: err.Error(),
+					Detail: map[string]string{"request_id": id}})
+			}
 		}
 		n++
 	}
@@ -549,7 +543,7 @@ func (gt *gatedTools) registerRestore(server *mcp.Server) {
 			{Name: "verified_backup_exists", Op: "true", Why: "a verified backup must exist in the catalog"},
 			{Name: "backup_freshness", Op: "lt", Value: 24.0, Why: "newest verified backup must be < 24h old"},
 		}},
-		"Replace database %s from its newest backup (downtime; Tier 2 — out-of-band approval required).",
+		"Replace database %s from its newest backup (downtime).",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			if gt.wf == nil {
 				return "", fmt.Errorf("workflow engine not initialised")
@@ -648,7 +642,7 @@ func restoreReplaceSteps(gt *gatedTools) []workflows.StepDef {
 
 func registerTraceTools(server *mcp.Server, gt *gatedTools) {
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_trace_start", Tier: 1, Scope: "database"},
-		"Start a template-only trace on %s (args: {\"template\":\"audit-lite|performance|errors\"}).",
+		"Start a template-only trace on %s.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			tmpl, _ := args["template"].(string)
 			if _, ok := backupsvc.TraceTemplates[tmpl]; !ok {
@@ -692,7 +686,7 @@ func registerTraceTools(server *mcp.Server, gt *gatedTools) {
 		})
 
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_trace_stop", Tier: 1, Scope: "database"},
-		"Stop a trace started by this server on %s (args: {\"session_id\":\"t…\"}).",
+		"Stop a trace started by this server on %s.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			id, _ := args["session_id"].(string)
 			if id == "" {

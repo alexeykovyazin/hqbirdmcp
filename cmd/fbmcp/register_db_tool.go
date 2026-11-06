@@ -79,8 +79,8 @@ func requestRegisterDB(ctx context.Context, gt *gatedTools, meta policy.ToolMeta
 		impact += "\n" + summary
 	}
 	if strings.EqualFold(a.Mode, "preview") {
-		return fmt.Sprintf("%s\n\nmode=preview (informational — confirmation still required to execute)\nTier: %d | Instance: %s\nAccepted confirmation channels: %s\n",
-			impact, meta.Tier, opt.InstanceID, strings.Join(gate.AllowedChannels(meta.Tier), ", "))
+		return fmt.Sprintf("%s\n\nmode=preview (informational — nothing was changed; a real call still needs confirmation)\nTool: %s | Tier: %d | Instance: %s\nConfirm: %s\n",
+			impact, meta.Name, meta.Tier, opt.InstanceID, gate.ConfirmHow(meta.Tier, false))
 	}
 	id := identity.Caller(ctx)
 	argPayload := map[string]any{
@@ -100,10 +100,8 @@ func requestRegisterDB(ctx context.Context, gt *gatedTools, meta policy.ToolMeta
 	if err != nil {
 		return "gate error: " + err.Error()
 	}
-	gt.mu.Lock()
-	gt.args[p.ID] = argPayload
-	gt.mu.Unlock()
-	return gate.ImpactStatement(p)
+	gt.storeArgs(p.ID, argPayload)
+	return pendingReply(p, argHash)
 }
 
 func previewRegisterDB(cfg *config.Config, a registerDBArg) (config.RegisterOptions, string, error) {

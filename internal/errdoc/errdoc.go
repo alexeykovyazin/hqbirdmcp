@@ -130,20 +130,50 @@ var signals = []struct {
 			Remediation: "Check instance service status and the database file; use the health and service-status tools.",
 		},
 	},
-	{
-		match: "verified_backup_exists",
-		doc: Doc{
-			Code:        "precondition-backup",
-			Hint:        "Tier-2 operations require a catalog backup marked verified and fresh (< 24 h).",
-			Remediation: "Run a backup, then a test-restore (that marks it verified), and open a maintenance window.",
-		},
-	},
+	// The window signal stays first: a combined Tier-2 deny starts with the
+	// window reason, and opening the window is the first step.
 	{
 		match: "no open maintenance window",
 		doc: Doc{
 			Code:        "precondition-window",
 			Hint:        "Tier-2 tools require an open maintenance window.",
-			Remediation: "Open a window first (window tool, Tier 1), then re-request.",
+			Remediation: "Call fb_window_open (Tier 1, confirm with fb_confirm), then request the action again.",
+		},
+	},
+	{
+		match: "verified backup required",
+		doc:   backupDoc,
+	},
+	{
+		match: "backup < 24h",
+		doc:   backupDoc,
+	},
+	{
+		match: "verified_backup_exists",
+		doc:   backupDoc,
+	},
+	{
+		match: "the arguments of this request were lost",
+		doc: Doc{
+			Code:        "args-lost",
+			Hint:        "The fbmcp server restarted between the request and the approval; request arguments are kept in memory only, so nothing was run.",
+			Remediation: "Call the same tool again with the same arguments and approve the new request.",
+		},
+	},
+	{
+		match: "invalid args for",
+		doc: Doc{
+			Code:        "invalid-args",
+			Hint:        "The tool arguments are missing, unknown, or of the wrong type; nothing was requested.",
+			Remediation: "Fix the args as the message lists (Expected args: ...) and call the tool again; mode=preview shows the impact first.",
+		},
+	},
+	{
+		match: "wrong in-band token",
+		doc: Doc{
+			Code:        "bad-token",
+			Hint:        "The token does not belong to this request_id (copied from a different pending reply).",
+			Remediation: "Use the request_id and the token from the same pending reply, or request the action again.",
 		},
 	},
 	{
@@ -155,12 +185,16 @@ var signals = []struct {
 		},
 	},
 	{
+		match: "cannot be confirmed through the in-band channel",
+		doc:   oobDoc,
+	},
+	{
+		match: "cannot confirm in-band",
+		doc:   oobDoc,
+	},
+	{
 		match: "channel policy",
-		doc: Doc{
-			Code:        "channel-policy",
-			Hint:        "This tier cannot be confirmed in-band — by design.",
-			Remediation: "Approve out-of-band: fbmcpctl approve <state_dir> <request_id> or the tray popup.",
-		},
+		doc:   oobDoc,
 	},
 	{
 		match: "connection refused",
@@ -257,6 +291,18 @@ var signals = []struct {
 			Remediation: "Re-run the query under the identity that produced it.",
 		},
 	},
+}
+
+var backupDoc = Doc{
+	Code:        "precondition-backup",
+	Hint:        "Tier-2 operations require a catalog backup marked verified and fresh (< 24 h).",
+	Remediation: "Call fb_backup_start, then fb_restore_test (a good test-restore marks the backup verified), then request the action again.",
+}
+
+var oobDoc = Doc{
+	Code:        "channel-policy",
+	Hint:        "This request cannot be confirmed in chat — by design (Tier 2, or an identity with inband_confirm: false).",
+	Remediation: "Ask the operator to approve it out-of-band: the fbmcp tray, or fbmcp ctl approve <request_id> on the server. Then call fb_job_status with the request_id.",
 }
 
 // Lookup classifies an error message; ok=false leaves the generic code.

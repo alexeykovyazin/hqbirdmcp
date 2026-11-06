@@ -22,14 +22,16 @@ import (
 const DefaultTTL = 15 * time.Minute // main plan §5.1
 
 var (
-	ErrExpired       = errors.New("confirmation expired — re-request the operation")
-	ErrReplay        = errors.New("token already used (single-use)")
+	ErrExpired = errors.New("confirmation expired — re-request the operation")
+	ErrReplay  = errors.New("token already used (single-use)")
+	// ErrBadToken: the token does not belong to this request (or its args).
+	ErrBadToken      = errors.New("wrong in-band token for this request: copy request_id and token from the same pending reply")
 	ErrUnknown       = errors.New("unknown request id")
 	ErrIdentity      = errors.New("token bound to a different identity")
 	ErrChannelPolicy = errors.New("this tier cannot be confirmed through the in-band channel")
 	// ErrOOBOnly: the requesting identity has inband_confirm: false (or
 	// profile autonomous), so even Tier 1 needs the out-of-band surface.
-	ErrOOBOnly = errors.New("this identity cannot confirm in-band (inband_confirm: false / profile autonomous) — an operator must approve out of band (tray or fbmcpctl approve)")
+	ErrOOBOnly = errors.New("this identity cannot confirm in-band (inband_confirm: false / profile autonomous) — an operator must approve out of band (tray or fbmcp ctl approve)")
 )
 
 // Channels (§5.5). Trust increases downward.
@@ -77,6 +79,8 @@ func (g *Gate) Request(id policy.Identity, db string, meta policy.ToolMeta, impa
 		ArgHash:       argHash,
 		Preconditions: toMap(preconds),
 		OOBOnly:       id.OOBOnly,
+		Profile:       id.Profile,
+		RemoteAddr:    id.RemoteAddr,
 	}
 	if err := g.st.AddPending(p); err != nil {
 		return state.PendingAction{}, err
@@ -170,7 +174,7 @@ func (g *Gate) Confirm(requestID, identity, channel, token string) (state.Pendin
 		}
 		if token != IssueToken(requestID, p.ArgHash) {
 			g.requeue(p)
-			return state.PendingAction{}, ErrReplay
+			return state.PendingAction{}, ErrBadToken
 		}
 	}
 
@@ -215,15 +219,61 @@ func toMap(preconds []string) map[string]string {
 	return m
 }
 
-// ImpactStatement renders the human-facing impact text with accepted channels.
+// ImpactStatement renders the human-facing impact text: what runs, who
+// asked, when the request expires, and how it can be confirmed. The chat,
+// the tray and `fbmcp ctl approve` all show this text (UX W1.2).
 func ImpactStatement(p state.PendingAction) string {
+	return impactStatement(p, time.Now())
+}
+
+func impactStatement(p state.PendingAction, now time.Time) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n\nTier: %d | Database: %s | Request ID: %s\nExpires: %s\n",
-		p.ImpactText, p.Tier, p.Database, p.ID, p.Expires.UTC().Format(time.RFC3339))
-	if p.OOBOnly && p.Tier <= 1 {
-		fmt.Fprintf(&b, "Accepted confirmation channels: %s (this identity is out-of-band only)\n", ChannelOutOfBand)
-		return b.String()
-	}
-	fmt.Fprintf(&b, "Accepted confirmation channels: %s\n", strings.Join(AllowedChannels(p.Tier), ", "))
+	fmt.Fprintf(&b, "%s\n\nTool: %s | Tier: %d | Database: %s\n", p.ImpactText, p.Tool, p.Tier, p.Database)
+	fmt.Fprintf(&b, "Requested by: %s\n", Requester(p))
+	fmt.Fprintf(&b, "Request ID: %s\n", p.ID)
+	fmt.Fprintf(&b, "Expires: %s\n", expiryText(p.Expires, now))
+	b.WriteString("Confirm: " + ConfirmHow(p.Tier, p.OOBOnly) + "\n")
 	return b.String()
 }
+
+// ConfirmHow says in plain words how a request of this tier is confirmed.
+func ConfirmHow(tier int, oobOnly bool) string {
+	switch {
+	case tier >= 3:
+		return "disabled (Tier 3)"
+	case tier == 2:
+		return "out-of-band only (fbmcp tray, or fbmcp ctl approve on the server)"
+	case oobOnly:
+		return "out-of-band only — this identity cannot confirm in chat (fbmcp tray, or fbmcp ctl approve on the server)"
+	default:
+		return "in chat (fb_confirm with the token) or out-of-band (fbmcp tray, fbmcp ctl approve)"
+	}
+}
+
+// Requester names who asked: identity, api-key profile and TCP peer.
+func Requester(p state.PendingAction) string {
+	var extra []string
+	if p.Profile != "" {
+		extra = append(extra, "profile "+p.Profile)
+	}
+	if p.RemoteAddr != "" {
+		extra = append(extra, "from "+p.RemoteAddr)
+	}
+	if len(extra) == 0 {
+		return p.Identity
+	}
+	return p.Identity + " (" + strings.Join(extra, ", ") + ")"
+}
+
+// expiryText is the expiry in server-local time plus UTC and the time left.
+func expiryText(exp, now time.Time) string {
+	left := exp.Sub(now).Round(time.Minute)
+	rel := fmt.Sprintf("in %d min", int(left.Minutes()))
+	if left <= 0 {
+		rel = "expired"
+	}
+	return fmt.Sprintf("%s server time (%s, %s)", exp.Local().Format("2006-01-02 15:04"), exp.UTC().Format("15:04Z"), rel)
+}
+
+// ExpiryText is expiryText at the current time (fb_job_status by request_id).
+func ExpiryText(exp time.Time) string { return expiryText(exp, time.Now()) }

@@ -162,16 +162,22 @@ func registerScheduleCreate(server *mcp.Server, gt *gatedTools) {
 			gt.aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_schedule_create", Tier: -1, Decision: "denied", Detail: map[string]interface{}{"reason": err.Error()}})
 			return errText("DENIED: " + err.Error())
 		}
+		// The schedule fires the target later with these args: check them now
+		// against the target's spec, as a direct call would (W1.1).
+		if err := validateArgs(a.Target, a.Args); err != nil {
+			gt.aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_schedule_create", Tier: tier, Decision: "denied", Detail: map[string]interface{}{"reason": err.Error()}})
+			return errText("DENIED: " + err.Error())
+		}
 		meta := policy.ToolMeta{Name: "fb_schedule_create", Tier: tier, Scope: "database"}
 		d := gt.eng.EvaluateMeta(id, a.Db, meta)
 		if d.Outcome == "deny" {
-			return errText("DENIED: " + d.Reason)
+			return errText(deniedReply("fb_schedule_create", a.Db, d))
 		}
 		impact := fmt.Sprintf("Create schedule grant on %s: target=%s cron=%q tz=%s (durable; fire path will NOT re-confirm). Informational preview — not a safety guarantee.",
 			a.Db, a.Target, a.Cron, a.Timezone)
 		if strings.EqualFold(a.Mode, "preview") {
-			return text(fmt.Sprintf("%s\n\nmode=preview (informational — confirmation still required to execute)\nTier: %d | kind=%s\nAccepted confirmation channels: %s\n",
-				impact, tier, kind, strings.Join(gate.AllowedChannels(tier), ", "))), nil, nil
+			return text(fmt.Sprintf("%s\n\nmode=preview (informational — nothing was changed; a real call still needs confirmation)\nTool: fb_schedule_create | Tier: %d | kind=%s\nConfirm: %s\n",
+				impact, tier, kind, gate.ConfirmHow(tier, id.OOBOnly))), nil, nil
 		}
 		args := map[string]any{
 			"target": a.Target, "cron": a.Cron, "timezone": a.Timezone,
@@ -184,15 +190,8 @@ func registerScheduleCreate(server *mcp.Server, gt *gatedTools) {
 		if err != nil {
 			return errText("gate error: " + err.Error())
 		}
-		gt.mu.Lock()
-		gt.args[p.ID] = args
-		gt.mu.Unlock()
-		var b strings.Builder
-		b.WriteString(gate.ImpactStatement(p))
-		if tier <= 1 && !p.OOBOnly {
-			fmt.Fprintf(&b, "In-band token (Tier 1 only): %s\n", gate.IssueToken(p.ID, argHash))
-		}
-		return text(b.String()), nil, nil
+		gt.storeArgs(p.ID, args)
+		return text(pendingReply(p, argHash)), nil, nil
 	})
 	gt.execs["fb_schedule_create"] = func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 		target, _ := args["target"].(string)
@@ -237,7 +236,7 @@ func registerScheduleCreate(server *mcp.Server, gt *gatedTools) {
 
 func registerScheduleDelete(server *mcp.Server, gt *gatedTools) {
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_schedule_delete", Tier: 1, Scope: "database"},
-		"Delete a schedule grant on %s (args: {\"id\":\"sch…\"}).",
+		"Delete a schedule grant on %s.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			id, _ := args["id"].(string)
 			if id == "" {
@@ -256,7 +255,7 @@ func registerScheduleDelete(server *mcp.Server, gt *gatedTools) {
 
 func registerRetentionRun(server *mcp.Server, gt *gatedTools) {
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_retention_run", Tier: 1, Scope: "database"},
-		"Retention housekeeping on %s (ADR-016). Default dry_run=true; only catalog-verified artifacts past keep_days. Uncataloged files are never touched.",
+		"Retention housekeeping on %s: only catalog-verified backups older than keep_days are deleted (default dry_run=true). Uncataloged files are never touched.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			keep := 0
 			if n, ok := toInt(args["keep_days"]); ok {
@@ -344,9 +343,9 @@ func registerServiceControl(server *mcp.Server, gt *gatedTools) {
 	for _, spec := range []struct {
 		name, action, impact string
 	}{
-		{"fb_service_start", "start", "Start the Firebird OS service for instance of %s (Tier 2; refuses without ADR-017 posture)."},
-		{"fb_service_stop", "stop", "Stop the Firebird OS service for instance of %s (Tier 2; refuses without ADR-017 posture)."},
-		{"fb_service_restart", "restart", "Restart the Firebird OS service for instance of %s (Tier 2; refuses without ADR-017 posture)."},
+		{"fb_service_start", "start", "Start the Firebird OS service for the instance of %s (refused until the service posture is verified: fbmcp ctl doctor)."},
+		{"fb_service_stop", "stop", "Stop the Firebird OS service for the instance of %s (refused until the service posture is verified: fbmcp ctl doctor)."},
+		{"fb_service_restart", "restart", "Restart the Firebird OS service for the instance of %s (refused until the service posture is verified: fbmcp ctl doctor)."},
 	} {
 		action := spec.action
 		gt.registerTool(server, policy.ToolMeta{Name: spec.name, Tier: 2, Scope: "instance"}, spec.impact,

@@ -14,7 +14,7 @@ import (
 func TestC22DeadCodeDetector(t *testing.T) {
 	gt := newTestGT(t)
 	meta := policy.ToolMeta{Name: "fb_backup_start", Tier: 1, Scope: "database"}
-	out := gt.requestGated(context.Background(), meta, "backup %s", "spike5", nil, "", nil)
+	out, _ := gt.requestGated(context.Background(), meta, "backup %s", "spike5", nil, "", nil)
 	if strings.HasPrefix(out, "DENIED:") {
 		t.Fatalf("unexpected deny: %s", out)
 	}
@@ -38,7 +38,7 @@ func TestC22DeadCodeDetector(t *testing.T) {
 func TestC22UnknownToolDeniedAndAudited(t *testing.T) {
 	gt := newTestGT(t)
 	meta := policy.ToolMeta{Name: "fb_nope", Tier: 1, Scope: "database"}
-	out := gt.requestGated(context.Background(), meta, "x %s", "spike5", nil, "", nil)
+	out, _ := gt.requestGated(context.Background(), meta, "x %s", "spike5", nil, "", nil)
 	if !strings.HasPrefix(out, "DENIED:") {
 		t.Fatalf("unknown tool not denied: %s", out)
 	}

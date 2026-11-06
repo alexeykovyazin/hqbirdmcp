@@ -18,7 +18,6 @@ import (
 	"github.com/aleks/fbmcp/internal/config"
 	"github.com/aleks/fbmcp/internal/configedit"
 	execpkg "github.com/aleks/fbmcp/internal/executor"
-	"github.com/aleks/fbmcp/internal/gate"
 	"github.com/aleks/fbmcp/internal/identity"
 	"github.com/aleks/fbmcp/internal/killpoint"
 	"github.com/aleks/fbmcp/internal/lockout"
@@ -112,30 +111,21 @@ func (gt *gatedTools) requestWrite(ctx context.Context, id policy.Identity, dbID
 	if d.Outcome == "deny" || len(d.FailedPreconditions) > 0 {
 		why := d.Reason
 		gt.aud.Log(audit.Entry{Identity: id.Name, Database: dbID, Tool: "fb_write", Tier: prep.MaxTier, Decision: "denied", Detail: map[string]interface{}{"reason": why, "templates": classify.Template(sqlText)}})
-		return "DENIED: " + why, true
+		return deniedReply("fb_write", dbID, d), true
 	}
 	argHash := hashOf(dbID + sqlText)
 	p, err := gt.g.Request(id, dbID, meta, impact, argHash, nil)
 	if err != nil {
 		return "gate error: " + err.Error(), true
 	}
-	gt.mu.Lock()
-	gt.args[p.ID] = map[string]any{"sql": sqlText}
-	gt.mu.Unlock()
-	var b strings.Builder
-	b.WriteString(gate.ImpactStatement(p))
-	if meta.Tier <= 1 && !p.OOBOnly {
-		fmt.Fprintf(&b, "In-band token (Tier 1 only): %s\n", gate.IssueToken(p.ID, argHash))
-	} else {
-		b.WriteString("Confirmation: out-of-band only (fbmcp-tray popup or fbmcpctl approve)\n")
-	}
+	gt.storeArgs(p.ID, map[string]any{"sql": sqlText})
 	gt.aud.Log(audit.Entry{Identity: id.Name, Database: dbID, Tool: "fb_write", Tier: prep.MaxTier, Decision: "pending", Detail: map[string]interface{}{"templates": classify.Template(sqlText)}})
-	return b.String(), false
+	return pendingReply(p, argHash), false
 }
 
 func registerIndexTools(server *mcp.Server, gt *gatedTools) {
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_index_rebuild", Tier: 1, Scope: "database"},
-		"Rebuild (INACTIVE+ACTIVE) or SET STATISTICS on an index of %s (args: {\"index\":\"NAME\",\"action\":\"rebuild|statistics\",\"advisory_id\":\"adv…\"}).",
+		"Rebuild (INACTIVE+ACTIVE) or SET STATISTICS on an index of %s.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			idx, adv, err := resolveIndexArg(gt, dbID, "fb_index_rebuild", args)
 			if err != nil {
@@ -169,7 +159,7 @@ func registerIndexTools(server *mcp.Server, gt *gatedTools) {
 		})
 
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_index_drop", Tier: 1, Scope: "database"},
-		"DROP INDEX on %s (args: {\"index\":\"NAME\",\"advisory_id\":\"adv…\"}); refused if the index backs a constraint.",
+		"DROP INDEX on %s; refused if the index backs a constraint.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			idx, adv, err := resolveIndexArg(gt, dbID, "fb_index_drop", args)
 			if err != nil {
@@ -234,7 +224,7 @@ func refuseConstraintIndex(ctx context.Context, gt *gatedTools, dbID, idx, actio
 
 func registerSecurityTools(server *mcp.Server, gt *gatedTools) {
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_user_create", Tier: 1, Scope: "database"},
-		"CREATE USER on %s (args: {\"user\":\"NAME\",\"password\":\"...\"}). Password is never audited.",
+		"CREATE USER on %s. The password is never shown or audited.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			user, _ := args["user"].(string)
 			pass, _ := args["password"].(string)
@@ -250,7 +240,7 @@ func registerSecurityTools(server *mcp.Server, gt *gatedTools) {
 		})
 
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_user_drop", Tier: 1, Scope: "database"},
-		"DROP USER on %s (args: {\"user\":\"NAME\"}). Lockout guards apply.",
+		"DROP USER on %s. Lockout guards apply.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			user, _ := args["user"].(string)
 			if !isIdentifier(user) {
@@ -263,7 +253,7 @@ func registerSecurityTools(server *mcp.Server, gt *gatedTools) {
 		})
 
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_role_create", Tier: 1, Scope: "database"},
-		"CREATE ROLE on %s (args: {\"role\":\"NAME\"}).",
+		"CREATE ROLE on %s.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			role, _ := args["role"].(string)
 			if !isIdentifier(role) {
@@ -273,7 +263,7 @@ func registerSecurityTools(server *mcp.Server, gt *gatedTools) {
 		})
 
 	gt.registerToolEx(server, policy.ToolMeta{Name: "fb_grant", Tier: 1, Scope: "database"},
-		"GRANT privilege on %s (args: {\"privilege\":\"SELECT\",\"on\":\"TABLE\",\"name\":\"T\",\"to\":\"U\"}).",
+		"GRANT a privilege on %s.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			sql, err := grantSQL("GRANT", args)
 			if err != nil {
@@ -283,7 +273,7 @@ func registerSecurityTools(server *mcp.Server, gt *gatedTools) {
 		}, grantPreview(gt, "GRANT"))
 
 	gt.registerToolEx(server, policy.ToolMeta{Name: "fb_revoke", Tier: 1, Scope: "database"},
-		"REVOKE privilege on %s (args: {\"privilege\":\"SELECT\",\"on\":\"TABLE\",\"name\":\"T\",\"from\":\"U\"}).",
+		"REVOKE a privilege on %s.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			to, _ := args["from"].(string)
 			if to == "" {
@@ -430,7 +420,7 @@ func registerEffectiveAccess(server *mcp.Server, gt *gatedTools) {
 
 func registerSessionKill(server *mcp.Server, gt *gatedTools) {
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_session_kill", Tier: 1, Scope: "database"},
-		"Terminate attachment(s) on %s (args: {\"attachment_id\": N} or {\"attachment_ids\": [N,…]}).",
+		"Terminate attachment(s) on %s (fbmcp never kills its own attachment).",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			ids := attachmentIDs(args)
 			if len(ids) == 0 {
@@ -490,7 +480,7 @@ func attachmentIDs(args map[string]any) []int64 {
 
 func registerComment(server *mcp.Server, gt *gatedTools) {
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_comment_set", Tier: 1, Scope: "database"},
-		"COMMENT ON a table/column of %s (args: {\"on\":\"TABLE|COLUMN\",\"name\":\"T\",\"column\":\"C\",\"text\":\"...\"}).",
+		"COMMENT ON a table or column of %s.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			on, _ := args["on"].(string)
 			name, _ := args["name"].(string)
@@ -515,7 +505,7 @@ func registerComment(server *mcp.Server, gt *gatedTools) {
 
 func registerLifecycle(server *mcp.Server, gt *gatedTools) {
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_db_create", Tier: 1, Scope: "database"},
-		"Create a database file by copying the registered template %s into its work dir (args: {\"filename\":\"name.fdb\"}). Add a config entry to manage it.",
+		"Create a database file by copying the registered template %s into its work dir. Register it afterwards (fb_db_register) to manage it.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			db, err := gt.cfg.DB(dbID)
 			if err != nil {
@@ -555,7 +545,7 @@ func registerShutdown(server *mcp.Server, gt *gatedTools) {
 		{Name: "verified_backup_exists", Op: "true", Why: "verified backup required before exclusive window"},
 		{Name: "backup_freshness", Op: "lt", Value: 24.0, Why: "backup < 24h"},
 	}},
-		"Exclusive shutdown window on %s: close pools → gfix -shut → callback → always gfix -online (Tier 2, out-of-band). args: {\"mode\":\"force|attach|tran\",\"kick\":true}.",
+		"Exclusive shutdown window on %s: close pools → gfix -shut → callback → always gfix -online.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			if gt.wf == nil {
 				return "", fmt.Errorf("workflow engine not initialised")
@@ -671,7 +661,7 @@ func registerConfigTools(server *mcp.Server, gt *gatedTools) {
 	})
 
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_config_set", Tier: 2, Scope: "instance"},
-		"Set a firebird.conf parameter on instance-scope %s (args: {\"param\":\"WireCrypt\",\"value\":\"Required\"}). Restart-required keys advise fb_service_status; never auto-restart.",
+		"Set a firebird.conf parameter on the instance of %s. Keys that need a restart are reported; the engine is never restarted automatically.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			// dbID is unused; instance comes from args
 			instID, _ := args["instance"].(string)
@@ -747,7 +737,7 @@ func registerConfigTools(server *mcp.Server, gt *gatedTools) {
 
 func registerWindowOpen(server *mcp.Server, gt *gatedTools) {
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_window_open", Tier: 1, Scope: "database"},
-		"Open a maintenance window for %s (args: {\"hours\": N, default 2}). Required for Tier-2 tools.",
+		"Open a maintenance window for %s. Tier-2 tools need one.",
 		func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 			hours := 2.0
 			if n, ok := toInt(args["hours"]); ok && n > 0 && n <= 24 {

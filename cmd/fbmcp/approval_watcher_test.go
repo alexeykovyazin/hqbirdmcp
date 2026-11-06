@@ -21,6 +21,7 @@ func pendingForWatcher(t *testing.T, gt *gatedTools, tool string) state.PendingA
 	if err != nil {
 		t.Fatal(err)
 	}
+	gt.storeArgs(p.ID, nil)
 	return p
 }
 

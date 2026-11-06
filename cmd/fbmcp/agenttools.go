@@ -17,7 +17,6 @@ import (
 	"github.com/aleks/fbmcp/internal/agentapi"
 	"github.com/aleks/fbmcp/internal/audit"
 	"github.com/aleks/fbmcp/internal/config"
-	"github.com/aleks/fbmcp/internal/gate"
 	"github.com/aleks/fbmcp/internal/identity"
 	"github.com/aleks/fbmcp/internal/policy"
 )
@@ -316,38 +315,7 @@ func (gt *gatedTools) requestGatedMeta(ctx context.Context, meta policy.ToolMeta
 	}
 	id := identity.Caller(ctx)
 	d := gt.eng.EvaluateMeta(id, dbID, meta)
-	if d.Outcome == "deny" {
-		gt.aud.Log(audit.Entry{Identity: id.Name, Database: dbID, Tool: meta.Name, Tier: meta.Tier, Decision: "denied", Detail: map[string]any{"reason": d.Reason}})
-		return "DENIED: " + d.Reason, true
-	}
-	if strings.EqualFold(mode, "preview") {
-		var bld strings.Builder
-		bld.WriteString(impact)
-		fmt.Fprintf(&bld, "\n\nmode=preview (informational — confirmation still required to execute)\nTier: %d | Database: %s\nAccepted confirmation channels: %s\n",
-			meta.Tier, dbID, strings.Join(gate.AllowedChannels(meta.Tier), ", "))
-		if len(d.FailedPreconditions) > 0 {
-			fmt.Fprintf(&bld, "preconditions currently failing: %s\n", strings.Join(d.FailedPreconditions, "; "))
-		}
-		return bld.String(), false
-	}
-	if len(d.FailedPreconditions) > 0 {
-		return "DENIED: " + d.Reason, true
-	}
-	argsJSON, _ := json.Marshal(args)
-	argHash := hashOf(dbID + string(argsJSON))
-	p, err := gt.g.Request(id, dbID, meta, impact, argHash, d.FailedPreconditions)
-	if err != nil {
-		return "gate error: " + err.Error(), true
-	}
-	gt.mu.Lock()
-	gt.args[p.ID] = args
-	gt.mu.Unlock()
-	var bld strings.Builder
-	bld.WriteString(gate.ImpactStatement(p))
-	if meta.Tier <= 1 && !p.OOBOnly {
-		fmt.Fprintf(&bld, "In-band token (Tier 1 only): %s\n", gate.IssueToken(p.ID, argHash))
-	}
-	return bld.String(), false
+	return gt.finishGated(id, meta, d, func() string { return impact }, dbID, args, mode)
 }
 
 // --- registration ---
@@ -655,17 +623,17 @@ func registerAgentTools(server *mcp.Server, gt *gatedTools) {
 	// fb_service_*) ---
 
 	for _, spec := range []struct{ name, action, impact string }{
-		{"fb_agent_restart", "restart", "Restart the Firebird service supervised by fbagent (preflight → stop → start → state + TCP post-check; agent of %s). Refused when hqclusternode manages the host unless args.cluster_override=true. Tier 2; out-of-band approval."},
-		{"fb_agent_stop", "stop", "Stop the Firebird service supervised by fbagent (preflight → stop → state post-check; agent of %s). Refused when hqclusternode manages the host unless args.cluster_override=true. Tier 2; out-of-band approval."},
-		{"fb_agent_start", "start", "Start the Firebird service supervised by fbagent (preflight → start → state + TCP post-check; agent of %s). Refused when hqclusternode manages the host unless args.cluster_override=true. Tier 2; out-of-band approval."},
+		{"fb_agent_restart", "restart", "Restart the Firebird service supervised by fbagent (preflight → stop → start → state + TCP post-check; agent of %s). Refused when hqclusternode manages the host unless cluster_override=true."},
+		{"fb_agent_stop", "stop", "Stop the Firebird service supervised by fbagent (preflight → stop → state post-check; agent of %s). Refused when hqclusternode manages the host unless cluster_override=true."},
+		{"fb_agent_start", "start", "Start the Firebird service supervised by fbagent (preflight → start → state + TCP post-check; agent of %s). Refused when hqclusternode manages the host unless cluster_override=true."},
 	} {
 		gt.registerToolEx(server, policy.ToolMeta{Name: spec.name, Tier: 2, Scope: "instance"}, spec.impact, gt.agentEngineExec(spec.action), gt.enginePreview)
 	}
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_agent_update_apply", Tier: 2, Scope: "instance"},
-		"Apply the prepared Firebird update via fbagent (agent of %s). The agent auto-enqueues a restart when the engine stays stopped; the nested operation is polled and reported. Tier 2; out-of-band approval.",
+		"Apply the prepared Firebird update via fbagent (agent of %s). The agent auto-enqueues a restart when the engine stays stopped; the nested operation is polled and reported.",
 		gt.agentUpdateApplyExec())
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_agent_product_update_apply", Tier: 2, Scope: "instance"},
-		"Queue a product update (check goafts, then stop / single-file swap / start / health-check with revert) for hqmonitor, hqclusternode or hqbirdrcm via fbagent (agent of %s). The operation result carries action and per-install outcomes. Tier 2; out-of-band approval.",
+		"Queue a product update (check goafts, then stop / single-file swap / start / health-check with revert) for hqmonitor, hqclusternode or hqbirdrcm via fbagent (agent of %s). The operation result carries action and per-install outcomes.",
 		gt.agentProductUpdateExec())
 }
 

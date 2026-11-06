@@ -17,7 +17,6 @@ import (
 
 	"github.com/aleks/fbmcp/internal/audit"
 	execpkg "github.com/aleks/fbmcp/internal/executor"
-	"github.com/aleks/fbmcp/internal/gate"
 	"github.com/aleks/fbmcp/internal/identity"
 	"github.com/aleks/fbmcp/internal/migrate"
 	"github.com/aleks/fbmcp/internal/policy"
@@ -293,26 +292,17 @@ func (gt *gatedTools) requestMigrationApply(ctx context.Context, id policy.Ident
 	d := gt.eng.EvaluateMeta(id, dbID, meta)
 	if d.Outcome == "deny" || len(d.FailedPreconditions) > 0 {
 		gt.aud.Log(audit.Entry{Identity: id.Name, Database: dbID, Tool: "fb_migration_apply", Tier: batch.BatchTier, Decision: "denied", Detail: map[string]interface{}{"reason": d.Reason}})
-		return "DENIED: " + d.Reason, true
+		return deniedReply("fb_migration_apply", dbID, d), true
 	}
 	argHash := hashOf(dbID + batch.Manifest)
 	p, err := gt.g.Request(id, dbID, meta, impact, argHash, nil)
 	if err != nil {
 		return "gate error: " + err.Error(), true
 	}
-	gt.mu.Lock()
-	gt.args[p.ID] = map[string]any{"baseline": baseline, "manifest": batch.Manifest, "applied_by": id.Name}
-	gt.mu.Unlock()
-	var b strings.Builder
-	b.WriteString(gate.ImpactStatement(p))
-	if meta.Tier <= 1 && !p.OOBOnly {
-		fmt.Fprintf(&b, "In-band token (Tier 1 only): %s\n", gate.IssueToken(p.ID, argHash))
-	} else {
-		b.WriteString("Confirmation: out-of-band only (Tier-2 statements in the batch — fbmcp-tray popup or fbmcpctl approve)\n")
-	}
+	gt.storeArgs(p.ID, map[string]any{"baseline": baseline, "manifest": batch.Manifest, "applied_by": id.Name})
 	gt.aud.Log(audit.Entry{Identity: id.Name, Database: dbID, Tool: "fb_migration_apply", Tier: batch.BatchTier, Decision: "pending",
 		Detail: map[string]interface{}{"manifest": batch.Manifest}})
-	return b.String(), false
+	return pendingReply(p, argHash), false
 }
 
 // migrationApplyExec is registered in gt.execs; it runs after a confirmed

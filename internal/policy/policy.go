@@ -76,7 +76,25 @@ type Decision struct {
 	Reason              string
 	Meta                ToolMeta
 	FailedPreconditions []string // human-readable, for the pending message
+	// Blockers lists every unmet Tier-2 requirement at once (the missing
+	// maintenance window and each failed precondition) so the caller can
+	// show one checklist instead of one denial per retry (UX W1.3).
+	Blockers []Blocker
 }
+
+// BlockerWindow names the missing maintenance window in Decision.Blockers.
+const BlockerWindow = "maintenance_window"
+
+// Blocker is one unmet requirement: Name is the precondition fact name (or
+// BlockerWindow), Why the human text.
+type Blocker struct {
+	Name string
+	Why  string
+}
+
+// OnlyBlocked reports a denial caused only by missing window/preconditions:
+// the caller can fix it, and a preview is still safe to show.
+func (d Decision) OnlyBlocked() bool { return len(d.Blockers) > 0 }
 
 // Evaluate is the single decision API (main plan P1.5).
 func (e *Engine) Evaluate(id Identity, db string, tool string) Decision {
@@ -109,23 +127,39 @@ func (e *Engine) EvaluateMeta(id Identity, db string, meta ToolMeta) Decision {
 			return Decision{Outcome: "deny", Reason: fmt.Sprintf("engine %s does not meet MinFB %s", v, meta.MinFB), Meta: meta}
 		}
 	}
-	// Tier 2+ needs an open maintenance window.
-	if meta.Tier >= 2 && !e.st.InWindow(db, e.now()) {
-		return Decision{Outcome: "deny", Reason: "no open maintenance window for this database (Tier ≥ 2 requires one)", Meta: meta}
-	}
+	// Tier 2+ needs an open maintenance window. The preconditions are still
+	// evaluated so the denial lists every missing step at once.
+	noWindow := meta.Tier >= 2 && !e.st.InWindow(db, e.now())
 	// Preconditions (Tier ≥ 2 mandatory checks; evaluated whenever declared).
 	var failed []string
+	var blockers []Blocker
+	if noWindow {
+		blockers = append(blockers, Blocker{Name: BlockerWindow, Why: "no open maintenance window for this database (Tier ≥ 2 requires one)"})
+	}
 	for _, p := range meta.Preconditions {
 		ok, why, err := e.check(db, p)
 		if err != nil {
-			return Decision{Outcome: "deny", Reason: fmt.Sprintf("precondition %q could not be evaluated (fail-closed): %v", p.Name, err), Meta: meta}
+			msg := fmt.Sprintf("precondition %q could not be evaluated (fail-closed): %v", p.Name, err)
+			if noWindow { // already denied: report it with the rest of the checklist
+				blockers = append(blockers, Blocker{Name: p.Name, Why: msg})
+				continue
+			}
+			return Decision{Outcome: "deny", Reason: msg, Meta: meta}
 		}
 		if !ok {
 			failed = append(failed, why)
+			blockers = append(blockers, Blocker{Name: p.Name, Why: why})
 		}
 	}
+	if noWindow {
+		whys := make([]string, len(blockers))
+		for i, b := range blockers {
+			whys[i] = b.Why
+		}
+		return Decision{Outcome: "deny", Reason: strings.Join(whys, "; "), Meta: meta, FailedPreconditions: failed, Blockers: blockers}
+	}
 	if len(failed) > 0 {
-		return Decision{Outcome: "pending", Reason: "preconditions failed: " + strings.Join(failed, "; "), Meta: meta, FailedPreconditions: failed}
+		return Decision{Outcome: "pending", Reason: "preconditions failed: " + strings.Join(failed, "; "), Meta: meta, FailedPreconditions: failed, Blockers: blockers}
 	}
 	if meta.Tier >= 1 {
 		return Decision{Outcome: "pending", Reason: "human confirmation required", Meta: meta}

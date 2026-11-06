@@ -42,6 +42,8 @@ type PendingAction struct {
 	ArgHash          string            `json:"arg_hash"`                // re-validation: changed args ⇒ re-request
 	Preconditions    map[string]string `json:"preconditions,omitempty"` // name → human-readable requirement
 	OOBOnly          bool              `json:"oob_only,omitempty"`      // phase 12 B8: requester may not confirm in-band
+	Profile          string            `json:"profile,omitempty"`       // requester's api-key profile (shown to the approver)
+	RemoteAddr       string            `json:"remote_addr,omitempty"`   // requester's TCP peer (remote mode; shown to the approver)
 	ConfirmedChannel string            `json:"-"`                       // set by gate.Confirm; not persisted
 }
 
