@@ -272,7 +272,7 @@ type agentJobRunArg struct {
 	// Run-now (2.60+) idempotency/TTL, forwarded verbatim.
 	RequestID string `json:"request_id,omitempty" jsonschema:"run-now idempotency key ^[A-Za-z0-9._:-]{8,64}$ (run-now families)"`
 	ExpiresAt string `json:"expires_at,omitempty" jsonschema:"run-now expiry, RFC 3339, at most 24h ahead (default now + run_now.ttl_minutes)"`
-	Mode      string `json:"mode,omitempty" jsonschema:"preview or execute (default execute)"`
+	Mode      string `json:"mode,omitempty" jsonschema:"preview = dry run"`
 }
 
 // requestAgentJobRun is the pre-gate body of fb_agent_job_run: validation,

@@ -47,7 +47,7 @@ func registerFBWrite(server *mcp.Server, gt *gatedTools) {
 	type writeArg struct {
 		Db   string `json:"db"`
 		SQL  string `json:"sql" jsonschema:"one or more DML/DDL/DCL statements"`
-		Mode string `json:"mode,omitempty" jsonschema:"preview or execute (default execute)"`
+		Mode string `json:"mode,omitempty" jsonschema:"preview = dry run"`
 	}
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_write", Description: "Tier 1+ (dynamic) gated: classified statement script; mode=preview|execute; executed on the admin pool"}, func(ctx context.Context, req *mcp.CallToolRequest, a writeArg) (*mcp.CallToolResult, any, error) {
 		// WS2.1 fix (kept by requestWrite): the identity comes from the

@@ -17,6 +17,7 @@ func main() {
 	client := mcp.NewClient(&mcp.Implementation{Name: "smoke", Version: "0"}, nil)
 	wd, _ := os.Getwd()
 	cmd := exec.Command(filepath.Join(wd, "dist", "fbmcp.exe"), "-config", "fbmcp.dev.yaml")
+	cmd.Env = append(os.Environ(), "FBMCP_DEMO_TOOLS=1") // registers fb_demo_write
 	sess, err := client.Connect(context.Background(), &mcp.CommandTransport{Command: cmd}, nil)
 	if err != nil {
 		fmt.Println("connect:", err)

@@ -28,11 +28,11 @@ const adviceRowTimeout = 10 * time.Second
 
 func registerIndexAdviceTool(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manager, aud *audit.Logger, st *state.Store) {
 	type adviceArg struct {
-		Db        string `json:"db" jsonschema:"registry id of the database"`
+		Db        string `json:"db" jsonschema:"database id from fb_db_list"`
 		Query     string `json:"query,omitempty" jsonschema:"a single SELECT statement to analyze (required unless recheck_of)"`
-		RecheckOf string `json:"recheck_of,omitempty" jsonschema:"advisory id from a previous fb_index_advice run: re-plan its recorded query and report which natural scans were resolved"`
+		RecheckOf string `json:"recheck_of,omitempty" jsonschema:"adv id of an earlier fb_index_advice: re-plan its query"`
 	}
-	mcp.AddTool(server, &mcp.Tool{Name: "fb_index_advice", Description: "Tier 0: analyze a SELECT's access plan and propose CREATE INDEX DDL for natural (full) table scans with sargable predicates — estimate-only benefit (Firebird cannot simulate an uncreated index); DDL is never applied here, run it via fb_write; recheck_of re-plans a previously advised query and reports the delta"}, func(ctx context.Context, req *mcp.CallToolRequest, a adviceArg) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_index_advice", Description: "Tier 0: suggest CREATE INDEX DDL for full table scans in the plan of a SELECT. The benefit is an estimate; nothing is applied (run the DDL with fb_write). recheck_of re-plans an earlier advice and reports what changed."}, func(ctx context.Context, req *mcp.CallToolRequest, a adviceArg) (*mcp.CallToolResult, any, error) {
 		dbCfg, err := cfg.DB(a.Db)
 		if err != nil {
 			return errText("error: " + err.Error())

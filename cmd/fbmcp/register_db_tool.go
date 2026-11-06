@@ -15,20 +15,20 @@ import (
 )
 
 type instanceArg struct {
-	Instance string `json:"instance" jsonschema:"registry id of the Firebird instance"`
+	Instance string `json:"instance" jsonschema:"instance id"`
 }
 
 type registerDBArg struct {
-	Instance       string `json:"instance" jsonschema:"registry id of the Firebird instance"`
+	Instance       string `json:"instance" jsonschema:"instance id"`
 	Path           string `json:"path" jsonschema:"absolute database path reported by discovery"`
 	DB             string `json:"db,omitempty" jsonschema:"registry id to assign; defaults to a filename-based suggestion"`
-	BackupDir      string `json:"backup_dir,omitempty" jsonschema:"optional override for backup_dir"`
-	WorkDir        string `json:"work_dir,omitempty" jsonschema:"optional override for work_dir"`
-	ROUser         string `json:"ro_user,omitempty" jsonschema:"optional override for ro_user"`
-	ROSecretEnv    string `json:"ro_secret_env,omitempty" jsonschema:"optional override for ro_secret_env"`
-	AdminUser      string `json:"admin_user,omitempty" jsonschema:"optional override for admin_user"`
-	AdminSecretEnv string `json:"admin_secret_env,omitempty" jsonschema:"optional override for admin_secret_env"`
-	Mode           string `json:"mode,omitempty" jsonschema:"preview or execute (default execute)"`
+	BackupDir      string `json:"backup_dir,omitempty"`
+	WorkDir        string `json:"work_dir,omitempty"`
+	ROUser         string `json:"ro_user,omitempty"`
+	ROSecretEnv    string `json:"ro_secret_env,omitempty"`
+	AdminUser      string `json:"admin_user,omitempty"`
+	AdminSecretEnv string `json:"admin_secret_env,omitempty"`
+	Mode           string `json:"mode,omitempty" jsonschema:"preview = dry run"`
 }
 
 func registerDBTool(server *mcp.Server, gt *gatedTools) {
@@ -64,7 +64,7 @@ func registerDBTool(server *mcp.Server, gt *gatedTools) {
 		prog(1.0, "registration saved")
 		return fmt.Sprintf("registered database %s on instance %s", db.ID, db.Instance), nil
 	}
-	mcp.AddTool(server, &mcp.Tool{Name: meta.Name, Description: "Tier 2 (gated): persist a discovered database into fbmcp.yaml; applied live after out-of-band confirm"}, func(ctx context.Context, req *mcp.CallToolRequest, a registerDBArg) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: meta.Name, Description: "Add a database found by fb_connected_dbs to fbmcp.yaml; applied live. Tier 2 (operator approves)."}, func(ctx context.Context, req *mcp.CallToolRequest, a registerDBArg) (*mcp.CallToolResult, any, error) {
 		return text(requestRegisterDB(ctx, gt, meta, a)), nil, nil
 	})
 }

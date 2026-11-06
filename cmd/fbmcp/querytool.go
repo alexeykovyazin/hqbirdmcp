@@ -101,7 +101,7 @@ func registerQueryTool(server *mcp.Server, gt *gatedTools) {
 		SQL     string `json:"sql" jsonschema:"single SELECT / WITH-SELECT / EXECUTE PROCEDURE statement (no bind parameters)"`
 		MaxRows int    `json:"max_rows,omitempty" jsonschema:"row cap (default 100, max 1000)"`
 	}
-	mcp.AddTool(server, &mcp.Tool{Name: "fb_query", Description: "Tier 0: run one SELECT (or EXECUTE PROCEDURE) on an engine-enforced read-only transaction; returns rows, access plan and execution statistics (per-table on FB 5+); every call is logged to query-log.jsonl. A procedure the engine refuses on the RO transaction is routed to fb_write (confirmation required). Composing a new query? Validate drafts with fb_query_check first (compile-only, never executes)"}, func(ctx context.Context, req *mcp.CallToolRequest, a queryArg) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_query", Description: "Tier 0: run one SELECT or EXECUTE PROCEDURE on a read-only transaction; returns rows, plan and statistics (per table on FB 5+). Logged to query-log.jsonl. A procedure that writes goes to fb_write. Check drafts with fb_query_check."}, func(ctx context.Context, req *mcp.CallToolRequest, a queryArg) (*mcp.CallToolResult, any, error) {
 		id := identity.Caller(ctx)
 		if _, err := gt.cfg.DB(a.Db); err != nil {
 			return errText("DENIED: " + err.Error())
@@ -195,10 +195,10 @@ func (gt *gatedTools) storeGrid(idName, dbID, sqlText string, res queryResult) (
 // column metadata), so they come from fb_query on the real run.
 func registerQueryCheckTool(server *mcp.Server, gt *gatedTools) {
 	type checkArg struct {
-		Db  string `json:"db" jsonschema:"registry id of the database"`
-		SQL string `json:"sql" jsonschema:"single SELECT / WITH-SELECT / EXECUTE PROCEDURE statement to compile-validate (no bind parameters; never executed)"`
+		Db  string `json:"db" jsonschema:"database id from fb_db_list"`
+		SQL string `json:"sql" jsonschema:"the statement to check (never executed)"`
 	}
-	mcp.AddTool(server, &mcp.Tool{Name: "fb_query_check", Description: "Tier 0: compile-validate one SELECT / WITH-SELECT / EXECUTE PROCEDURE draft — prepares it on the engine-enforced read-only transaction and reports kind + bind-parameter count; the statement is NEVER executed (no rows touched, no procedure bodies run). Compile errors come back with a structured {code, hint, remediation} envelope. Column names/types are reported by fb_query once executed. Run drafts here before fb_query"}, func(ctx context.Context, req *mcp.CallToolRequest, a checkArg) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_query_check", Description: "Tier 0: compile one SELECT / WITH-SELECT / EXECUTE PROCEDURE draft on the read-only transaction without running it; reports the kind and parameter count, or the compile error. Use it before fb_query."}, func(ctx context.Context, req *mcp.CallToolRequest, a checkArg) (*mcp.CallToolResult, any, error) {
 		id := identity.Caller(ctx)
 		if _, err := gt.cfg.DB(a.Db); err != nil {
 			return errText("DENIED: " + err.Error())

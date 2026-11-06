@@ -145,7 +145,7 @@ func startKernel(t *testing.T, bin, cfgPath, killpoints, kpDir string) (*exec.Cm
 	var log bytes.Buffer
 	cmd.Stdout = &log
 	cmd.Stderr = &log
-	env := append(os.Environ(), "FBMCP_DEV_PW=masterkey")
+	env := append(os.Environ(), "FBMCP_DEV_PW=masterkey", "FBMCP_DEMO_TOOLS=1") // fb_demo_write is registered only with FBMCP_DEMO_TOOLS=1
 	if killpoints != "" {
 		env = append(env, "FBMCP_KILLPOINT="+killpoints, "FBMCP_KILLPOINT_DIR="+kpDir)
 	}

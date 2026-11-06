@@ -66,6 +66,12 @@ type gatedTools struct {
 	// it back, identity-scoped. Nil-safe: nil disables the grid entirely.
 	grid *uigrid.Registry
 
+	// relist makes the server send tools/list_changed (UX W1.8: the
+	// visible tool set depends on the config). toolKey is the last
+	// toolListKey (guarded by mu).
+	relist  func()
+	toolKey string
+
 	mu   sync.Mutex
 	args map[string]map[string]any // requestID -> tool args (in-memory; single instance per D8)
 }
@@ -97,7 +103,7 @@ func (gt *gatedTools) registerToolEx(server *mcp.Server, meta policy.ToolMeta, i
 	gt.execs[meta.Name] = exec
 	type dbArg struct {
 		Db   string         `json:"db"`
-		Mode string         `json:"mode,omitempty" jsonschema:"preview or execute (default execute)"`
+		Mode string         `json:"mode,omitempty" jsonschema:"preview = dry run"`
 		Args map[string]any `json:"args,omitempty"`
 	}
 	mcp.AddTool(server, &mcp.Tool{Name: meta.Name, Description: gatedDescription(meta.Name, meta.Tier, impactFmt)}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {

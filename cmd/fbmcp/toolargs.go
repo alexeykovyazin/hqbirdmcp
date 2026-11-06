@@ -35,15 +35,15 @@ type toolArgs struct {
 	Note  string     // extra description sentence (when to use another tool)
 }
 
-var agentArgSpec = argSpec{Name: "agent", Kind: "string", Doc: "agents[].id from fbmcp.yaml; optional when only one agent is configured"}
-var reasonArgSpec = argSpec{Name: "reason", Kind: "string", Doc: "free text recorded by the agent"}
+var agentArgSpec = argSpec{Name: "agent", Kind: "string", Doc: "agent id from fbmcp.yaml; optional with one agent"}
+var reasonArgSpec = argSpec{Name: "reason", Kind: "string", Doc: "recorded by the agent"}
 
 // gatedArgSpecs covers every tool registered through registerTool /
 // registerToolEx (TestGatedToolsHaveArgSpecs keeps it complete).
 var gatedArgSpecs = map[string]toolArgs{
 	"fb_backup_start": {Args: []argSpec{
 		{Name: "parallel_workers", Kind: "int", Min: 1, Max: 64, Doc: "HQbird / Firebird 5 multi-thread backup"},
-	}, Note: "Then run fb_restore_test to mark the backup verified. For fbagent-managed backup jobs use fb_agent_job_run."},
+	}, Note: "Then fb_restore_test marks it verified. fbagent backup jobs: fb_agent_job_run."},
 	"fb_backup_nbackup": {Args: []argSpec{
 		{Name: "level", Kind: "int", Min: 0, Max: 2, Doc: "nbackup level, default 0; level N needs a level N-1 backup in the catalog"},
 	}},
@@ -53,7 +53,7 @@ var gatedArgSpecs = map[string]toolArgs{
 		{Name: "keep_verify", Kind: "bool", Doc: "keep the restored verify copy for a follow-up diff"},
 	}},
 	"fb_validate":         {},
-	"fb_sweep":            {Note: "For a scheduled fbagent sweep job use fb_agent_job_run."},
+	"fb_sweep":            {Note: "fbagent sweep job: fb_agent_job_run."},
 	"fb_set_forcewrite":   {Args: []argSpec{{Name: "on", Kind: "bool", Required: true, Doc: "true = Forced Writes ON, false = OFF"}}},
 	"fb_set_readonly":     {Args: []argSpec{{Name: "readonly", Kind: "bool", Required: true, Doc: "true = READ ONLY, false = READ WRITE"}}},
 	"fb_set_page_buffers": {Args: []argSpec{{Name: "buffers", Kind: "int", Required: true, Min: 1, Max: 100000, Doc: "page buffers stored in the database header"}}},
@@ -63,7 +63,7 @@ var gatedArgSpecs = map[string]toolArgs{
 	"fb_trace_stop": {Args: []argSpec{{Name: "session_id", Kind: "string", Required: true, Doc: "the t… id printed by fb_trace_start"}}},
 	"fb_restore_replace": {Args: []argSpec{
 		{Name: "no_matviews", Kind: "bool", Doc: "skip materialized-view refresh (Firebird 5+)"},
-	}, Note: "Needs an open maintenance window (fb_window_open) and a verified backup < 24 h (fb_backup_start, then fb_restore_test). To only check a backup use fb_restore_test."},
+	}, Note: "Needs fb_window_open and a verified backup < 24 h. To only check a backup: fb_restore_test."},
 	"fb_index_rebuild": {Args: []argSpec{
 		{Name: "index", Kind: "string", Doc: "index name"},
 		{Name: "action", Kind: "string", Enum: []string{"rebuild", "statistics"}, Doc: "default rebuild"},
@@ -107,23 +107,23 @@ var gatedArgSpecs = map[string]toolArgs{
 	"fb_shutdown_window": {Args: []argSpec{
 		{Name: "mode", Kind: "string", Enum: []string{"force", "attach", "tran"}, Doc: "gfix -shut mode, default force"},
 		{Name: "kick", Kind: "bool", Doc: "terminate remaining attachments"},
-	}, Note: "Needs an open maintenance window (fb_window_open) and a verified backup < 24 h."},
+	}, Note: "Needs fb_window_open and a verified backup < 24 h."},
 	"fb_config_set": {Args: []argSpec{
-		{Name: "instance", Kind: "string", Doc: "instance id; default: the instance of db"},
+		{Name: "instance", Kind: "string", Doc: "default: instance of db"},
 		{Name: "param", Kind: "string", Required: true, Doc: "firebird.conf parameter, e.g. WireCrypt"},
 		{Name: "value", Kind: "text", Required: true, Doc: "new value"},
-	}, Note: "Changes firebird.conf. fb_config_reload reloads fbmcp.yaml; fb_agent_config_set changes fbagent jobs."},
+	}, Note: "Not fbmcp.yaml (fb_config_reload) or fbagent jobs (fb_agent_config_set)."},
 	"fb_window_open":     {Args: []argSpec{{Name: "hours", Kind: "int", Min: 1, Max: 24, Doc: "window length, default 2"}}},
 	"fb_schedule_delete": {Args: []argSpec{{Name: "id", Kind: "string", Required: true, Doc: "sch… id from fb_schedule_list"}}},
 	"fb_retention_run": {Args: []argSpec{
 		{Name: "keep_days", Kind: "int", Min: 0, Max: 3650, Doc: "default: retention.keep_days from fbmcp.yaml"},
 		{Name: "dry_run", Kind: "bool", Doc: "default true: only list what would be deleted"},
 	}},
-	"fb_service_start":   {Args: []argSpec{{Name: "instance", Kind: "string", Doc: "instance id; default: the instance of db"}}, Note: "Controls the OS service directly. For an fbagent-supervised engine use fb_agent_start."},
-	"fb_service_stop":    {Args: []argSpec{{Name: "instance", Kind: "string", Doc: "instance id; default: the instance of db"}}, Note: "Controls the OS service directly. For an fbagent-supervised engine use fb_agent_stop."},
-	"fb_service_restart": {Args: []argSpec{{Name: "instance", Kind: "string", Doc: "instance id; default: the instance of db"}}, Note: "Controls the OS service directly. For an fbagent-supervised engine use fb_agent_restart."},
+	"fb_service_start":   {Args: []argSpec{{Name: "instance", Kind: "string", Doc: "default: instance of db"}}, Note: "OS service; with fbagent use fb_agent_start."},
+	"fb_service_stop":    {Args: []argSpec{{Name: "instance", Kind: "string", Doc: "default: instance of db"}}, Note: "OS service; with fbagent use fb_agent_stop."},
+	"fb_service_restart": {Args: []argSpec{{Name: "instance", Kind: "string", Doc: "default: instance of db"}}, Note: "OS service; with fbagent use fb_agent_restart."},
 	"fb_agent_config_reload": {Args: []argSpec{agentArgSpec},
-		Note: "Reloads agent_config.json in fbagent. fb_config_reload reloads fbmcp.yaml instead."},
+		Note: "fbmcp.yaml: fb_config_reload."},
 	"fb_agent_pprof": {Args: []argSpec{agentArgSpec,
 		{Name: "cpu_seconds", Kind: "int", Min: 0, Max: 30, Doc: "default 5; 0 = heap + goroutine only"},
 	}},
@@ -133,9 +133,9 @@ var gatedArgSpecs = map[string]toolArgs{
 	"fb_agent_license_set": {Args: []argSpec{agentArgSpec,
 		{Name: "license", Kind: "string", Required: true, Secret: true, Doc: "the vendor JSON document, verbatim"},
 	}},
-	"fb_agent_restart": {Args: agentEngineSpecs, Note: "Goes through fbagent. Without fbagent use fb_service_restart."},
-	"fb_agent_stop":    {Args: agentEngineSpecs, Note: "Goes through fbagent. Without fbagent use fb_service_stop."},
-	"fb_agent_start":   {Args: agentEngineSpecs, Note: "Goes through fbagent. Without fbagent use fb_service_start."},
+	"fb_agent_restart": {Args: agentEngineSpecs, Note: "Without fbagent: fb_service_restart."},
+	"fb_agent_stop":    {Args: agentEngineSpecs, Note: "Without fbagent: fb_service_stop."},
+	"fb_agent_start":   {Args: agentEngineSpecs, Note: "Without fbagent: fb_service_start."},
 	"fb_agent_update_apply": {Args: []argSpec{agentArgSpec, reasonArgSpec},
 		Note: "Check first with fb_agent_update_status."},
 	"fb_agent_product_update_apply": {Args: []argSpec{agentArgSpec, reasonArgSpec,
@@ -144,8 +144,8 @@ var gatedArgSpecs = map[string]toolArgs{
 }
 
 var agentEngineSpecs = []argSpec{agentArgSpec, reasonArgSpec,
-	{Name: "coalesce", Kind: "bool", Doc: "join a running operation of the same kind, default true"},
-	{Name: "cluster_override", Kind: "bool", Doc: "bypass the hqclusternode refusal (only when the node is stopped)"},
+	{Name: "coalesce", Kind: "bool", Doc: "join a running operation, default true"},
+	{Name: "cluster_override", Kind: "bool", Doc: "bypass the hqclusternode refusal"},
 }
 
 // validateArgs checks args against the tool's spec and normalizes "text"
@@ -264,10 +264,11 @@ func quoteAll(ss []string) []string {
 }
 
 // argsSummary renders the args contract in one line, e.g.
-// {"on": bool (required) — true = Forced Writes ON, false = OFF}.
+// on (bool, required): true = Forced Writes ON, false = OFF.
+// Compact on purpose: every description is in every client's context.
 func argsSummary(spec toolArgs) string {
 	if len(spec.Args) == 0 {
-		return "none (omit args)"
+		return "none"
 	}
 	parts := make([]string, 0, len(spec.Args))
 	for _, a := range spec.Args {
@@ -278,45 +279,47 @@ func argsSummary(spec toolArgs) string {
 		case a.Kind == "text":
 			typ = "string"
 		case a.Kind == "ints":
-			typ = "[int,…]"
+			typ = "int list"
 		case a.Kind == "int" && a.Max > a.Min:
 			typ = fmt.Sprintf("int %d..%d", a.Min, a.Max)
 		}
-		p := fmt.Sprintf("%q: %s", a.Name, typ)
 		if a.Required {
-			p += " (required)"
+			typ += ", required"
 		}
+		p := a.Name + " (" + typ + ")"
 		if a.Doc != "" {
-			p += " — " + a.Doc
+			p += ": " + a.Doc
 		}
 		parts = append(parts, p)
 	}
-	s := "{" + strings.Join(parts, "; ") + "}"
+	s := strings.Join(parts, "; ")
 	for _, g := range spec.OneOf {
-		s += "; one of " + strings.Join(quoteAll(g), "/") + " is required"
+		s += "; give " + strings.Join(g, " or ")
 	}
 	return s
 }
 
 // gatedDescription is the MCP description of a generic gated tool: what it
-// does (the impact template), how it is confirmed, and its args.
+// does (the impact template), its tier, and its args. The tier rules and
+// mode=preview are explained once, in the server instructions.
 func gatedDescription(name string, tier int, impactFmt string) string {
 	what := strings.ReplaceAll(impactFmt, "%s", "<db>")
-	confirm := "Tier 1: returns a request id and token; after the user agrees, call fb_confirm."
+	confirm := "Tier 1 (fb_confirm)."
 	switch {
 	case tier >= 3:
-		confirm = "Tier 3: disabled."
+		confirm = "Tier 3 (disabled)."
 	case tier == 2:
-		confirm = "Tier 2: an operator approves out of band (tray or fbmcp ctl approve); fb_confirm cannot."
+		confirm = "Tier 2 (operator approves)."
 	}
 	b := strings.Builder{}
-	b.WriteString(what)
-	b.WriteString(" " + confirm + " mode=preview shows the impact without a request.")
+	b.WriteString(what + " " + confirm)
 	if spec, ok := gatedArgSpecs[name]; ok {
 		if spec.Note != "" {
 			b.WriteString(" " + spec.Note)
 		}
-		b.WriteString(" args: " + argsSummary(spec))
+		if len(spec.Args) > 0 {
+			b.WriteString(" args: " + argsSummary(spec))
+		}
 	}
 	return b.String()
 }

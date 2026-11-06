@@ -85,7 +85,7 @@ func startTrendsSampler(ctx context.Context, handle *config.Handle, pools *dbpoo
 
 func registerTrendsTool(server *mcp.Server, handle *config.Handle, pools *dbpool.Manager, aud *audit.Logger) {
 	type trendsArg struct {
-		Db          string  `json:"db" jsonschema:"registry id of the database"`
+		Db          string  `json:"db" jsonschema:"database id from fb_db_list"`
 		Hours       float64 `json:"hours,omitempty" jsonschema:"analysis window in hours (default 24)"`
 		ThresholdGb float64 `json:"threshold_gb,omitempty" jsonschema:"project days until the on-disk size reaches this many GB"`
 	}

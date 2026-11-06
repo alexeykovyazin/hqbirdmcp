@@ -124,6 +124,7 @@ func (gt *gatedTools) reloadHooks() reload.Hooks {
 		},
 		RefreshAuth: func(cfg *config.Config) ([]string, error) {
 			secrets.SetDir(cfg.Secrets.Dir)
+			gt.relistIfChanged(cfg)
 			if gt.bus != nil {
 				gt.bus.SetServer(cfg.ServerNameOrDefault())
 			}

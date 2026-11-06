@@ -151,11 +151,12 @@ func runForegroundCtx(ctx context.Context) {
 	allFacts := state.CompositeFacts{engFacts, backupsvc.NewCatalog(st)}
 	eng := policy.New(toolMeta, allFacts, st)
 
-	server := mcp.NewServer(&mcp.Implementation{Name: "fbmcp", Version: version}, nil)
+	server := mcp.NewServer(&mcp.Implementation{Name: "fbmcp", Version: version}, &mcp.ServerOptions{Instructions: serverInstructions})
+	server.AddReceivingMiddleware(toolListFilter(handle, toolMeta)) // W1.8: list only usable tools
 
 	type noArgs struct{}
 	type dbArg struct {
-		Db string `json:"db" jsonschema:"registry id of the database"`
+		Db string `json:"db" jsonschema:"database id from fb_db_list"`
 	}
 
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_ping", Description: "liveness probe; names the server (server_name) and the caller identity"}, func(ctx context.Context, req *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
@@ -252,6 +253,9 @@ func runForegroundCtx(ctx context.Context) {
 	registerAgentTools(server, gt)
 	registerAgentDiscoverTools(server, gt)
 	registerPhase11Tools(server, gt)
+	// Re-adding a tool replaces it and makes the SDK send tools/list_changed.
+	gt.relist = func() { registerAgentDiscoverTools(server, gt) }
+	gt.toolKey = toolListKey(cfg)
 	// AutoReopen reconciliation must run AFTER all workflow types are
 	// registered above (C7a): a restore_replace interrupted by a kill is
 	// resumed from its .pre-restore snapshot — marking it failed here would
@@ -278,30 +282,34 @@ func runForegroundCtx(ctx context.Context) {
 		}
 	}()
 	// fb_confirm → gate → dispatcher → job manager.
-	mcp.AddTool(server, &mcp.Tool{Name: "fb_demo_write", Description: "DEMO Tier-1 gated tool: policy → impact statement → confirm → job (no real mutation)"}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
-		id := identity.Caller(ctx)
-		d := eng.Evaluate(id, a.Db, "fb_demo_write")
-		if d.Outcome == "deny" {
-			aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_demo_write", Tier: d.Meta.Tier, Decision: "denied", Detail: map[string]interface{}{"reason": d.Reason}})
-			return errText("DENIED: " + d.Reason)
-		}
-		argHash := hashOf(a.Db)
-		p, err := g.Request(id, a.Db, d.Meta,
-			fmt.Sprintf("Demo write on database %s (no-op function; demonstrates the gate).", a.Db),
-			argHash, d.FailedPreconditions)
-		if err != nil {
-			return errText("gate error: " + err.Error())
-		}
-		gt.storeArgs(p.ID, nil)
-		return text(pendingReply(p, argHash)), nil, nil
-	})
+	// fb_demo_write creates real pending actions (tray and webhook alerts), so
+	// it is registered only for the harnesses (UX review W1.4).
+	if os.Getenv("FBMCP_DEMO_TOOLS") == "1" {
+		mcp.AddTool(server, &mcp.Tool{Name: "fb_demo_write", Description: "DEMO Tier-1 gated tool: policy → impact statement → confirm → job (no real mutation)"}, func(ctx context.Context, req *mcp.CallToolRequest, a dbArg) (*mcp.CallToolResult, any, error) {
+			id := identity.Caller(ctx)
+			d := eng.Evaluate(id, a.Db, "fb_demo_write")
+			if d.Outcome == "deny" {
+				aud.Log(audit.Entry{Identity: id.Name, Database: a.Db, Tool: "fb_demo_write", Tier: d.Meta.Tier, Decision: "denied", Detail: map[string]interface{}{"reason": d.Reason}})
+				return errText("DENIED: " + d.Reason)
+			}
+			argHash := hashOf(a.Db)
+			p, err := g.Request(id, a.Db, d.Meta,
+				fmt.Sprintf("Demo write on database %s (no-op function; demonstrates the gate).", a.Db),
+				argHash, d.FailedPreconditions)
+			if err != nil {
+				return errText("gate error: " + err.Error())
+			}
+			gt.storeArgs(p.ID, nil)
+			return text(pendingReply(p, argHash)), nil, nil
+		})
+	}
 
 	type confirmArg struct {
 		RequestID string `json:"request_id"`
-		Token     string `json:"token,omitempty" jsonschema:"in-band token from the pending action (Tier 1 only)"`
-		Wait      bool   `json:"wait,omitempty" jsonschema:"block until the submitted job reaches a terminal state; emits progress notifications when the client supplied a progress token (phase8_plan D3.2)"`
+		Token     string `json:"token,omitempty" jsonschema:"token from the pending reply (Tier 1)"`
+		Wait      bool   `json:"wait,omitempty" jsonschema:"wait for the job to finish and return its result (progress notifications when the client asks for them)"`
 	}
-	mcp.AddTool(server, &mcp.Tool{Name: "fb_confirm", Description: "confirm a pending action (in-band: Tier 1 only; Tier >= 2 requires the out-of-band surface)"}, func(ctx context.Context, req *mcp.CallToolRequest, a confirmArg) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_confirm", Description: "Run a Tier 1 pending action after the user agrees: request_id and token from the pending reply. Tier 2 cannot be confirmed here (operator approves out-of-band)."}, func(ctx context.Context, req *mcp.CallToolRequest, a confirmArg) (*mcp.CallToolResult, any, error) {
 		caller := identity.Caller(ctx)
 		p, err := g.Confirm(a.RequestID, caller.Name, gate.ChannelInBand, a.Token)
 		if err != nil {

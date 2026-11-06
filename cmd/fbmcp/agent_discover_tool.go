@@ -97,7 +97,7 @@ func registerAgentDiscoverTools(server *mcp.Server, gt *gatedTools) {
 		TokenEnv   string `json:"token_env" jsonschema:"env var / keyring name holding the agent's Bearer token (value set by the operator beforehand)"`
 		InstanceID string `json:"instance_id,omitempty" jsonschema:"agent instance id from discovery (default fb1)"`
 		ConfigPath string `json:"config_path,omitempty" jsonschema:"agent_config.json path from discovery (enables the candidate-file config write path)"`
-		Mode       string `json:"mode,omitempty" jsonschema:"preview or execute (default execute)"`
+		Mode       string `json:"mode,omitempty" jsonschema:"preview = dry run"`
 	}
 	meta := policy.ToolMeta{Name: "fb_agent_register", Tier: 2, Scope: "instance"}
 	gt.execs[meta.Name] = func(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {

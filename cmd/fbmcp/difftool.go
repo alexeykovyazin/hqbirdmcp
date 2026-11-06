@@ -67,11 +67,11 @@ func captureRegistryDB(ctx context.Context, pools *dbpool.Manager, dbID string) 
 func registerDiffTools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manager, aud *audit.Logger) {
 	type diffSchemaArg struct {
 		Db           string `json:"db" jsonschema:"registry id of the database (left side / source)"`
-		VsDb         string `json:"vs_db,omitempty" jsonschema:"second registered database id to compare against (default: the stored snapshot when use_snapshot, else required)"`
+		VsDb         string `json:"vs_db,omitempty" jsonschema:"database to compare with (default: the saved snapshot when use_snapshot)"`
 		UseSnapshot  bool   `json:"use_snapshot,omitempty" jsonschema:"compare db against its stored snapshot (taken with save_snapshot) instead of vs_db"`
 		SaveSnapshot bool   `json:"save_snapshot,omitempty" jsonschema:"persist db's current schema as the comparison snapshot"`
 	}
-	mcp.AddTool(server, &mcp.Tool{Name: "fb_diff_schema", Description: "Tier 0: schema diff between two registered databases (or db vs its stored snapshot) — grouped 'would need CREATE/ALTER/DROP' output; also saves snapshots for drift detection. Read-only"}, func(ctx context.Context, req *mcp.CallToolRequest, a diffSchemaArg) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_diff_schema", Description: "Tier 0: schema diff between two databases, or db against its saved snapshot: what would need CREATE, ALTER or DROP. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, a diffSchemaArg) (*mcp.CallToolResult, any, error) {
 		if _, err := cfg.DB(a.Db); err != nil {
 			return errText("error: " + err.Error())
 		}
@@ -133,7 +133,7 @@ func registerDiffTools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Man
 		RowCap     int    `json:"row_cap,omitempty" jsonschema:"refuse when either side exceeds this many rows (default 100000)"`
 		SampleRows int    `json:"sample_rows,omitempty" jsonschema:"sample rows kept per category (default 10)"`
 	}
-	mcp.AddTool(server, &mcp.Tool{Name: "fb_diff_data", Description: "Tier 0: bounded key-based data diff of one table between two registered databases — streams both sides ordered by primary key, counts only-in-A / only-in-B / differing rows with samples; refuses above row_cap (default 100k). Read-only"}, func(ctx context.Context, req *mcp.CallToolRequest, a diffDataArg) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_diff_data", Description: "Tier 0: compare the rows of one table in two databases by primary key: counts and samples of rows only in db, only in vs_db, and different. Refuses above row_cap. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, a diffDataArg) (*mcp.CallToolResult, any, error) {
 		if _, err := cfg.DB(a.Db); err != nil {
 			return errText("error: " + err.Error())
 		}

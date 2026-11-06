@@ -60,7 +60,7 @@ func registerPhase11Tools(server *mcp.Server, gt *gatedTools) {
 	type fbLogArg struct {
 		Instance string `json:"instance" jsonschema:"registered instance id (fbmcp.yaml instances:)"`
 		Tail     int    `json:"tail,omitempty" jsonschema:"last N lines (default 100, max 5000, 0=default)"`
-		Archived bool   `json:"archived,omitempty" jsonschema:"true: list the co-located fbagent's rotated firebird.log / conf-change copies instead of reading the live log (names only — the agent API serves no content for them)"`
+		Archived bool   `json:"archived,omitempty" jsonschema:"true: list the rotated log copies kept by fbagent (names only)"`
 		Glob     string `json:"glob,omitempty" jsonschema:"glob for the archived listing (default *)"`
 		Agent    string `json:"agent,omitempty" jsonschema:"agent registry id for archived=true (default: the single configured agent)"`
 	}

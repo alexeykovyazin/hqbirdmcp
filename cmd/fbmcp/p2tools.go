@@ -25,7 +25,7 @@ const rowCap = 100
 
 func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manager, engFacts *facts.EngineFacts, aud *audit.Logger, st *state.Store) {
 	type dbArg struct {
-		Db string `json:"db" jsonschema:"registry id of the database"`
+		Db string `json:"db" jsonschema:"database id from fb_db_list"`
 	}
 
 	// P2.4 — fb_analyze_query: plan via isql (ADR-013 route).
@@ -148,7 +148,7 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 	// embedded attach, authenticated user), optionally restricted to a
 	// table list (-r -t T1 -t T2 …).
 	type gstatArg struct {
-		Db     string   `json:"db" jsonschema:"registry id of the database"`
+		Db     string   `json:"db" jsonschema:"database id from fb_db_list"`
 		Mode   string   `json:"mode,omitempty" jsonschema:"header (default) or records"`
 		Tables []string `json:"tables,omitempty" jsonschema:"records mode: restrict analysis to these tables (exact case; unquoted names are uppercase)"`
 		System bool     `json:"system,omitempty" jsonschema:"records mode: include system relations (-s)"`
@@ -354,11 +354,11 @@ func registerP2Tools(server *mcp.Server, cfg *config.Handle, pools *dbpool.Manag
 	// (ADR-028; internal/lwmonitoring). Db is required for query levels 2-4
 	// (scopes the query to one database's isc_spb_dbname); ignored at level 1.
 	type lwmArg struct {
-		Instance string `json:"instance" jsonschema:"registry id of the Firebird instance"`
+		Instance string `json:"instance" jsonschema:"instance id"`
 		Query    int    `json:"query,omitempty" jsonschema:"lwm_query level 1-4 (default 1): 1=db/attachment counts, 2=per-database, 3=+transaction/request stats, 4=per-attachment"`
 		Db       string `json:"db,omitempty" jsonschema:"registry id of the database (required for query levels 2-4)"`
 	}
-	mcp.AddTool(server, &mcp.Tool{Name: "fb_lwmonitoring", Description: "Tier 0: HQBird lightweight monitoring (isc_action_svc_lwmonitoring via fbsvcmgr) — DB/attachment/transaction counts without MON$ table overhead"}, func(ctx context.Context, req *mcp.CallToolRequest, a lwmArg) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_lwmonitoring", Description: "Tier 0: HQbird lightweight monitoring: database, attachment and transaction counts without MON$ overhead."}, func(ctx context.Context, req *mcp.CallToolRequest, a lwmArg) (*mcp.CallToolResult, any, error) {
 		level := a.Query
 		if level == 0 {
 			level = lwmonitoring.MinQuery

@@ -166,7 +166,7 @@ func loadBatch(ctx context.Context, gt *gatedTools, dbID string, baseline bool) 
 func registerMigrateTools(server *mcp.Server, gt *gatedTools) {
 	// fb_migration_status — Tier 0.
 	type statusArg struct {
-		Db string `json:"db" jsonschema:"registry id of the database"`
+		Db string `json:"db" jsonschema:"database id from fb_db_list"`
 	}
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_migration_status", Description: "Tier 0: migration state — files in the database's migrations_dir vs the FBMCP_MIGRATIONS history table (applied / pending / uninitialized)"}, func(ctx context.Context, req *mcp.CallToolRequest, a statusArg) (*mcp.CallToolResult, any, error) {
 		dbCfg, err := gt.cfg.DB(a.Db)
@@ -210,10 +210,10 @@ func registerMigrateTools(server *mcp.Server, gt *gatedTools) {
 
 	// fb_migration_plan — Tier 0, informational (ADR-030).
 	type planArg struct {
-		Db       string `json:"db" jsonschema:"registry id of the database"`
+		Db       string `json:"db" jsonschema:"database id from fb_db_list"`
 		Baseline bool   `json:"baseline,omitempty" jsonschema:"include the version-0 baseline step in the plan"`
 	}
-	mcp.AddTool(server, &mcp.Tool{Name: "fb_migration_plan", Description: "Tier 0: dry-run plan for fb_migration_apply — per-statement classification (tier/risk, ADR-019), batch tier, checksums and down-section presence; executes nothing"}, func(ctx context.Context, req *mcp.CallToolRequest, a planArg) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_migration_plan", Description: "Tier 0: dry-run plan for fb_migration_apply — per-statement tier and risk, batch tier, checksums and down-section presence; executes nothing"}, func(ctx context.Context, req *mcp.CallToolRequest, a planArg) (*mcp.CallToolResult, any, error) {
 		batch, err := loadBatch(ctx, gt, a.Db, a.Baseline)
 		if err != nil {
 			return errText("error: " + err.Error())
@@ -232,11 +232,11 @@ func registerMigrateTools(server *mcp.Server, gt *gatedTools) {
 
 	// fb_migration_apply — gated batch (ADR-030).
 	type applyArg struct {
-		Db       string `json:"db" jsonschema:"registry id of the database"`
-		Mode     string `json:"mode,omitempty" jsonschema:"preview or execute (default execute)"`
+		Db       string `json:"db" jsonschema:"database id from fb_db_list"`
+		Mode     string `json:"mode,omitempty" jsonschema:"preview = dry run"`
 		Baseline bool   `json:"baseline,omitempty" jsonschema:"record the current schema as version 0 (INSERT only, no DDL); only when uninitialized"`
 	}
-	mcp.AddTool(server, &mcp.Tool{Name: "fb_migration_apply", Description: "Tier 1+ (dynamic, ADR-030 batch gate): apply all pending migrations from the database's migrations_dir in one confirmation — manifest argHash-bound (any file change re-requests), statements re-classified and checksums re-verified at execution time, each migration atomic with its history row; batch escalates to Tier 2 if any statement is Tier 2"}, func(ctx context.Context, req *mcp.CallToolRequest, a applyArg) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "fb_migration_apply", Description: "Apply all pending migrations from the migrations_dir of db in one confirmation. Tier 1, or Tier 2 when any statement is Tier 2. A file change after the request needs a new request; each migration commits with its history row. Check first with fb_migration_plan."}, func(ctx context.Context, req *mcp.CallToolRequest, a applyArg) (*mcp.CallToolResult, any, error) {
 		id := identity.Caller(ctx)
 		msg, denied := gt.requestMigrationApply(ctx, id, a.Db, strings.EqualFold(a.Mode, "preview"), a.Baseline)
 		if denied {
@@ -247,7 +247,7 @@ func registerMigrateTools(server *mcp.Server, gt *gatedTools) {
 
 	// fb_migration_rollback_plan — Tier 0, renders from recorded history.
 	type rollbackArg struct {
-		Db        string `json:"db" jsonschema:"registry id of the database"`
+		Db        string `json:"db" jsonschema:"database id from fb_db_list"`
 		ToVersion *int   `json:"to_version,omitempty" jsonschema:"target version after rollback (default: one step down from the highest applied; 0 = down to baseline)"`
 	}
 	mcp.AddTool(server, &mcp.Tool{Name: "fb_migration_rollback_plan", Description: "Tier 0: render the down-scripts recorded in FBMCP_MIGRATIONS at apply time (statements classified; executes nothing — paste into fb_write, which gates and confirms it)"}, func(ctx context.Context, req *mcp.CallToolRequest, a rollbackArg) (*mcp.CallToolResult, any, error) {
