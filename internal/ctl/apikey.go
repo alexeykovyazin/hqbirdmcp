@@ -18,7 +18,7 @@ import (
 
 func cmdAPIKey(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: fbmcpctl apikey new <identity> [--env NAME] [--max-tier N] [--profile autonomous] [--allow-from CIDR,...] [--config fbmcp.yaml] [--secrets-dir DIR] [--no-show]\n       fbmcpctl apikey rotate <identity> [--env NAME | --config fbmcp.yaml] [--secrets-dir DIR] [--no-show]\n       fbmcpctl apikey list <fbmcp.yaml>")
+		fmt.Fprintln(os.Stderr, "usage: fbmcpctl apikey new <identity> [--env NAME] [--max-tier N] [--profile autonomous] [--allow-from CIDR,...] [--config fbmcp.yaml] [--secrets-dir DIR] [--no-show]\n       fbmcpctl apikey rotate <identity> [--env NAME | --config fbmcp.yaml] [--secrets-dir DIR] [--no-show]\n       fbmcpctl apikey list [--config fbmcp.yaml]")
 		return 2
 	}
 	switch args[0] {
@@ -254,11 +254,11 @@ func apikeyRotate(args []string) int {
 }
 
 func apikeyList(args []string) int {
-	cfgPath := "fbmcp.yaml"
+	explicit, args := takeConfigFlag(args)
 	if len(args) > 0 {
-		cfgPath = args[0]
+		explicit = args[0]
 	}
-	cfg, err := config.Load(cfgPath)
+	cfg, cfgPath, err := loadConfig(explicit)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1

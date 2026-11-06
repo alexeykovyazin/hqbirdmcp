@@ -4,8 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/aleks/fbmcp/internal/gate"
 	"github.com/aleks/fbmcp/internal/policy"
 	"github.com/aleks/fbmcp/internal/state"
 )
@@ -96,6 +98,37 @@ func TestDenialMarkerRemovesPendingWithoutDispatch(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Fatal("denial must never dispatch")
+	}
+}
+
+// UX review W1.5: fbmcp ctl approve --deny writes who and why; both reach
+// the audit log, and the request's args are dropped.
+func TestDenialMarkerReasonReachesAudit(t *testing.T) {
+	gt := newTestGT(t)
+	p := pendingForWatcher(t, gt, "fb_demo_write")
+	deny := filepath.Join(gt.live().State.Dir, "denials")
+	if err := os.MkdirAll(deny, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := gate.MarkerBody(gate.MarkerDenied, "ops", "not in business hours")
+	if err := os.WriteFile(filepath.Join(deny, p.ID), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if n := gt.consumeDenialMarkers(); n != 1 {
+		t.Fatalf("consumeDenialMarkers=%d, want 1", n)
+	}
+	b, err := os.ReadFile(filepath.Join(gt.live().State.Dir, "audit.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"reason":"not in business hours"`) || !strings.Contains(string(b), `"by":"ops"`) {
+		t.Fatalf("audit lacks by/reason:\n%s", b)
+	}
+	gt.mu.Lock()
+	_, kept := gt.args[p.ID]
+	gt.mu.Unlock()
+	if kept {
+		t.Fatal("args of a denied request kept in memory")
 	}
 }
 

@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -489,12 +490,17 @@ func (gt *gatedTools) consumeApprovalMarkers() int {
 			os.Remove(filepath.Join(dir, id)) // unknown — drop marker
 			continue
 		}
+		by, _ := readMarker(filepath.Join(dir, id))
 		p, err := gt.g.Confirm(id, as, gate.ChannelOutOfBand, "")
 		if err != nil {
 			continue // expired/unknown — marker retried next tick
 		}
+		detail := map[string]interface{}{"request_id": id, "on_behalf_of": as}
+		if by != "" {
+			detail["by"] = by
+		}
 		gt.aud.Log(audit.Entry{Identity: "operator", Database: p.Database, Tool: p.Tool, Tier: p.Tier, Decision: "approved", Channel: gate.ChannelOutOfBand,
-			Detail: map[string]interface{}{"request_id": id, "on_behalf_of": as}})
+			Detail: detail})
 		os.Remove(filepath.Join(dir, id))
 		if _, err := gt.dispatch(p); err != nil {
 			gt.aud.Log(audit.Entry{Identity: "operator", Database: p.Database, Tool: p.Tool, Tier: p.Tier, Decision: "error",
@@ -523,20 +529,43 @@ func (gt *gatedTools) consumeDenialMarkers() int {
 	n := 0
 	for _, e := range ents {
 		id := e.Name()
+		by, reason := readMarker(filepath.Join(dir, id))
 		p, ok, _ := gt.st.TakePending(id)
 		os.Remove(filepath.Join(dir, id))
 		if !ok {
 			continue // unknown/already-resolved — marker dropped
 		}
+		gt.forgetArgs(id)
+		msg := "pending action denied by operator"
+		if reason == "" {
+			reason = "operator denied"
+		} else {
+			msg += ": " + reason
+		}
+		detail := map[string]interface{}{"request_id": id, "reason": reason}
+		if by != "" {
+			detail["by"] = by
+		}
 		gt.aud.Log(audit.Entry{Identity: "operator", Database: p.Database, Tool: p.Tool, Tier: p.Tier, Decision: "denied", Channel: gate.ChannelOutOfBand,
-			Detail: map[string]interface{}{"request_id": id, "reason": "operator denied"}})
+			Detail: detail})
 		if gt.bus != nil {
-			_ = gt.bus.Emit(notify.Event{Type: "gate.denied", Database: p.Database, Tool: p.Tool, Message: "pending action denied by operator",
+			_ = gt.bus.Emit(notify.Event{Type: "gate.denied", Database: p.Database, Tool: p.Tool, Message: msg,
 				Detail: map[string]string{"request_id": id}})
 		}
 		n++
 	}
 	return n
+}
+
+// readMarker returns the optional by/reason fields of an OOB marker file.
+func readMarker(path string) (by, reason string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", ""
+	}
+	defer f.Close()
+	b, _ := io.ReadAll(io.LimitReader(f, 4096))
+	return gate.ParseMarker(b)
 }
 
 // registerRestore adds the Tier-2 guarded restore tool (K5 workflow).

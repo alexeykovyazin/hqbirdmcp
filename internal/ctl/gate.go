@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/aleks/fbmcp/internal/attach"
-	"github.com/aleks/fbmcp/internal/config"
 	"github.com/aleks/fbmcp/internal/policy"
 )
 
@@ -275,24 +274,24 @@ func findRepoRoot() (string, error) {
 // attach socket right now? (fbmcpctl status is an offline state.json read;
 // it says nothing about a running kernel.) Exit 0 = reachable.
 func cmdPing(args []string) int {
-	cfgPath := "fbmcp.yaml"
-	if len(args) > 0 {
-		cfgPath = args[0]
+	explicit, args := takeConfigFlag(args)
+	timeout := 15 * time.Second
+	for _, a := range args {
+		if d, err := time.ParseDuration(a); err == nil {
+			timeout = d
+		} else {
+			explicit = a // the old form: ping <fbmcp.yaml> [timeout]
+		}
 	}
-	cfg, err := config.Load(cfgPath)
+	cfg, _, err := loadConfig(explicit)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	timeout := 15 * time.Second
-	if len(args) > 1 {
-		if d, err := time.ParseDuration(args[1]); err == nil {
-			timeout = d
-		}
-	}
 	conn, err := attach.Dial(cfg.State.Dir, timeout)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "ping: no kernel on the attach socket:", err)
+		fmt.Fprintln(os.Stderr, "ping: no fbmcp kernel answers for state dir", cfg.State.Dir+":", err)
+		fmt.Fprintln(os.Stderr, "Fix: start fbmcp (the Windows service or systemd unit, or the MCP client that runs it), then ping again")
 		return 1
 	}
 	conn.Close()

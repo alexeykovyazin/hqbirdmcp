@@ -166,3 +166,10 @@ func (gt *gatedTools) storeArgs(id string, args map[string]any) {
 	gt.args[id] = args
 	gt.mu.Unlock()
 }
+
+// forgetArgs drops the args of a request that will never dispatch.
+func (gt *gatedTools) forgetArgs(id string) {
+	gt.mu.Lock()
+	delete(gt.args, id)
+	gt.mu.Unlock()
+}

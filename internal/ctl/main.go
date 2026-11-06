@@ -1,5 +1,5 @@
-// Package ctl is the operator CLI (P5.6): approve, status, setup, doctor,
-// hqbird-install. It runs as "fbmcp ctl ..." and as the fbmcpctl wrapper.
+// Package ctl is the operator CLI: approve, status, setup, doctor,
+// hqbird-install and more. It runs as "fbmcp ctl ..." and as fbmcpctl.
 package ctl
 
 import (
@@ -13,49 +13,99 @@ import (
 
 	"github.com/aleks/fbmcp/internal/audit"
 	"github.com/aleks/fbmcp/internal/config"
-	"github.com/aleks/fbmcp/internal/gate"
 	"github.com/aleks/fbmcp/internal/notify"
 	"github.com/aleks/fbmcp/internal/posture"
 	"github.com/aleks/fbmcp/internal/secrets"
 	"github.com/aleks/fbmcp/internal/state"
 )
 
+// command is one row of the help table.
+type command struct {
+	name, args, what string
+	run              func([]string) int
+}
+
+// commands is the help table, in the order an operator needs them.
+var commands = []command{
+	{"approve", "[request_id] [--deny ID --reason TEXT] [--yes]", "list, approve or deny pending Tier 2 requests", cmdApprove},
+	{"status", "", "offline view: posture, pending requests, schedules", cmdStatus},
+	{"ping", "[timeout]", "is the fbmcp kernel running and reachable?", cmdPing},
+	{"doctor", "[--remote]", "check config, secrets, Firebird logins and state; every FAIL has a fix", cmdDoctor},
+	{"setup", "[--write-posture]", "check the install posture; --write-posture records it", cmdSetup},
+	{"verify", "", "check the hash chain of the audit log", cmdVerify},
+	{"repair", "--from-audit", "rebuild schedule grants from audit.jsonl after state.json was lost", cmdRepair},
+	{"secret", "set|get|drop [--dir DIR] NAME", "store a password or token (the value comes from stdin)", cmdSecret},
+	{"apikey", "new|rotate|list ...", "make, rotate and list remote-mode API keys", cmdAPIKey},
+	{"tls", "selfsign|show ...", "make or show a self-signed TLS certificate", cmdTLS},
+	{"hqbird-install", "[--dry-run] ...", "install fbmcp on an HQbird server", cmdHqbirdInstall},
+	{"gate", "[-root DIR]", "developers: milestone report of the source tree", cmdGate},
+}
+
+// usesConfig marks the commands that read fbmcp.yaml.
+var usesConfig = map[string]bool{"approve": true, "status": true, "ping": true, "doctor": true, "setup": true, "verify": true, "repair": true}
+
+func printHelp(w io.Writer) {
+	fmt.Fprintln(w, "usage: fbmcp ctl <command> [args]   (fbmcpctl is the same program)")
+	fmt.Fprintln(w)
+	for _, c := range commands {
+		fmt.Fprintf(w, "  %-15s %s\n", c.name, c.what)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "  "+configHelp)
+	fmt.Fprintln(w, "  fbmcp ctl <command> -h shows the arguments of one command.")
+}
+
+func printCommandHelp(c command) {
+	if c.name == "approve" {
+		fmt.Print(approveUsage)
+		return
+	}
+	fmt.Printf("usage: fbmcp ctl %s", c.name)
+	if usesConfig[c.name] {
+		fmt.Print(" [--config FILE]")
+	}
+	if c.args != "" {
+		fmt.Print(" " + c.args)
+	}
+	fmt.Printf("\n  %s\n", c.what)
+	if usesConfig[c.name] {
+		fmt.Println("  " + configHelp)
+	}
+}
+
+func wantsHelp(args []string) bool {
+	for _, a := range args {
+		if a == "-h" || a == "--help" || a == "-help" {
+			return true
+		}
+	}
+	return false
+}
+
 // Main runs one operator command (args without the program name) and
-// returns the exit code. fbmcpctl and "fbmcp ctl" both land here (ADR-038).
+// returns the exit code. fbmcpctl and "fbmcp ctl" both land here.
 func Main(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: fbmcp ctl <approve|status|setup|doctor|verify|repair|secret|apikey|tls|gate|ping|hqbird-install> ...")
+		printHelp(os.Stderr)
 		return 2
 	}
 	switch args[0] {
-	case "approve":
-		return cmdApprove(args[1:])
-	case "status":
-		return cmdStatus(args[1:])
-	case "setup":
-		return cmdSetup(args[1:])
-	case "doctor":
-		return cmdDoctor(args[1:])
-	case "verify":
-		return cmdVerify(args[1:])
-	case "repair":
-		return cmdRepair(args[1:])
-	case "secret":
-		return cmdSecret(args[1:])
-	case "apikey":
-		return cmdAPIKey(args[1:])
-	case "tls":
-		return cmdTLS(args[1:])
-	case "gate":
-		return cmdGate(args[1:])
-	case "ping":
-		return cmdPing(args[1:])
-	case "hqbird-install":
-		return cmdHqbirdInstall(args[1:])
-	default:
-		fmt.Fprintln(os.Stderr, "unknown command:", args[0])
-		return 2
+	case "help", "-h", "--help", "-help":
+		printHelp(os.Stdout)
+		return 0
 	}
+	for _, c := range commands {
+		if c.name == args[0] {
+			if wantsHelp(args[1:]) {
+				printCommandHelp(c)
+				return 0
+			}
+			return c.run(args[1:])
+		}
+	}
+	fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", args[0])
+	printHelp(os.Stderr)
+	return 2
 }
 
 // cmdRepair rebuilds enriched-era schedule grants from audit.jsonl into a
@@ -65,13 +115,13 @@ func Main(args []string) int {
 // not rebuilt by design (15-min TTL). A corrupt state.json is moved aside
 // as state.json.pre-repair-<ts> first — evidence is never destroyed.
 func cmdRepair(args []string) int {
-	cfgPath := "fbmcp.yaml"
+	explicit, args := takeConfigFlag(args)
 	for _, a := range args {
-		if a != "" && a[0] != '-' && a != "--from-audit" {
-			cfgPath = a
+		if a != "" && a[0] != '-' {
+			explicit = a
 		}
 	}
-	cfg, err := config.Load(cfgPath)
+	cfg, cfgPath, err := loadConfig(explicit)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -154,7 +204,7 @@ func cmdRepair(args []string) int {
 	}
 	fmt.Printf("repair complete: %d grants rebuilt, %d pre-enrichment entries skipped\n", rebuilt, skipped)
 	fmt.Println("not rebuilt: pending actions (TTL'd by design); schedule deletes (re-apply manually if needed)")
-	fmt.Println("next: fbmcpctl verify", cfgPath, "&& fbmcpctl doctor", cfgPath)
+	fmt.Printf("Next: fbmcp ctl verify --config %s, then fbmcp ctl doctor --config %s\n", quoteArg(cfgPath), quoteArg(cfgPath))
 	return 0
 }
 
@@ -178,7 +228,7 @@ func cmdSecret(args []string) int {
 		}
 	}
 	if len(rest) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: fbmcpctl secret set|get|drop [--dir DIR] <ENV_NAME>  (set reads the value from stdin)")
+		fmt.Fprintln(os.Stderr, "usage: fbmcp ctl secret set|get|drop [--dir DIR] <ENV_NAME>  (set reads the value from stdin)")
 		return 2
 	}
 	op, name := rest[0], rest[1]
@@ -273,11 +323,11 @@ func secretFile(op, dir, name string) int {
 // cmdVerify runs the standalone audit-chain verification (runbook §7.2):
 // rehashes every entry and checks the chain + head sidecar.
 func cmdVerify(args []string) int {
-	cfgPath := "fbmcp.yaml"
+	explicit, args := takeConfigFlag(args)
 	if len(args) > 0 {
-		cfgPath = args[0]
+		explicit = args[0]
 	}
-	cfg, err := config.Load(cfgPath)
+	cfg, _, err := loadConfig(explicit)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -300,60 +350,12 @@ func cmdVerify(args []string) int {
 	return 0
 }
 
-func cmdApprove(args []string) int {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: fbmcpctl approve <state_dir> [request_id]")
-		return 2
-	}
-	dir := args[0]
-	st, err := state.Open(dir)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "state:", err)
-		return 1
-	}
-	pending := st.Pending()
-	if len(args) == 1 {
-		if len(pending) == 0 {
-			fmt.Println("no pending actions")
-			return 0
-		}
-		for _, p := range pending {
-			fmt.Println(gate.ImpactStatement(p))
-			fmt.Println("---")
-		}
-		fmt.Println("run: fbmcpctl approve <state_dir> <request_id> to approve")
-		return 0
-	}
-	id := args[1]
-	found := false
-	for _, p := range pending {
-		if p.ID == id {
-			found = true
-			fmt.Print(gate.ImpactStatement(p))
-		}
-	}
-	if !found {
-		// lab 2026-11-04: an expired id used to print "no pending actions"
-		// with exit 0, so the operator took it for an approval.
-		fmt.Printf("no such pending action: %s (a request expires after %s; an approved, denied or expired one leaves the list)\n", id, gate.DefaultTTL)
-		return 1
-	}
-	approvals := filepath.Join(dir, "approvals")
-	os.MkdirAll(approvals, 0o755)
-	if err := os.WriteFile(filepath.Join(approvals, id), []byte("approved-by-operator\n"), 0o640); err != nil {
-		fmt.Fprintln(os.Stderr, "write marker:", err)
-		return 1
-	}
-	fmt.Println("approval recorded — the server will confirm and execute the action")
-	return 0
-}
-
 func cmdStatus(args []string) int {
-	cfgPath := "fbmcp.yaml"
+	explicit, args := takeConfigFlag(args)
 	if len(args) > 0 {
-		cfgPath = args[0]
+		explicit = args[0]
 	}
-	cfg, err := config.Load(cfgPath)
+	cfg, _, err := loadConfig(explicit)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -383,12 +385,12 @@ func cmdStatus(args []string) int {
 		r := runs[n-1]
 		fmt.Printf("last_schedule_run: %s %s %s %s\n", r.ScheduleID, r.Target, r.Result, r.Reason)
 	}
-	fmt.Println("note: OS cron must not spawn a second fbmcp (ADR-005/023)")
+	fmt.Println("note: do not start a second fbmcp from OS cron; use fb_schedule_create")
 	return 0
 }
 
 func cmdSetup(args []string) int {
-	cfgPath := "fbmcp.yaml"
+	explicit, args := takeConfigFlag(args)
 	writePosture := false
 	for _, a := range args {
 		if a == "--write-posture" {
@@ -396,10 +398,10 @@ func cmdSetup(args []string) int {
 			continue
 		}
 		if a != "" && a[0] != '-' {
-			cfgPath = a
+			explicit = a
 		}
 	}
-	cfg, err := config.Load(cfgPath)
+	cfg, _, err := loadConfig(explicit)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "setup: load config:", err)
 		fmt.Fprintln(os.Stderr, "generate a skeleton with packaging/fbmcp.yaml.example")
@@ -418,7 +420,7 @@ func cmdSetup(args []string) int {
 		}
 		fmt.Println("wrote", posture.Marker(cfg.State.Dir))
 	}
-	fmt.Println("secrets: environment variable, then <secrets.dir>/<NAME>, then the OS keyring (fbmcpctl secret set).")
+	fmt.Println("secrets: environment variable, then <secrets.dir>/<NAME>, then the OS keyring (fbmcp ctl secret set).")
 	var sysdbaRO []string
 	for _, d := range cfg.Databases {
 		if strings.EqualFold(d.ROUser, "SYSDBA") {
@@ -428,23 +430,30 @@ func cmdSetup(args []string) int {
 	if len(sysdbaRO) > 0 {
 		fmt.Printf("RO users: %s read as SYSDBA; for production create RO users (fb_user_create + GRANT).\n", strings.Join(sysdbaRO, ", "))
 	}
-	fmt.Println("self-check: start fbmcp, fb_ping, confirm a Tier-1 tool, fbmcpctl doctor")
+	fmt.Println("Next: start fbmcp, then run fbmcp ctl ping and fbmcp ctl doctor; in the client call fb_ping")
 	return 0
 }
 
 func cmdDoctor(args []string) int {
-	if len(args) > 0 && (args[0] == "--remote" || args[0] == "-remote") {
-		cfgPath := "fbmcp.yaml"
-		if len(args) > 1 {
-			cfgPath = args[1]
+	explicit, args := takeConfigFlag(args)
+	remote := false
+	for _, a := range args {
+		switch {
+		case a == "--remote" || a == "-remote":
+			remote = true
+		case a != "" && a[0] != '-':
+			explicit = a
 		}
-		return doctorRemote(cfgPath)
 	}
-	cfgPath := "fbmcp.yaml"
-	if len(args) > 0 {
-		cfgPath = args[0]
+	if remote {
+		path, err := resolveConfig(explicit)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return doctorRemote(path)
 	}
-	cfg, err := config.Load(cfgPath)
+	cfg, _, err := loadConfig(explicit)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1

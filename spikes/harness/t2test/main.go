@@ -53,7 +53,7 @@ func main() {
 	fmt.Println("T2 in-band:", first(ic))
 	// 3) out-of-band: run fbmcpctl approve writing the marker
 	fmt.Println("OOB approve...")
-	ac := exec.Command(filepath.Join(wd, "fbmcpctl.exe"), `C:/HQbirdData/output/fbmcp-spike/state`, m[1])
+	ac := exec.Command(filepath.Join(wd, "fbmcpctl.exe"), "approve", `C:/HQbirdData/output/fbmcp-spike/state`, m[1], "--yes")
 	out, err := ac.CombinedOutput()
 	fmt.Printf("approve-cli: %v %s\n", err, first(string(out)))
 	// 4) watcher confirms + dispatches; poll job
