@@ -42,7 +42,7 @@ func resolveConfig(explicit string) (string, error) {
 			return p, nil
 		}
 	}
-	return "", fmt.Errorf("no fbmcp.yaml found (tried: %s, and $FBMCP_CONFIG is not set)\nFix: add --config <path to fbmcp.yaml>, or set FBMCP_CONFIG", strings.Join(tried, ", "))
+	return "", fmt.Errorf("no fbmcp.yaml found (tried: %s, and $FBMCP_CONFIG is not set). Fix: add --config <path to fbmcp.yaml>, or set FBMCP_CONFIG", strings.Join(tried, ", "))
 }
 
 // takeConfigFlag removes --config FILE / --config=FILE from args.

@@ -13,16 +13,19 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/aleks/fbmcp/internal/config"
+	"github.com/aleks/fbmcp/internal/hqbirdsetup"
 	"github.com/aleks/fbmcp/internal/secrets"
 	"github.com/aleks/fbmcp/internal/transport"
 )
 
 type doctorOut struct {
 	fails, warns int
+	cfgPath      string // named in the fixes
 }
 
 func (d *doctorOut) ok(name, f string, a ...any) {
@@ -34,9 +37,35 @@ func (d *doctorOut) warn(name, f string, a ...any) {
 	fmt.Printf("WARN %-12s %s\n", name, fmt.Sprintf(f, a...))
 }
 
-func (d *doctorOut) fail(name, f string, a ...any) {
+// fail prints one FAIL line; fix is what to do (UX W1.6: every FAIL
+// says it). fix is empty only when the message ends with the command.
+func (d *doctorOut) fail(name, fix, f string, a ...any) {
 	d.fails++
-	fmt.Printf("FAIL %-12s %s\n", name, fmt.Sprintf(f, a...))
+	msg := fmt.Sprintf(f, a...)
+	if fix != "" {
+		msg = strings.TrimRight(msg, ". ") + ". Fix: " + fix
+	}
+	fmt.Printf("FAIL %-12s %s\n", name, msg)
+}
+
+func (d *doctorOut) note(name, f string, a ...any) {
+	fmt.Printf("note %-12s %s\n", name, fmt.Sprintf(f, a...))
+}
+
+// cfgName is the config path for a fix text.
+func (d *doctorOut) cfgName() string {
+	if d.cfgPath == "" {
+		return "fbmcp.yaml"
+	}
+	return quoteArg(d.cfgPath)
+}
+
+// startService is the command that starts the fbmcp service here.
+func startService() string {
+	if runtime.GOOS == "windows" {
+		return "Start-Service " + hqbirdsetup.ServiceName
+	}
+	return "sudo systemctl start " + hqbirdsetup.ServiceName
 }
 
 func doctorRemote(cfgPath string) int {
@@ -46,13 +75,13 @@ func doctorRemote(cfgPath string) int {
 		return 1
 	}
 	secrets.SetDir(cfg.Secrets.Dir)
-	d := &doctorOut{}
+	d := &doctorOut{cfgPath: cfgPath}
 	fmt.Printf("doctor --remote %s (server_name %s)\n", cfgPath, cfg.ServerNameOrDefault())
 
 	if err := transport.CheckRemote(cfg.Listen, cfg.TLS.Cert, cfg.TLS.Key, len(cfg.Identities), len(cfg.AllowedOrigins)); err != nil {
-		d.fail("config", "%v", err)
+		d.fail("config", "edit "+d.cfgName()+": listen, tls.cert, tls.key, identities and allowed_origins (docs/remote.md)", "%v", err)
 	} else if strings.TrimSpace(cfg.Listen) == "" {
-		d.fail("config", "listen is empty: this is not a remote-mode config")
+		d.fail("config", "add listen: \"0.0.0.0:8443\" to "+d.cfgName()+", or run fbmcp ctl doctor without --remote", "listen is empty: this is not a remote-mode config")
 	} else {
 		d.ok("config", "listen %s, %d identities, %d origins", cfg.Listen, len(cfg.Identities), len(cfg.AllowedOrigins))
 	}
@@ -63,7 +92,7 @@ func doctorRemote(cfgPath string) int {
 		if !svc.serve && svc.serveImplied {
 			d.warn("service", "%s has no -serve flag: a Windows service serves anyway, but install-remote.ps1 adds it: %s", svc.name, svc.cmd)
 		} else if !svc.serve {
-			d.fail("service", "the service command has no -serve flag (it exits when stdin closes): %s", svc.cmd)
+			d.fail("service", "install the service again with packaging/windows/install-remote.ps1 or fbmcp ctl hqbird-install (both add -serve)", "the service command has no -serve flag (it exits when stdin closes): %s", svc.cmd)
 		} else {
 			d.ok("service", "%s runs as %s with -serve", svc.name, svc.account)
 		}
@@ -90,19 +119,19 @@ func doctorRemote(cfgPath string) int {
 func checkTLS(d *doctorOut, cfg *config.Config, svc svcInfo) string {
 	pair, err := tls.LoadX509KeyPair(cfg.TLS.Cert, cfg.TLS.Key)
 	if err != nil {
-		d.fail("tls", "cannot load the pair: %v", err)
+		d.fail("tls", "fbmcp ctl tls selfsign --out <tls folder> --dns <names> --ip <addresses>, or correct tls.cert/tls.key in "+d.cfgName(), "cannot load the pair: %v", err)
 		return ""
 	}
 	leaf, err := x509.ParseCertificate(pair.Certificate[0])
 	if err != nil {
-		d.fail("tls", "parse cert: %v", err)
+		d.fail("tls", "fbmcp ctl tls selfsign --out <tls folder> --dns <names> --ip <addresses>, or correct tls.cert/tls.key in "+d.cfgName(), "parse cert: %v", err)
 		return ""
 	}
 	pin := spkiPin(leaf)
 	left := time.Until(leaf.NotAfter)
 	switch {
 	case left <= 0:
-		d.fail("tls", "certificate expired on %s", leaf.NotAfter.UTC().Format("2006-01-02"))
+		d.fail("tls", "fbmcp ctl tls selfsign --renew --out <tls folder> --dns <names> --ip <addresses> (keeps the pin)", "certificate expired on %s", leaf.NotAfter.UTC().Format("2006-01-02"))
 	case left < 30*24*time.Hour:
 		d.warn("tls", "certificate expires in %d days (tls selfsign --renew keeps the pin)", int(left.Hours()/24))
 	default:
@@ -119,7 +148,7 @@ func checkTLS(d *doctorOut, cfg *config.Config, svc svcInfo) string {
 		} else if lvl == "WARN" {
 			d.warn("tls-key", "%s", msg)
 		} else {
-			d.fail("tls-key", "%s", msg)
+			d.fail("tls-key", "", "%s", msg) // msg ends with the command
 		}
 	}
 	return pin
@@ -135,7 +164,7 @@ func checkIdentities(d *doctorOut, cfg *config.Config, svcEnv map[string]bool) {
 			// EnvironmentFile / service registry Environment), not this shell.
 			d.warn(label, "%s is set in the service environment: it wins over the secrets dir, so a rotation needs a restart; move it to the secrets dir", id.KeyEnv)
 		case err != nil:
-			d.fail(label, "%s does not resolve: %v", id.KeyEnv, err)
+			d.fail(label, "fbmcp ctl apikey rotate "+id.Name+" --config "+d.cfgName()+" --no-show", "%s does not resolve: %v", id.KeyEnv, err)
 		case src == secrets.SourceEnv:
 			d.warn(label, "%s comes from env (in this shell); a rotation then needs a restart, prefer the secrets dir", id.KeyEnv)
 		case src == secrets.SourceKeyring:
@@ -145,10 +174,10 @@ func checkIdentities(d *doctorOut, cfg *config.Config, svcEnv map[string]bool) {
 		}
 		if id.Autonomous() {
 			if id.EffectiveMaxTier() >= 1 {
-				d.warn(label, "autonomous identity with max_tier %d: it can request writes (B8; every request still needs an operator)", id.EffectiveMaxTier())
+				d.warn(label, "autonomous identity with max_tier %d: it can request writes (every request still needs an operator)", id.EffectiveMaxTier())
 			}
 			if len(id.AllowFrom) == 0 {
-				d.warn(label, "autonomous identity without allow_from: the key works from any address (B8)")
+				d.warn(label, "autonomous identity without allow_from: the key works from any address")
 			}
 		}
 	}
@@ -180,7 +209,7 @@ var listenerProcess = "fbmcp"
 func checkListener(d *doctorOut, cfg *config.Config, pin string) {
 	host, port, err := net.SplitHostPort(cfg.Listen)
 	if err != nil {
-		d.fail("listen", "%v", err)
+		d.fail("listen", "set listen to host:port in "+d.cfgName(), "%v", err)
 		return
 	}
 	if host == "" || host == "0.0.0.0" || host == "::" {
@@ -191,7 +220,7 @@ func checkListener(d *doctorOut, cfg *config.Config, pin string) {
 	// the server log gets no "TLS handshake error ... EOF" line.
 	c, err := tls.DialWithDialer(&net.Dialer{Timeout: 3 * time.Second}, "tcp", addr, &tls.Config{InsecureSkipVerify: true})
 	if err != nil {
-		d.fail("listen", "no TLS listener on %s: %v (service down? see the log)", addr, err)
+		d.fail("listen", startService()+", then read the fbmcp log if it stops again", "no TLS listener on %s: %v", addr, err)
 		return
 	}
 	c.Close()
@@ -200,7 +229,7 @@ func checkListener(d *doctorOut, cfg *config.Config, pin string) {
 	} else if strings.Contains(strings.ToLower(owner), listenerProcess) {
 		d.ok("listen", "%s answers (process %s)", addr, owner)
 	} else {
-		d.fail("listen", "%s is held by %s, not %s", addr, owner, listenerProcess)
+		d.fail("listen", "stop "+owner+", or choose another port in listen of "+d.cfgName(), "%s is held by %s, not %s", addr, owner, listenerProcess)
 	}
 	var served string
 	tc := &tls.Config{InsecureSkipVerify: true, // the pin compare below is the check
@@ -214,13 +243,13 @@ func checkListener(d *doctorOut, cfg *config.Config, pin string) {
 	hc := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{TLSClientConfig: tc}}
 	resp, err := hc.Get("https://" + addr + "/healthz")
 	if err != nil {
-		d.fail("healthz", "%v", err)
+		d.fail("healthz", "restart the service ("+startService()+") and read the fbmcp log", "%v", err)
 		return
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
 	resp.Body.Close()
 	if resp.StatusCode != 200 || strings.TrimSpace(string(body)) != "ok" {
-		d.fail("healthz", "HTTP %d %q", resp.StatusCode, strings.TrimSpace(string(body)))
+		d.fail("healthz", "restart the service ("+startService()+") and read the fbmcp log", "HTTP %d %q", resp.StatusCode, strings.TrimSpace(string(body)))
 		return
 	}
 	if pin != "" && served != pin {
@@ -240,7 +269,7 @@ func checkFirewall(d *doctorOut, cfg *config.Config) {
 	case "ok":
 		d.ok("firewall", "%s", msg)
 	case "FAIL":
-		d.fail("firewall", "%s", msg)
+		d.fail("firewall", "", "%s", msg) // msg says what to limit
 	default:
 		d.warn("firewall", "%s", msg)
 	}

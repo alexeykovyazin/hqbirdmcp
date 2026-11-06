@@ -31,10 +31,10 @@ func Report(cfg *config.Config) (ok bool, text string) {
 	fmt.Fprintf(&b, "os: %s\nstate: %s\n", runtime.GOOS, cfg.State.Dir)
 	if cfg.State.Dir == "" {
 		ok = false
-		b.WriteString("FAIL: state.dir empty\n")
+		b.WriteString("FAIL: state.dir is empty. Fix: set state.dir in fbmcp.yaml\n")
 	} else if st, err := os.Stat(cfg.State.Dir); err != nil || !st.IsDir() {
 		ok = false
-		fmt.Fprintf(&b, "FAIL: state.dir not a directory: %v\n", err)
+		fmt.Fprintf(&b, "FAIL: state.dir is not a folder: %v. Fix: mkdir %s (as the account that runs fbmcp), or correct state.dir in fbmcp.yaml\n", err, cfg.State.Dir)
 	} else {
 		b.WriteString("ok: state.dir exists\n")
 	}
@@ -53,11 +53,11 @@ func Report(cfg *config.Config) (ok bool, text string) {
 	if Verified(cfg.State.Dir) {
 		b.WriteString("ok: posture.verified marker present\n")
 	} else {
-		b.WriteString("note: posture.verified marker absent — service start/stop will refuse (ADR-017)\n")
+		b.WriteString("note: posture.verified marker absent: fb_service_start/stop/restart refuse until fbmcp ctl setup --write-posture\n")
 	}
 	return ok, b.String()
 }
 
 func RefuseMessage() string {
-	return "host posture not verified (ADR-017). Run: fbmcpctl doctor  OR  packaging/posture/verify, then fbmcpctl setup --write-posture"
+	return "host posture not verified. Fix: on the server run fbmcp ctl doctor, then fbmcp ctl setup --write-posture"
 }

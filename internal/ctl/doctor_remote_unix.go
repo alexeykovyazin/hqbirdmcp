@@ -155,7 +155,7 @@ func checkPlatform(d *doctorOut, cfg *config.Config, svc svcInfo) {
 			if opt {
 				d.warn("unit", "ReadWritePaths %s does not exist (optional)", p)
 			} else {
-				d.fail("unit", "ReadWritePaths %s does not exist: the unit will not start (add a - prefix or create it)", p)
+				d.fail("unit", "sudo mkdir -p "+p+" (or add a - prefix in the unit)", "ReadWritePaths %s does not exist: the unit will not start", p)
 			}
 		}
 	}

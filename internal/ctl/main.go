@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/aleks/fbmcp/internal/audit"
-	"github.com/aleks/fbmcp/internal/config"
-	"github.com/aleks/fbmcp/internal/notify"
 	"github.com/aleks/fbmcp/internal/posture"
 	"github.com/aleks/fbmcp/internal/secrets"
 	"github.com/aleks/fbmcp/internal/state"
@@ -432,65 +430,4 @@ func cmdSetup(args []string) int {
 	}
 	fmt.Println("Next: start fbmcp, then run fbmcp ctl ping and fbmcp ctl doctor; in the client call fb_ping")
 	return 0
-}
-
-func cmdDoctor(args []string) int {
-	explicit, args := takeConfigFlag(args)
-	remote := false
-	for _, a := range args {
-		switch {
-		case a == "--remote" || a == "-remote":
-			remote = true
-		case a != "" && a[0] != '-':
-			explicit = a
-		}
-	}
-	if remote {
-		path, err := resolveConfig(explicit)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1
-		}
-		return doctorRemote(path)
-	}
-	cfg, _, err := loadConfig(explicit)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	code := 0
-	ok, report := posture.Report(cfg)
-	fmt.Print(report)
-	if !ok {
-		code = 1
-	}
-	for _, db := range cfg.Databases {
-		if _, err := config.SecretFromEnv(db.AdminSecretEnv); err != nil {
-			fmt.Println("FAIL secret", db.ID, db.AdminSecretEnv, err)
-			code = 1
-		} else {
-			fmt.Println("ok secret", db.ID, db.AdminSecretEnv)
-		}
-		if _, err := config.SecretFromEnv(db.ROSecretEnv); err != nil {
-			fmt.Println("FAIL ro secret", db.ID, err)
-			code = 1
-		}
-	}
-	st, err := state.Open(cfg.State.Dir)
-	if err != nil {
-		fmt.Println("FAIL state", err)
-		return 1
-	}
-	fmt.Println("ok state jobs", len(st.Jobs()), "schedules", len(st.Schedules()))
-	bus, err := notify.New(cfg.State.Dir, "", "")
-	if err == nil {
-		_ = bus.Emit(notify.Event{Type: "doctor.ping", Message: "fbmcpctl doctor"})
-		fmt.Println("ok k7 local event log")
-	}
-	if code == 0 {
-		fmt.Println("doctor: green")
-	} else {
-		fmt.Println("doctor: failed")
-	}
-	return code
 }
