@@ -4,6 +4,10 @@ Versions follow ADR-038 (`YYYY.N.N`, own line). Older builds were `dev`.
 
 ## [Unreleased]
 
+- Docs: runbook, remote, hqbird, claude-desktop and tool-reference use the
+  `--config` forms and say which tools the client does not see. New: the
+  full guide in Portuguese (Brazil), `docs/runbook-pt-br.md`.
+
 ## [2027.2.21] - 2026-11-09
 
 Operator CLI and the tool list for an HQbird install.

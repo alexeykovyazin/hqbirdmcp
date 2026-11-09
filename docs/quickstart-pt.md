@@ -1,6 +1,6 @@
 # fbmcp — guia rápido: instalação e uso
 
-[English](quickstart-en.md) | [Русский](quickstart-ru.md) | **Português**
+[English](quickstart-en.md) | [Русский](quickstart-ru.md) | **Português (Brasil)**
 
 O fbmcp é um servidor MCP para Firebird 2.5–5.0. Um cliente MCP (Claude
 Desktop, Claude Code, Cursor, Codex, ZCode) o usa para trabalhar com bancos
@@ -9,7 +9,7 @@ de dados como um DBA: monitoramento, backups e verificação de restore, SQL,
 verificação de política e por uma confirmação humana. Todas as decisões são
 gravadas no log de auditoria (`audit.jsonl`).
 
-Detalhes: [claude-desktop.md](claude-desktop.md) (local),
+Guia completo: [runbook-pt-br.md](runbook-pt-br.md). Detalhes: [claude-desktop.md](claude-desktop.md) (local),
 [remote.md](remote.md) (remoto), [tool-reference.md](tool-reference.md) (todas as ferramentas).
 
 Servidores HQbird 2027 já têm o fbmcp (um serviço para todas as linhas
@@ -198,7 +198,7 @@ Depois de alterar a configuração, reinicie o cliente: ele carrega os servidore
 4. Senhas e tokens do agente: `C:\fbmcp\fbmcpctl.exe secret set --dir C:\ProgramData\fbmcp\secrets NOME`
 5. Instale o serviço, primeiro em modo de teste:
    `.\packaging\windows\install-remote.ps1 -Port 8443 -AllowFrom 10.0.0.0/24 -FirebirdService FirebirdServerDefaultInstance -WhatIf`, depois sem `-WhatIf`.
-6. Verificação: `C:\fbmcp\fbmcpctl.exe doctor --remote C:\fbmcp\fbmcp.yaml` → nenhuma linha FAIL.
+6. Verificação: `C:\fbmcp\fbmcpctl.exe doctor --remote --config C:\fbmcp\fbmcp.yaml` → nenhuma linha FAIL.
 7. Bandeja para quem aprova: `.\packaging\windows\install-tray.ps1`.
 
 **Servidor Linux** (root):

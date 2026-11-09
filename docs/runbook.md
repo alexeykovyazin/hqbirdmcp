@@ -1,11 +1,13 @@
 # fbmcp — full guide: install and use
 
 Audience: the person who installs and runs fbmcp, and did **not** build it.
-No Go or Firebird internals knowledge is needed. State as of 2026-11-04
-(phases 1–12: local and remote mode, fbagent bridge, result grid).
+No Go or Firebird internals knowledge is needed. State as of 2026-11-09,
+version 2027.2.21 (local and remote mode, HQbird install, fbagent bridge,
+result grid).
 
 Short versions: [English](quickstart-en.md) | [Русский](quickstart-ru.md) |
-[Português](quickstart-pt.md). Details: [remote.md](remote.md) (remote
+[Português (Brasil)](quickstart-pt.md). This guide in Portuguese (Brazil):
+[runbook-pt-br.md](runbook-pt-br.md). Details: [remote.md](remote.md) (remote
 mode), [agent-bridge.md](agent-bridge.md) (fbagent),
 [tool-reference.md](tool-reference.md) (every tool, its tier and arguments),
 [claude-desktop.md](claude-desktop.md) (client wiring on the dev host),
@@ -20,12 +22,21 @@ client (Claude Desktop, Claude Code, Cursor, Codex, ZCode, others) uses it
 to work as a DBA: monitoring, backups and verified restores, SQL/DDL/DCL,
 indexes, users and grants, `firebird.conf`, a scheduler, migrations, and the
 HQbird fbagent. It has **98 tools**: 51 read-only (Tier 0), 32 Tier 1,
-14 Tier 2, 1 Tier 3 (disabled).
+14 Tier 2, 1 Tier 3 (disabled). `fb_demo_write` is there only when the
+server runs with `FBMCP_DEMO_TOOLS=1`.
+
+A client sees only the tools it can use. The tool list hides: Tier 3,
+tools above the identity's max tier, `fb_confirm` and `fb_cancel` for a
+read-only identity, the fbagent tools while `agents:` is empty
+(`fb_agent_discover` and `fb_agent_register` stay), and the migration tools
+while no database has `migrations_dir`. When a config reload changes this
+set, the client gets a new list. A direct call to a hidden tool gets a
+clear refusal.
 
 | Binary | Role |
 |---|---|
 | `fbmcp` | The server. Default: MCP over stdio (a client starts it). `-serve`: no stdio, runs as a service (scheduler, attach socket, HTTPS listener if configured). `fbmcp bridge`: a stdio client for a remote fbmcp |
-| `fbmcpctl` | Operator CLI: `doctor`, `approve`, `secret`, `apikey`, `tls`, `verify`, `status`, `ping`, `setup`, `repair`, `gate` |
+| `fbmcpctl` | Operator CLI: `doctor`, `approve`, `secret`, `apikey`, `tls`, `verify`, `status`, `ping`, `setup`, `repair`, `hqbird-install`, `gate`. Same program as `fbmcp ctl` |
 | `fbmcp-tray` | Windows tray: Approve/Deny pop-up for requests that need an operator |
 
 One **kernel** per state directory. A second client with the same config
@@ -209,7 +220,7 @@ sc.exe start fbmcp
 - The tray user and local stdio clients need read/write on the state dir:
   `icacls C:\ProgramData\fbmcp\state /grant "<user>:(OI)(CI)M"`. A stdio
   client with the same config then attaches to the service kernel.
-- Readiness: `C:\fbmcp\fbmcpctl.exe ping C:\fbmcp\fbmcp.yaml`.
+- Readiness: `C:\fbmcp\fbmcpctl.exe ping --config C:\fbmcp\fbmcp.yaml`.
 - Log: `<state_dir>\fbmcp.log` (5 × 10 MiB; crashes in `fbmcp-crash.log`).
 
 For a service that admins reach over the network, use setup C instead.
@@ -224,7 +235,7 @@ Full procedure: [remote.md](remote.md). Short form:
 3. One key per person or agent: `C:\fbmcp\fbmcpctl.exe apikey new alice --max-tier 2 --secrets-dir C:\ProgramData\fbmcp\secrets` (printed once). With `--config C:\fbmcp\fbmcp.yaml` it also adds the `identities:` entry and uses `secrets.dir`.
 4. Passwords and agent tokens: `fbmcpctl secret set --dir C:\ProgramData\fbmcp\secrets NAME`.
 5. `.\packaging\windows\install-remote.ps1 -Port 8443 -AllowFrom 10.0.0.0/24 -FirebirdService FirebirdServerDefaultInstance -WhatIf`, then without `-WhatIf`. It creates the service, the firewall rule, the folder ACLs and the Firebird service rights.
-6. `C:\fbmcp\fbmcpctl.exe doctor --remote C:\fbmcp\fbmcp.yaml` → no FAIL; `curl.exe --cacert C:\fbmcp\tls\tls.crt https://srv1:8443/healthz` → `ok`.
+6. `C:\fbmcp\fbmcpctl.exe doctor --remote --config C:\fbmcp\fbmcp.yaml` → no FAIL; `curl.exe --cacert C:\fbmcp\tls\tls.crt https://srv1:8443/healthz` → `ok`.
 7. Tray for the approver: `.\packaging\windows\install-tray.ps1`.
 
 **Linux server** (root): copy `fbmcp`, `fbmcpctl` and `packaging/linux/`, then
@@ -238,8 +249,10 @@ sh packaging/linux/install-remote.sh --user firebird --port 8443 --allow-from 10
 The script makes the folders, the certificate, a first config with an
 `admin` key (printed once), the systemd unit, the sudo rule for the
 Firebird unit and the ufw rule, then runs `doctor --remote`. Add
-`databases:` and `agents:` to `/etc/fbmcp/fbmcp.yaml`. Approvals on Linux:
-`sudo -u firebird fbmcpctl approve /var/lib/fbmcp [id]` (no tray; it asks y/N, `--yes` does not ask).
+`databases:` and `agents:` to `/etc/fbmcp/fbmcp.yaml`. Approvals on Linux
+(no tray): `sudo -u firebird fbmcpctl approve [id]`. It finds
+`/etc/fbmcp/fbmcp.yaml` by itself, asks y/N (`--yes` does not ask), and
+`--deny <id> --reason "..."` refuses.
 
 **Admin PC:**
 1. `C:\fbmcp\fbmcpctl.exe secret set FBMCP_KEY_SRV1` (the key you got).
@@ -351,13 +364,14 @@ loop is a finding: read the log.
 ## 13. Incident playbooks
 
 ### 13.1 Something is wrong with a database
-1. `fbmcpctl doctor <config>`: config, secrets, folders, posture, schedules.
+1. `fbmcpctl doctor --config <file>`: config, secrets, Firebird logins,
+   folders, posture, schedules. Each FAIL line has a `Fix:`.
 2. `fb_db_list` → `fb_db_health <db>`; `fb_service_status` for the instance.
 3. `fb_sessions`, `fb_transactions` for attachment or OAT-gap problems;
    `fb_firebird_log` for engine errors.
 
 ### 13.2 Suspected tamper or corruption: audit first
-1. `fbmcpctl verify <config>` → `audit chain OK: N entries` or `BROKEN` with the reason.
+1. `fbmcpctl verify --config <file>` → `audit chain OK: N entries` or `BROKEN` with the reason.
 2. If it fails: keep the whole state dir (it is the evidence), then
    investigate. Do not delete `audit.jsonl` to make the kernel start.
 
@@ -370,16 +384,20 @@ loop is a finding: read the log.
 6. The old file stays as `<db>.pre-restore` until you delete it.
 
 ### 13.4 Client cannot connect
-1. `fbmcpctl ping <config>`, `fbmcpctl status <config>`.
+1. `fbmcpctl ping --config <file>`, `fbmcpctl status --config <file>`.
 2. Read the client's MCP log (stdio) or `<state_dir>\fbmcp.log` / `journalctl -u fbmcp` (service).
 3. "another fbmcp instance is active": one kernel per state dir. Piped
    clients attach by themselves; a second kernel fails fast by design.
+
+In the commands above you can omit `--config` when the lookup in §4 finds
+the file.
 
 ## 14. Troubleshooting
 
 | Symptom | Meaning / fix |
 |---|---|
 | Tools do not appear | JSON syntax, absolute paths, full client restart; the client's MCP log |
+| One tool is missing from the list | Hidden on purpose (§1): above your max tier, no `agents:` entry, or no `migrations_dir` |
 | Server exits at once | `fbmcpctl doctor`; a missing secret; a service cannot read your keyring (use `secrets.dir`) |
 | Tier 2 "confirmation rejected: channel policy" | Expected in the chat. Approve in the tray or with `fbmcpctl approve` |
 | Tier 2 "no open maintenance window" | `fb_window_open` for the **same** `db` you pass to the tool |

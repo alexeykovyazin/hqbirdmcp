@@ -52,7 +52,7 @@ Optional check (from `fbmcp/`):
 
 ```powershell
 $env:FBMCP_DEV_PW = "<spike SYSDBA password>"
-.\dist\fbmcpctl.exe doctor .\fbmcp.dev.yaml
+.\dist\fbmcpctl.exe doctor --config .\fbmcp.dev.yaml
 ```
 
 ## 3. Claude Desktop
@@ -130,8 +130,9 @@ State dir for the spike config: `C:\HQbirdData\output\fbmcp-spike\state`.
 kernel runs with `FBMCP_DEMO_TOOLS=1` (the smoke and kill harnesses set it).
 
 ```powershell
-.\dist\fbmcpctl.exe approve C:\HQbirdData\output\fbmcp-spike\state
-.\dist\fbmcpctl.exe approve C:\HQbirdData\output\fbmcp-spike\state <request_id>
+.\dist\fbmcpctl.exe approve --config .\fbmcp.dev.yaml                      # list
+.\dist\fbmcpctl.exe approve --config .\fbmcp.dev.yaml <request_id>         # asks y/N
+.\dist\fbmcpctl.exe approve --config .\fbmcp.dev.yaml --deny <request_id> --reason "..."
 ```
 
 The running server polls `state/approvals/` every 2 seconds and then executes.
@@ -143,7 +144,7 @@ fbmcp takes a lock on `state.dir`. Only that process is the kernel. Extra **pipe
 If Claude cannot start the server, check:
 
 ```powershell
-.\dist\fbmcpctl.exe status .\fbmcp.dev.yaml
+.\dist\fbmcpctl.exe status --config .\fbmcp.dev.yaml
 ```
 
 `mcp-server-fbmcp.log` should show `initialize` / `tools/list`. A leftover `another fbmcp instance is active` on a **pipe** means the first process is an old binary without attach — replace `dist\fbmcp.exe` and fully quit Claude.

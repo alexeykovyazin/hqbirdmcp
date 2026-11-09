@@ -1,6 +1,6 @@
 # fbmcp — краткое руководство: установка и использование
 
-[English](quickstart-en.md) | **Русский** | [Português](quickstart-pt.md)
+[English](quickstart-en.md) | **Русский** | [Português (Brasil)](quickstart-pt.md)
 
 fbmcp — это MCP-сервер для Firebird 2.5–5.0. Через него MCP-клиент (Claude
 Desktop, Claude Code, Cursor, Codex, ZCode) работает с базами как DBA: мониторинг,
@@ -197,7 +197,7 @@ args = ["-config", 'C:\fbmcp\fbmcp.yaml']
 4. Пароли и токены агента: `C:\fbmcp\fbmcpctl.exe secret set --dir C:\ProgramData\fbmcp\secrets ИМЯ`
 5. Установка службы, сначала пробный прогон:
    `.\packaging\windows\install-remote.ps1 -Port 8443 -AllowFrom 10.0.0.0/24 -FirebirdService FirebirdServerDefaultInstance -WhatIf`, потом без `-WhatIf`.
-6. Проверка: `C:\fbmcp\fbmcpctl.exe doctor --remote C:\fbmcp\fbmcp.yaml` → нет строк FAIL.
+6. Проверка: `C:\fbmcp\fbmcpctl.exe doctor --remote --config C:\fbmcp\fbmcp.yaml` → нет строк FAIL.
 7. Трей для того, кто подтверждает: `.\packaging\windows\install-tray.ps1`.
 
 **Сервер Linux** (root):

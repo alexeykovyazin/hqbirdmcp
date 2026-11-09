@@ -31,7 +31,7 @@ Prints one JSON line and exits 0. It never reads a config and never starts
 the kernel. fbagent reads it (`productupdate` `VersionFromCLI`, 2 s).
 
 ```
-{"version":"2027.2.20"}
+{"version":"2027.2.21"}
 ```
 
 A build without `-ldflags "-X main.version=…"` prints `dev`.
@@ -148,7 +148,7 @@ Only `agent_config` is required. A field given here wins over the files.
 
 ```json
 {
-  "version": "2027.2.20",
+  "version": "2027.2.21",
   "config": "C:\\HQbirdData\\fbmcp\\fbmcp.yaml",
   "state_dir": "C:\\HQbirdData\\fbmcp\\state",
   "service": "fbmcp",
@@ -189,5 +189,10 @@ place. A release without a zone signature is not installed on Linux.
 
 A client cannot approve its own Tier-2 request. The approver runs:
 
-- Windows, elevated window: `fbmcp ctl approve C:\HQbirdData\fbmcp\state <id>`
-- Linux: `sudo -u firebird fbmcp ctl approve /var/lib/fbmcp <id>`
+- Windows, elevated window: `fbmcp ctl approve <id>`
+- Linux: `sudo -u firebird fbmcp ctl approve <id>`
+
+Without `<id>` it lists the pending requests. It finds the HQbird config
+(`C:\HQbirdData\fbmcp\fbmcp.yaml`, `/etc/fbmcp/fbmcp.yaml`) by itself, asks
+y/N before it writes (`--yes` does not ask), and
+`--deny <id> --reason "..."` refuses a request.

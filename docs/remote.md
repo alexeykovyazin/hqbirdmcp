@@ -58,7 +58,7 @@ with `fbmcp ctl hqbird-install --allow-from <CIDR>` and one API key
    The script lets only SYSTEM and Administrators write to `C:\fbmcp`: a new
    folder under `C:\` lets every user change files, and the service runs
    them. Keep fbmcp in a folder of its own.
-7. Check: `C:\fbmcp\fbmcpctl.exe doctor --remote C:\fbmcp\fbmcp.yaml` → no FAIL lines;
+7. Check: `C:\fbmcp\fbmcpctl.exe doctor --remote --config C:\fbmcp\fbmcp.yaml` → no FAIL lines;
    `curl.exe --cacert C:\fbmcp\tls\tls.crt https://srv1:8443/healthz` → `ok`.
    The kernel log is `C:\ProgramData\fbmcp\state\fbmcp.log`.
 8. Approvals: as the operator who approves, run `.\packaging\windows\install-tray.ps1`.
@@ -94,12 +94,14 @@ with `fbmcp ctl hqbird-install --allow-from <CIDR>` and one API key
    and uncomment `service_user` / `service_secret_env`. Add `databases:` and
    `agents:`. The kernel reloads the config by itself. `fb_agent_discover`
    lists the local fbagent.
-5. For `fb_service_start/stop/restart`: `sudo -u firebird fbmcpctl setup --write-posture /etc/fbmcp/fbmcp.yaml`.
-6. Check: `fbmcpctl doctor --remote /etc/fbmcp/fbmcp.yaml`; `journalctl -u fbmcp -n 50`.
-7. Approvals (no tray on Linux): `sudo -u firebird fbmcpctl approve /var/lib/fbmcp`
+5. For `fb_service_start/stop/restart`: `sudo -u firebird fbmcpctl setup --write-posture`.
+6. Check: `fbmcpctl doctor --remote`; `journalctl -u fbmcp -n 50`.
+   (`fbmcpctl` finds `/etc/fbmcp/fbmcp.yaml` by itself; for another file add
+   `--config <file>`.)
+7. Approvals (no tray on Linux): `sudo -u firebird fbmcpctl approve`
    lists pending requests; add the request id to approve one. From a
-   workstation: `ssh -t srv1 sudo -u firebird fbmcpctl approve /var/lib/fbmcp <id>`
-   (`approve` asks y/N; without a terminal add `--yes`). Deny: `... approve /var/lib/fbmcp --deny <id> --reason "..."`.
+   workstation: `ssh -t srv1 sudo -u firebird fbmcpctl approve <id>`
+   (`approve` asks y/N; without a terminal add `--yes`). Deny: `... approve --deny <id> --reason "..."`.
    A request expires after 15 minutes; then `approve` says
    `no such pending action` and exits 1. Ask the client to repeat the call.
 
@@ -189,7 +191,7 @@ starts a new session by itself once when the server restarted.
   server. With the secrets dir it applies in seconds; the old key stops
   working then. Give the new value to Alice. It refuses when an env var with
   that name is set (env wins, so the rotation would do nothing).
-- **List keys:** `fbmcpctl apikey list <fbmcp.yaml>`: names, sources, tiers. Never values.
+- **List keys:** `fbmcpctl apikey list --config <fbmcp.yaml>`: names, sources, tiers. Never values.
 - **Remove a person or agent:** delete the `identities:` entry (it reloads by
   itself), then delete the secret file (`fbmcpctl secret drop --dir <dir> NAME`).
 - **Renew the cert:** `fbmcpctl tls selfsign --renew --out <dir> --dns ... --ip ...`.
@@ -200,7 +202,7 @@ starts a new session by itself once when the server restarted.
 - **Upgrade fbmcp:** stop the service, replace the binaries, start, run `doctor --remote`.
 - **Logs:** Windows `<state_dir>\fbmcp.log` (rotated, 5 × 10 MiB; crashes in
   `fbmcp-crash.log`); Linux `journalctl -u fbmcp`. Audit: `<state_dir>/audit.jsonl`
-  (check with `fbmcpctl verify <fbmcp.yaml>`). Remote calls carry `remote_addr` and `profile`;
+  (check with `fbmcpctl verify --config <fbmcp.yaml>`). Remote calls carry `remote_addr` and `profile`;
   `session.open` and `auth.denied` events are audited too.
 
 ## 6. Autonomous agents (OpenClaw, Hermes and similar)

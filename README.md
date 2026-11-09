@@ -17,7 +17,7 @@ identity may use. All tools: [docs/tool-reference.md](docs/tool-reference.md).
 | Your setup | Guide | First command |
 |---|---|---|
 | HQbird server | [docs/hqbird.md](docs/hqbird.md) | `fbmcp ctl hqbird-install` |
-| Windows PC, MCP client on the same PC | [English](docs/quickstart-en.md) · [Русский](docs/quickstart-ru.md) · [Português](docs/quickstart-pt.md) | `winget install GoLang.Go` |
+| Windows PC, MCP client on the same PC | [English](docs/quickstart-en.md) · [Русский](docs/quickstart-ru.md) · [Português (Brasil)](docs/quickstart-pt.md) | `winget install GoLang.Go` |
 | Linux host | [docs/runbook.md](docs/runbook.md) §4–§6 | `git clone https://github.com/alexeykovyazin/hqbirdmcp.git` |
 | Firebird server, client on another PC | [docs/remote.md](docs/remote.md) | `fbmcp ctl doctor --remote` |
 
@@ -26,7 +26,8 @@ Every path ends with `fbmcp ctl doctor`: the last line must be
 `fbmcp ctl` and `fbmcpctl` are the same program (`fbmcpctl help`).
 
 More: [docs/runbook.md](docs/runbook.md) (all setups, daily use,
-recovery), [docs/tool-reference.md](docs/tool-reference.md) (all tools),
+recovery; in Portuguese (Brazil):
+[docs/runbook-pt-br.md](docs/runbook-pt-br.md)), [docs/tool-reference.md](docs/tool-reference.md) (all tools),
 [docs/status.md](docs/status.md) (project status and plans).
 
 ## Build from source
