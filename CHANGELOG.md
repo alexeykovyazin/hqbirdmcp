@@ -4,6 +4,17 @@ Versions follow ADR-038 (`YYYY.N.N`, own line). Older builds were `dev`.
 
 ## [Unreleased]
 
+## [2027.2.21] - 2026-11-09
+
+Operator CLI and the tool list for an HQbird install.
+
+- `fbmcp ctl` prints one line per command. Config is `--config`, `$FBMCP_CONFIG`, `./fbmcp.yaml`, the file next to the program, or the HQbird default.
+- `approve` asks before it runs, can `--deny` with a reason, and does not create a state folder from a typo.
+- `doctor` logs in to each database with the read-only user and the admin user, and every FAIL ends with a Fix line.
+- Gated tools check arguments before the gate. A missing or string `on` no longer turns Forced Writes off.
+- The tool list hides tools the caller cannot use. `fb_demo_write` is registered only when `FBMCP_DEMO_TOOLS=1`.
+- README and the en/ru/pt quickstart describe the HQbird path, the new ctl forms, and the read-only user.
+
 ## [2027.2.20] - 2026-11-04
 
 First versioned release; HQbird 2027 setups and fbagent install it by default.
