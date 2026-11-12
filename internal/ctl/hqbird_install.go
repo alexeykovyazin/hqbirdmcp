@@ -480,7 +480,14 @@ func runHqbirdInstall(o hqbirdOpts, env hqbirdEnv) (hqbirdResult, error) {
 
 	// 5. Service, rights, posture, start.
 	if host {
-		if err := env.host.AfterWrite(p.Config); err != nil {
+		// The .prev copy too: AtomicWrite made it as root, and the service
+		// account must replace it on its next config write (lab
+		// 2026-11-12: fb_db_register failed on fbmcp.yaml.prev).
+		written := []string{p.Config}
+		if _, err := os.Stat(p.Config + ".prev"); err == nil {
+			written = append(written, p.Config+".prev")
+		}
+		if err := env.host.AfterWrite(written...); err != nil {
 			warn("config access: %v", err)
 		}
 		if err := env.host.EnsureService(env.exe, p.Config); err != nil {
