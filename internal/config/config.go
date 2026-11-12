@@ -38,7 +38,10 @@ type Config struct {
 	Retention    Retention `yaml:"retention"`
 	Trends       Trends    `yaml:"trends"`
 	Agents       []Agent   `yaml:"agents"`
-	Grid         Grid      `yaml:"grid"`
+	// RCM is the HQbird cluster manager of this host (fb_cluster_* tools).
+	// Empty url: no RCM, the cluster tools stay hidden.
+	RCM  RCM  `yaml:"rcm,omitempty"`
+	Grid Grid `yaml:"grid"`
 	// ServerName names this server in fb_ping, fb_db_list and webhook
 	// events (phase 12 B5), so one client or channel can serve many
 	// servers. Empty → the OS host name (ServerNameOrDefault).
@@ -90,6 +93,81 @@ type Agent struct {
 	// (phase 11: recorded by fb_agent_register from discovery; used by the
 	// candidate-file config write path). Optional.
 	ConfigPath string `yaml:"config_path,omitempty"`
+}
+
+// RCM is the operator API of the HQbird cluster manager (hqbirdrcm) on this
+// host: HTTPS with a certificate of the cluster CA, HTTP Digest login. Like
+// an agent's base_url, url only ever comes from this config.
+type RCM struct {
+	URL string `yaml:"url"` // e.g. https://127.0.0.1:7444
+	// CAFile is the cluster CA certificate (PEM) that signed the RCM
+	// certificate. Empty: the system roots.
+	CAFile string `yaml:"ca_file,omitempty"`
+	// User is the RCM operator (default rcmadmin).
+	User string `yaml:"user,omitempty"`
+	// PasswordEnv names the secret with the password (env → secrets dir →
+	// OS keyring). Default FBMCP_RCM_PASSWORD.
+	PasswordEnv string `yaml:"password_env,omitempty"`
+	// TimeoutSeconds bounds a link or a reinit that a tool waits for.
+	// 0 → 900.
+	TimeoutSeconds int `yaml:"timeout_seconds,omitempty"`
+	// AllowNonLoopback lifts the loopback-only url rule.
+	AllowNonLoopback bool `yaml:"allow_non_loopback,omitempty"`
+}
+
+// DefaultRCMPasswordEnv is the secret name of the RCM password.
+const DefaultRCMPasswordEnv = "FBMCP_RCM_PASSWORD"
+
+// On reports whether an RCM is configured.
+func (r RCM) On() bool { return strings.TrimSpace(r.URL) != "" }
+
+// UserOrDefault is the RCM operator name.
+func (r RCM) UserOrDefault() string {
+	if u := strings.TrimSpace(r.User); u != "" {
+		return u
+	}
+	return "rcmadmin"
+}
+
+// PasswordEnvOrDefault is the secret name of the RCM password.
+func (r RCM) PasswordEnvOrDefault() string {
+	if e := strings.TrimSpace(r.PasswordEnv); e != "" {
+		return e
+	}
+	return DefaultRCMPasswordEnv
+}
+
+// TimeoutOrDefault is the wait budget of a link or a reinit, in seconds.
+func (r RCM) TimeoutOrDefault() int {
+	if r.TimeoutSeconds <= 0 {
+		return 900
+	}
+	return r.TimeoutSeconds
+}
+
+func (r RCM) validate() error {
+	if !r.On() {
+		return nil
+	}
+	u, err := url.Parse(r.URL)
+	if err != nil {
+		return fmt.Errorf("rcm: url: %v", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("rcm: url scheme must be http(s), got %q", u.Scheme)
+	}
+	if !r.AllowNonLoopback {
+		host := u.Hostname()
+		if host != "localhost" {
+			if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+				return fmt.Errorf("rcm: url must be loopback (fbmcp runs beside the RCM); use allow_non_loopback: true to override")
+			}
+		}
+	}
+	if r.TimeoutSeconds < 0 {
+		return fmt.Errorf("rcm: timeout_seconds must be >= 0")
+	}
+	return nil
 }
 
 // TimeoutOrDefault fills the ADR-031 default (130s: agent restart timeout
@@ -544,7 +622,7 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
-	return nil
+	return c.RCM.validate()
 }
 
 func (in FBInstance) ValidateDiscoveryDefaults() error {
