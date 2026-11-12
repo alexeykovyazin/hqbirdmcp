@@ -246,6 +246,40 @@ executes under the agent's own scheduler and policy, outside fbmcp's gate.
 | `fb_agent_backup_config` | 0 | `agent?`, `db?`, `family?` | job-family settings (default: vbackup, nbackup, restore, sweep, grp_sweep; or one of gfix_check, index_recalc, sql_script, scheduler, storage) from the agent's newest config snapshot; keys containing token/password/secret/credential are masked a second time on the fbmcp side |
 | `fb_agent_config_set` | 2 | `agent?`, `db?`, `family`, `job_id?`, `task?`, `patch`, `mode?` | ADR-037: compose a whole `agent_config.json` from the live file (needs `config_path` and read access) with one narrow patch — one family (vbackup, nbackup, restore, sweep, grp_sweep, gfix_check, index_recalc, scheduler), optionally one job (`job_id`) or scheduler task (`task`: enabled/schedule/timeout_seconds); existing settings only, same JSON type; credentials, ids, command/binary fields, job lists and enabling command blocks are refused. Writes `agent_config_pending_<UTC>.json`, waits the agent's settle time, calls `POST /v1/config/reload`, reports `promoted_from` / `restart_required_for`. Approval is bound to the live file's sha256; refuses when another candidate is waiting. **OOB** |
 
+## HQbird cluster (RCM)
+
+Calls the operator API of the HQbird cluster manager (`hqbirdrcm`) on this
+host: HTTPS with the cluster CA, HTTP Digest login, `X-Admin-User:
+fbmcp:<identity>` for the RCM audit. Shown only when `fbmcp.yaml` has an
+`rcm:` section; `fbmcp ctl hqbird-install` writes it on an HQbird host and
+copies the first RCM password into the secret `FBMCP_RCM_PASSWORD`:
+
+```yaml
+rcm:
+  url: https://127.0.0.1:7444          # loopback only, unless allow_non_loopback
+  ca_file: /opt/hqbirdrcm/certs/ca.crt
+  user: rcmadmin                       # default
+  password_env: FBMCP_RCM_PASSWORD     # default (env, secret file or keyring)
+  timeout_seconds: 900                 # wait budget of link/reinit/verify
+```
+
+`db` is the audit key; Tier 2 keys the maintenance window on it, like
+`fb_agent_restart`. The order of a new cluster is in
+[prompts/cluster-setup.md](../prompts/cluster-setup.md).
+
+| Tool | Tier | Arguments | What it does |
+|---|---|---|---|
+| `fb_cluster_status` | 0 | `db?`, `view?`, `id?` | `overview` (health, cluster, nodes, databases) or one view: `nodes`, `databases`, `commands`, `command`, `alerts`, `releases`, `node`, `config`, `reinit`, `verify`, `link` (`id` default `latest`) |
+| `fb_cluster_probe` | 0 | `db?`, `hosts` | `POST /v1/admin/pair/probe`: pairing state, node name, versions, certificate fingerprint, member ids per host |
+| `fb_cluster_verify` | 0 | `db?`, `master_node`, `master_db`, `replica_node`, `replica_db?` | `POST /v1/verify` and wait: `COUNT(*)` of every table, verdict `ok` \| `desynced` \| `no_tables` \| `timeout` \| `failed` |
+| `fb_cluster_rcm_password` | 1 | `db?` | new random 24-character password of the RCM user (clears `must_change`), stored in the fbmcp secret first, old value put back if RCM refuses; never printed. Refused when the secret comes from an environment variable |
+| `fb_cluster_link` | 1 | `db?`, `args.hosts`, `args.master?`, `args.rcm_url?` | the request probes the hosts and shows their fingerprints (compare with the installer line `Pairing:`) and pins them; the confirmed run probes again and links only with the same fingerprints, then waits for the link job |
+| `fb_cluster_replica_folder` | 1 | `db?`, `args.node`, `args.root?` | `POST …/databases/root/prepare` + `PUT …/config {"databases":{"root"}}`; default `/databases/replica/<node>` |
+| `fb_cluster_enroll` | 1 | `db?`, `args.node`, `args.root`, `args.recursive?`, `args.template?`, `args.scansync?` | the request shows the RCM dry run; the run enrolls the folder and waits for the node command |
+| `fb_cluster_publication` | 1 | `db?`, `args.node`, `args.db_id?` | publication sync of the node (or one database) and wait for the command |
+| `fb_cluster_firebird_restart` | 2 | `db` (window key), `args.node` | Firebird restart through the cluster node service (`ignore_window`: the fbmcp window is the gate). **OOB** |
+| `fb_cluster_reinit` | 2 | `db` (window key), `args.node`, `args.db_id?` (empty/`all` = every database), `args.to?`, `args.mode?` (smooth\|standard), `args.remove_old_replica?`, `args.allow_restart?`, `args.hold_on_long_transactions?`, `args.force?` | initialize or re-initialize replicas; one database waits for the reinit job (phase, percent; RCM code and error on failure). **OOB** |
+
 ---
 
 ## Operator CLI (not MCP)
