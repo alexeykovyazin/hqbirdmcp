@@ -352,6 +352,9 @@ func runHqbirdInstall(o hqbirdOpts, env hqbirdEnv) (hqbirdResult, error) {
 	}
 	haveSecret := func(name string) bool { _, err := secrets.ReadFile(p.SecretsDir, name); return err == nil }
 	plan := hqbirdsetup.Reconcile(old, m, found, p, haveSecret)
+	rcmHost, rcmFound, rcmNotes := hqbirdsetup.DiscoverRCM(p.RCMConfig, found)
+	plan.Notes = append(plan.Notes, rcmNotes...)
+	plan.ApplyRCM(m, rcmHost, rcmFound, haveSecret)
 	for _, n := range plan.Notes {
 		warn("%s", n)
 	}

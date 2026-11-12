@@ -38,6 +38,9 @@ type Paths struct {
 	// backup_dir and work_dir of the databases hqbird-install registers.
 	BackupRoot string
 	WorkRoot   string
+	// RCMConfig is rcm.json of the HQbird cluster manager; "" = none known
+	// for this platform.
+	RCMConfig string
 }
 
 // ManagedFile lists the entries this command owns.
@@ -50,7 +53,7 @@ func DefaultPaths(goos, dataDir string) Paths {
 		return Paths{Config: "/etc/fbmcp/fbmcp.yaml", StateDir: "/var/lib/fbmcp", SecretsDir: "/etc/fbmcp/secrets",
 			TLSDir: "/etc/fbmcp/tls", ConnectFile: "/etc/fbmcp/connect.txt",
 			// the unit's ReadWritePaths
-			BackupRoot: "/var/lib/fbmcp-backups", WorkRoot: "/var/lib/fbmcp-work"}
+			BackupRoot: "/var/lib/fbmcp-backups", WorkRoot: "/var/lib/fbmcp-work", RCMConfig: DefaultRCMConfig}
 	}
 	if dataDir == "" {
 		dataDir = `C:\HQbirdData\fbmcp`
@@ -324,8 +327,11 @@ type Managed struct {
 	Remote    Remote   `json:"remote,omitempty"`
 	// Firewall are the Linux firewall rules added (removed with the last
 	// line). Windows uses the rule name fbmcp-remote.
-	Firewall  []string `json:"firewall,omitempty"`
-	UpdatedAt string   `json:"updated_at,omitempty"`
+	Firewall []string `json:"firewall,omitempty"`
+	// RCM: the rcm: section is this command's (the cluster manager of
+	// this server).
+	RCM       bool   `json:"rcm,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
 // Remote is the remote mode asked for with --allow-from. It stays here, so
