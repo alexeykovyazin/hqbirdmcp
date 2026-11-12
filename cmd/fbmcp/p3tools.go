@@ -116,6 +116,25 @@ func (gt *gatedTools) registerToolEx(server *mcp.Server, meta policy.ToolMeta, i
 	})
 }
 
+// registerToolOptDB is registerToolEx with an optional db: for instance
+// tools where db is only the audit key and, for Tier 2, the window key (the
+// HQbird cluster tools work on a host with no registered database yet).
+func (gt *gatedTools) registerToolOptDB(server *mcp.Server, meta policy.ToolMeta, impactFmt string, exec executor, preview func(context.Context, string, map[string]any) string) {
+	gt.execs[meta.Name] = exec
+	type optDBArg struct {
+		Db   string         `json:"db,omitempty" jsonschema:"registry database id: the audit key; Tier 2 needs it as the maintenance window key"`
+		Mode string         `json:"mode,omitempty" jsonschema:"preview = dry run"`
+		Args map[string]any `json:"args,omitempty"`
+	}
+	mcp.AddTool(server, &mcp.Tool{Name: meta.Name, Description: gatedDescription(meta.Name, meta.Tier, impactFmt)}, func(ctx context.Context, req *mcp.CallToolRequest, a optDBArg) (*mcp.CallToolResult, any, error) {
+		msg, isErr := gt.requestGated(ctx, meta, impactFmt, a.Db, a.Args, a.Mode, preview)
+		if isErr {
+			return errText(msg)
+		}
+		return text(msg), nil, nil
+	})
+}
+
 // requestGated is the real tool path (C2/C22): args check (W1.1), policy +
 // audit, then gate.Request. The executor is never called from here.
 // Returns (text, isError).

@@ -680,25 +680,25 @@ func registerClusterTools(server *mcp.Server, gt *gatedTools) {
 		"Compare COUNT(*) of every table on the master and the replica database and wait for the verdict (ok | desynced | no_tables | timeout | failed).",
 		clusterVerify)
 
-	gt.registerTool(server, policy.ToolMeta{Name: "fb_cluster_rcm_password", Tier: 1, Scope: "instance"},
-		"Set a new random password for the RCM user of fbmcp (removes the first-login must_change state) and store it in the fbmcp secret; the password is never shown (%s: audit key).",
-		gt.clusterPasswordExec)
-	gt.registerToolEx(server, policy.ToolMeta{Name: "fb_cluster_link", Tier: 1, Scope: "instance"},
-		"Link HQbird servers into one cluster through the RCM of this host (%s: audit key). The request probes the hosts and shows their certificate fingerprints; the link runs only with the same fingerprints.",
+	gt.registerToolOptDB(server, policy.ToolMeta{Name: "fb_cluster_rcm_password", Tier: 1, Scope: "instance"},
+		"Set a new random password for the RCM user of fbmcp (removes the first-login must_change state) and store it in the fbmcp secret; the password is never shown (audit key: db %s).",
+		gt.clusterPasswordExec, nil)
+	gt.registerToolOptDB(server, policy.ToolMeta{Name: "fb_cluster_link", Tier: 1, Scope: "instance"},
+		"Link HQbird servers into one cluster through the RCM of this host (audit key: db %s). The request probes the hosts and shows their certificate fingerprints; the link runs only with the same fingerprints.",
 		gt.clusterLinkExec, gt.clusterLinkPreview)
-	gt.registerTool(server, policy.ToolMeta{Name: "fb_cluster_replica_folder", Tier: 1, Scope: "instance"},
-		"Create the replica folder on a cluster node and set it as its databases.root (%s: audit key).",
-		gt.clusterReplicaFolderExec)
-	gt.registerToolEx(server, policy.ToolMeta{Name: "fb_cluster_enroll", Tier: 1, Scope: "instance"},
-		"Put the databases of a folder on a cluster node under cluster management (%s: audit key). The request shows the dry run.",
+	gt.registerToolOptDB(server, policy.ToolMeta{Name: "fb_cluster_replica_folder", Tier: 1, Scope: "instance"},
+		"Create the replica folder on a cluster node and set it as its databases.root (audit key: db %s).",
+		gt.clusterReplicaFolderExec, nil)
+	gt.registerToolOptDB(server, policy.ToolMeta{Name: "fb_cluster_enroll", Tier: 1, Scope: "instance"},
+		"Put the databases of a folder on a cluster node under cluster management (audit key: db %s). The request shows the dry run.",
 		gt.clusterEnrollExec, gt.clusterEnrollPreview)
-	gt.registerTool(server, policy.ToolMeta{Name: "fb_cluster_publication", Tier: 1, Scope: "instance"},
-		"Enable and sync the replication publication on a cluster node: all databases, or one db_id (%s: audit key).",
-		gt.clusterPublicationExec)
-	gt.registerTool(server, policy.ToolMeta{Name: "fb_cluster_firebird_restart", Tier: 2, Scope: "instance"},
-		"Restart Firebird on a cluster node through the cluster node service (window keyed on %s). Connections to every database of that server break.",
-		gt.clusterFirebirdRestartExec)
-	gt.registerTool(server, policy.ToolMeta{Name: "fb_cluster_reinit", Tier: 2, Scope: "instance"},
-		"Initialize or re-initialize the replica of one database (db_id) or of all databases of a master node, and wait for the end (window keyed on %s). Copies the master database to the replica node.",
-		gt.clusterReinitExec)
+	gt.registerToolOptDB(server, policy.ToolMeta{Name: "fb_cluster_publication", Tier: 1, Scope: "instance"},
+		"Enable and sync the replication publication on a cluster node: all databases, or one db_id (audit key: db %s).",
+		gt.clusterPublicationExec, nil)
+	gt.registerToolOptDB(server, policy.ToolMeta{Name: "fb_cluster_firebird_restart", Tier: 2, Scope: "instance"},
+		"Restart Firebird on a cluster node through the cluster node service (window key: db %s). Connections to every database of that server break.",
+		gt.clusterFirebirdRestartExec, nil)
+	gt.registerToolOptDB(server, policy.ToolMeta{Name: "fb_cluster_reinit", Tier: 2, Scope: "instance"},
+		"Initialize or re-initialize the replica of one database (db_id) or of all databases of a master node, and wait for the end (window key: db %s). Copies the master database to the replica node.",
+		gt.clusterReinitExec, nil)
 }
