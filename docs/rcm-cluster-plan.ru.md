@@ -129,3 +129,27 @@ B2. fbmcp: `fb_agent_cluster_pairing` (Tier 1, on/off) и
   `fb_agent_restart`.
 - **Реплика.** После связи RCM реплики остановлен; fbmcp реплики
   показывает «RCM не отвечает» с подсказкой, что консоль — RCM мастера.
+
+## 7. Результаты проверки 2026-11-12
+
+Этап A сделан (ветка `feat/rcm-cluster`). Проверено на двух дроплетах DO
+(Ubuntu 24.04, кит `hqbird2027-fb50-linux-2027.2.28.run`, мастер `rcm-m`,
+реплика `rcm-r`), fbmcp — сборка этой ветки.
+
+- `fbmcp ctl hqbird-install` нашёл RCM: записал секцию `rcm:` и секрет
+  `FBMCP_RCM_PASSWORD`.
+- Прошли все шаги `prompts/cluster-setup.md`: status, probe (отпечатки
+  совпали со строками `Pairing:`), rcm_password, link, replica_folder,
+  enroll (dry run в запросе), firebird_restart (Tier 2, approve),
+  publication, reinit (Tier 2). Пара `Ok` / `IN_SYNC`, verify — `ok`.
+- Найдено и исправлено при проверке: `db` у кластерных инструментов
+  теперь необязателен (на новом сервере нет баз); `fbmcp.yaml.prev` после
+  `hqbird-install` принадлежал root — теперь пользователю сервиса.
+- Не fbmcp: таблица создана после первого reinit, опубликована позже,
+  повторный reinit с `remove_old_replica` — реплика `LAGGING`,
+  `replication.log`: `Table T_FBMCP already exists`, сегмент 1 после
+  reinit применяется повторно. Вопрос к RCM/Firebird (hqcluster3).
+- В команде RCM поле `actor` = `rcmadmin`: заголовок `X-Admin-User` в
+  `actor` команды не попадает (аудит fbmcp пишет своего пользователя).
+- Этап B (окно pairing через fbagent) не сделан: окно открывает
+  установщик на 24 часа или `fbagent --cluster-pairing on`.
