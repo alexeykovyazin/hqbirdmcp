@@ -480,6 +480,54 @@ func (c *Client) GetLicenseRequest(ctx context.Context) (json.RawMessage, error)
 	return out, c.do(ctx, http.MethodGet, "/v1/license/request", nil, nil, &out)
 }
 
+// --- cluster pairing window (capability cluster_pairing; 404 from an
+// older agent) ---
+
+// ClusterPairingRequest is the body of POST /v1/cluster/pairing: what
+// fbagent --cluster-pairing on|off does.
+type ClusterPairingRequest struct {
+	On bool `json:"on"`
+	// Hours is 1-24; 0 is the agent's default (24).
+	Hours int `json:"hours,omitempty"`
+	// RCMAllow replaces who may invite the host; nil keeps the list,
+	// ["any"] allows any RCM.
+	RCMAllow    []string `json:"rcm_allow,omitempty"`
+	RequestedBy string   `json:"requested_by,omitempty"`
+	Reason      string   `json:"reason,omitempty"`
+}
+
+// ClusterPairing is the answer of GET and POST /v1/cluster/pairing.
+type ClusterPairing struct {
+	// State is "open" when port 7450 can open now, else "closed" with
+	// Reason: window_closed, window_ended, claimed, in_cluster, not_free.
+	State         string   `json:"state"`
+	Reason        string   `json:"reason,omitempty"`
+	Expires       string   `json:"expires,omitempty"`
+	Ended         string   `json:"ended,omitempty"`
+	Port          int      `json:"port"`
+	Fingerprint   string   `json:"fingerprint,omitempty"`
+	RCMAllow      []string `json:"rcm_allow"`
+	Standing      string   `json:"standing"`
+	ClusterID     string   `json:"cluster_id,omitempty"`
+	OwnCluster    bool     `json:"own_cluster,omitempty"`
+	NotFreeReason string   `json:"not_free_reason,omitempty"`
+	ClaimedAt     string   `json:"claimed_at,omitempty"`
+	ClaimedBy     string   `json:"claimed_by_rcm_url,omitempty"`
+	Message       string   `json:"message"`
+}
+
+// GetClusterPairing reads the pairing window of the agent's host.
+func (c *Client) GetClusterPairing(ctx context.Context) (ClusterPairing, error) {
+	var out ClusterPairing
+	return out, c.do(ctx, http.MethodGet, "/v1/cluster/pairing", nil, nil, &out)
+}
+
+// SetClusterPairing opens or closes the pairing window.
+func (c *Client) SetClusterPairing(ctx context.Context, req ClusterPairingRequest) (ClusterPairing, error) {
+	var out ClusterPairing
+	return out, c.do(ctx, http.MethodPost, "/v1/cluster/pairing", nil, req, &out)
+}
+
 // --- product updates (hqmonitor / hqclusternode / hqbirdrcm; the
 // firebird-update routes keep their dedicated methods above) ---
 
