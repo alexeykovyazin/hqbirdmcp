@@ -141,6 +141,11 @@ var gatedArgSpecs = map[string]toolArgs{
 	"fb_agent_product_update_apply": {Args: []argSpec{agentArgSpec, reasonArgSpec,
 		{Name: "product", Kind: "string", Required: true, Enum: []string{"hqmonitor", "hqclusternode", "hqbirdrcm"}},
 	}, Note: "Check first with fb_agent_product_update_status."},
+	"fb_agent_cluster_pairing": {Args: []argSpec{agentArgSpec, reasonArgSpec,
+		{Name: "action", Kind: "string", Enum: []string{"status", "on", "off"}, Doc: "status (default: read, no confirmation), on = open the window, off = close it"},
+		{Name: "hours", Kind: "int", Min: 1, Max: 24, Doc: "with on: how long the window stays open, default 24"},
+		{Name: "rcm_allow", Kind: "string", Doc: "with on: who may invite this host, comma-separated IP addresses, CIDR ranges, host names; any = any RCM; absent keeps the list"},
+	}, Note: "Use it when the 24 h window of the setup is over, before fb_cluster_probe / fb_cluster_link; on every server of the cluster."},
 }
 
 var clusterNodeArgSpec = argSpec{Name: "node", Kind: "string", Required: true, Doc: "node id from fb_cluster_status view=nodes"}

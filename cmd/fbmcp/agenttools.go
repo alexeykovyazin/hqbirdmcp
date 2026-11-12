@@ -635,6 +635,7 @@ func registerAgentTools(server *mcp.Server, gt *gatedTools) {
 	gt.registerTool(server, policy.ToolMeta{Name: "fb_agent_product_update_apply", Tier: 2, Scope: "instance"},
 		"Queue a product update (check goafts, then stop / single-file swap / start / health-check with revert) for hqmonitor, hqclusternode or hqbirdrcm via fbagent (agent of %s). The operation result carries action and per-install outcomes.",
 		gt.agentProductUpdateExec())
+	registerAgentClusterPairing(server, gt)
 }
 
 // agentProductUpdateExec drives POST products/{product}/update/apply and

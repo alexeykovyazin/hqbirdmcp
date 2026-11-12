@@ -102,6 +102,7 @@ func SystemTools() []ToolMeta {
 		{Name: "fb_agent_license_set", Tier: 1, Scope: "instance"},           // install the vendor license document
 		{Name: "fb_agent_config_reload", Tier: 1, Scope: "instance"},
 		{Name: "fb_agent_pprof", Tier: 1, Scope: "instance"},
+		{Name: "fb_agent_cluster_pairing", Tier: 1, Scope: "instance"}, // dynamic: action=status reads at Tier 0; on/off Tier 1 (fbagent cluster_pairing)
 		{Name: "fb_agent_restart", Tier: 2, Scope: "instance"},
 		{Name: "fb_agent_stop", Tier: 2, Scope: "instance"},
 		{Name: "fb_agent_start", Tier: 2, Scope: "instance"},
