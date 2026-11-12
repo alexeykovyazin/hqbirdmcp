@@ -91,11 +91,17 @@ A6. **Документация**: `docs/tool-reference.md` (раздел HQbird 
 Окно pairing открыто 24 ч после установки. Потом его открывает только
 `sudo -u firebird fbagent --cluster-pairing on` на хосте.
 
-B1. fbagent Local API: `GET /v1/cluster/pairing` (состояние, отпечаток),
-`POST /v1/cluster/pairing {"action":"on"|"off"}` — то же, что CLI.
+B1. fbagent Local API (capability `cluster_pairing`):
+`GET /v1/cluster/pairing` (state open|closed, reason, expires, отпечаток,
+rcm_allow, standing) и `POST /v1/cluster/pairing`
+`{"on":true,"hours":N,"rcm_allow":[...]}` / `{"on":false}` — то же, что
+`fbagent --cluster-pairing on|off`. Окно 1–24 ч (0 = 24). Токен Local API,
+аудит с `requested_by` и `reason`. Сделано: fbagent `dcfa2c03`, `540cff43`.
 
-B2. fbmcp: `fb_agent_cluster_pairing` (Tier 1, on/off) и
-`fb_cluster_status view=pairing` (Tier 0).
+B2. fbmcp: один инструмент `fb_agent_cluster_pairing`: `action=status` —
+Tier 0 (без подтверждения), `on`/`off` — Tier 1 (`fb_confirm`). Шаг 0 в
+`prompts/cluster-setup.md`. Сделано: fbmcp `9b7f189`, `2f3562d`, `4f38301`
+(ветка `feat/rcm-cluster-pairing`).
 
 Этап B требует релиза fbagent; без него этап A работает в первые 24 ч или
 после ручного `--cluster-pairing on`.
@@ -151,5 +157,26 @@ B2. fbmcp: `fb_agent_cluster_pairing` (Tier 1, on/off) и
   reinit применяется повторно. Вопрос к RCM/Firebird (hqcluster3).
 - В команде RCM поле `actor` = `rcmadmin`: заголовок `X-Admin-User` в
   `actor` команды не попадает (аудит fbmcp пишет своего пользователя).
-- Этап B (окно pairing через fbagent) не сделан: окно открывает
-  установщик на 24 часа или `fbagent --cluster-pairing on`.
+- Этап B на этой проверке ещё не был сделан (см. ниже).
+
+### Этап B, проверка 2026-11-12
+
+Два дроплета DO (Ubuntu 24.04, кит 2027.2.28 fb50 `--yes`, `pair-m` и
+`pair-r`), fbagent и fbmcp заменены сборками веток этапа B (fbagent
+2.999.0), затем `fbmcp ctl hqbird-install`. MCP stdio, локальная личность.
+
+- `fb_agent_cluster_pairing` (status) на обоих: окно открыто установщиком,
+  отпечаток совпал со строкой `Pairing:`.
+- `action=off` → запрос Tier 1 → `fb_confirm`: окно закрыто, через минуту
+  порт 7450 не слушается. `fb_cluster_probe` с мастера: реплика
+  `error unreachable` (connection refused).
+- `action=on hours=2` → `fb_confirm` на обоих: окно до +2 ч, порт 7450
+  открыт, `fbagent --cluster-pairing status` показывает то же.
+  `fb_cluster_probe`: реплика `state free`, fbagent 2.999.0, отпечаток
+  совпал с выводом установщика.
+- Аудит fbagent: `POST /v1/cluster/pairing`, `requested_by` = `local`,
+  `reason` из запроса. Аудит fbmcp: pending → approved (in-band-token).
+- Дроплеты и файрвол удалены по ID.
+
+Этап B требует релиза fbagent (capability `cluster_pairing`); со старым
+fbagent инструмент отвечает `not-found` и подсказывает команду CLI.
