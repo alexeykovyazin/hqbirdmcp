@@ -61,6 +61,9 @@ func toolVisible(name string, id policy.Identity, cfg *config.Config, tiers map[
 	if strings.HasPrefix(name, "fb_agent_") && !agentToolsWithoutAgents[name] && len(cfg.Agents) == 0 {
 		return false
 	}
+	if strings.HasPrefix(name, "fb_cluster_") && !cfg.RCM.On() {
+		return false
+	}
 	if migrationTools[name] && !anyMigrationsDir(cfg) {
 		return false
 	}
@@ -127,7 +130,7 @@ func (gt *gatedTools) relistIfChanged(cfg *config.Config) {
 
 // toolListKey is the part of the config that changes the visible tool set.
 func toolListKey(cfg *config.Config) string {
-	return strings.Join([]string{boolKey(len(cfg.Agents) > 0), boolKey(anyMigrationsDir(cfg))}, ",")
+	return strings.Join([]string{boolKey(len(cfg.Agents) > 0), boolKey(anyMigrationsDir(cfg)), boolKey(cfg.RCM.On())}, ",")
 }
 
 func boolKey(b bool) string {

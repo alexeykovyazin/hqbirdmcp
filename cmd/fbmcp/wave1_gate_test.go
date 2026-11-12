@@ -237,6 +237,7 @@ func TestGatedToolsHaveArgSpecs(t *testing.T) {
 	registerAgentTools(server, gt)
 	registerAgentDiscoverTools(server, gt)
 	registerPhase11Tools(server, gt)
+	registerClusterTools(server, gt)
 	registerDBTool(server, gt)
 	if len(gt.execs) == 0 {
 		t.Fatal("no executors registered")

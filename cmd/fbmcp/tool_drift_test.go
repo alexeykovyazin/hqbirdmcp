@@ -44,6 +44,7 @@ func TestToolRegistryThreeWayAgreement(t *testing.T) {
 	registerAgentTools(server, gt)
 	registerAgentDiscoverTools(server, gt)
 	registerPhase11Tools(server, gt)
+	registerClusterTools(server, gt)
 	if registerExtra != nil {
 		registerExtra(server, gt.cfg, gt.pools, nil, gt.aud, gt.st)
 	}

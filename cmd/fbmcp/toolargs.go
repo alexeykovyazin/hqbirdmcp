@@ -143,6 +143,46 @@ var gatedArgSpecs = map[string]toolArgs{
 	}, Note: "Check first with fb_agent_product_update_status."},
 }
 
+var clusterNodeArgSpec = argSpec{Name: "node", Kind: "string", Required: true, Doc: "node id from fb_cluster_status view=nodes"}
+
+// clusterArgSpecs are the gated fb_cluster_* tools.
+var clusterArgSpecs = map[string]toolArgs{
+	"fb_cluster_rcm_password": {Note: "Run it once after the install: the first RCM password must change."},
+	"fb_cluster_link": {Args: []argSpec{
+		{Name: "hosts", Kind: "string", Required: true, Doc: "every server, comma-separated: host or host:port of its pairing port (7450)"},
+		{Name: "master", Kind: "string", Doc: "the host (as in hosts) that gets the master; default the first"},
+		{Name: "rcm_url", Kind: "string", Doc: "URL the agents join; default the RCM address the probe shows"},
+	}, Note: "Probe first: fb_cluster_probe."},
+	"fb_cluster_replica_folder": {Args: []argSpec{clusterNodeArgSpec,
+		{Name: "root", Kind: "string", Doc: "folder; default /databases/replica/<node>"},
+	}},
+	"fb_cluster_enroll": {Args: []argSpec{clusterNodeArgSpec,
+		{Name: "root", Kind: "string", Required: true, Doc: "folder of the master databases, e.g. /databases/master"},
+		{Name: "recursive", Kind: "bool", Doc: "include subfolders"},
+		{Name: "template", Kind: "string", Doc: "replication template"},
+		{Name: "scansync", Kind: "bool", Doc: "scan and sync at once"},
+	}},
+	"fb_cluster_publication": {Args: []argSpec{clusterNodeArgSpec,
+		{Name: "db_id", Kind: "string", Doc: "one database; default all databases of the node"},
+	}},
+	"fb_cluster_firebird_restart": {Args: []argSpec{clusterNodeArgSpec}, Note: "Needs an open window on db (fb_window_open)."},
+	"fb_cluster_reinit": {Args: []argSpec{clusterNodeArgSpec,
+		{Name: "db_id", Kind: "string", Doc: "database id on the master node; empty or all = every database of the node"},
+		{Name: "to", Kind: "string", Doc: "replica node id; default every replica of the database"},
+		{Name: "mode", Kind: "string", Enum: []string{"smooth", "standard"}, Doc: "smooth keeps the master online (default of RCM)"},
+		{Name: "remove_old_replica", Kind: "bool", Doc: "delete the old replica file"},
+		{Name: "allow_restart", Kind: "bool", Doc: "allow a Firebird restart on the replica"},
+		{Name: "hold_on_long_transactions", Kind: "bool", Doc: "wait for long transactions instead of refusing"},
+		{Name: "force", Kind: "bool", Doc: "start even when the replica looks in sync"},
+	}, Note: "Needs an open window on db (fb_window_open). Then fb_cluster_verify."},
+}
+
+func init() {
+	for k, v := range clusterArgSpecs {
+		gatedArgSpecs[k] = v
+	}
+}
+
 var agentEngineSpecs = []argSpec{agentArgSpec, reasonArgSpec,
 	{Name: "coalesce", Kind: "bool", Doc: "join a running operation, default true"},
 	{Name: "cluster_override", Kind: "bool", Doc: "bypass the hqclusternode refusal"},

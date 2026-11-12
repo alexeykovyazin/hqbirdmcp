@@ -145,6 +145,7 @@ func allRegisteredTools(t *testing.T) []*mcp.Tool {
 	registerAgentTools(server, gt)
 	registerAgentDiscoverTools(server, gt)
 	registerPhase11Tools(server, gt)
+	registerClusterTools(server, gt)
 	registerDBTool(server, gt)
 	res, err := connectInProcess(t, server).ListTools(context.Background(), &mcp.ListToolsParams{})
 	if err != nil {

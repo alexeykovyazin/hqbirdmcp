@@ -119,5 +119,17 @@ func SystemTools() []ToolMeta {
 		// ADR-037: candidate file + /v1/config/reload; rewrites the agent's
 		// job configuration → out-of-band Tier 2.
 		{Name: "fb_agent_config_set", Tier: 2, Scope: "instance"},
+		// HQbird cluster manager (RCM) bridge (docs/rcm-cluster-plan.ru.md).
+		// Instance-scoped; db is the audit key, Tier 2 keys the window on it.
+		{Name: "fb_cluster_status", Tier: 0, Scope: "instance"},
+		{Name: "fb_cluster_probe", Tier: 0, Scope: "instance"},
+		{Name: "fb_cluster_verify", Tier: 0, Scope: "instance"}, // POST, but only COUNT(*) reads
+		{Name: "fb_cluster_rcm_password", Tier: 1, Scope: "instance"},
+		{Name: "fb_cluster_link", Tier: 1, Scope: "instance"},
+		{Name: "fb_cluster_replica_folder", Tier: 1, Scope: "instance"},
+		{Name: "fb_cluster_enroll", Tier: 1, Scope: "instance"},
+		{Name: "fb_cluster_publication", Tier: 1, Scope: "instance"},
+		{Name: "fb_cluster_firebird_restart", Tier: 2, Scope: "instance"},
+		{Name: "fb_cluster_reinit", Tier: 2, Scope: "instance"},
 	}
 }

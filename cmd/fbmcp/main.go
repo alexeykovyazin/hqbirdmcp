@@ -253,6 +253,7 @@ func runForegroundCtx(ctx context.Context) {
 	registerAgentTools(server, gt)
 	registerAgentDiscoverTools(server, gt)
 	registerPhase11Tools(server, gt)
+	registerClusterTools(server, gt)
 	// Re-adding a tool replaces it and makes the SDK send tools/list_changed.
 	gt.relist = func() { registerAgentDiscoverTools(server, gt) }
 	gt.toolKey = toolListKey(cfg)
