@@ -6,7 +6,7 @@ databases as a DBA: monitoring, backups and verified restores, SQL/DDL/DCL,
 security, indexes, migrations and a scheduler, across Firebird 2.5–5.0.
 Every mutating call passes a tiered policy engine and a **human confirmation
 gate** before it touches the database, and every decision is written to a
-hash-chained audit log. 108 tools in total (54 read-only, 37 Tier 1, 16
+hash-chained audit log. 109 tools in total (54 read-only, 38 Tier 1, 16
 Tier 2, 1 disabled-by-design Tier 3), including the fbagent bridge
 ([docs/agent-bridge.md](docs/agent-bridge.md)), the HQbird cluster tools
 ([docs/tool-reference.md](docs/tool-reference.md#hqbird-cluster-rcm)) and a result grid in the

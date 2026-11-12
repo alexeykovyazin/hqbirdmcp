@@ -238,6 +238,7 @@ executes under the agent's own scheduler and policy, outside fbmcp's gate.
 | `fb_agent_product_update_status` | 0 | `agent?`, `db?`, `product` (hqmonitor\|hqclusternode\|hqbirdrcm) | `{product}`-update-state.json from the agent config dir (404 until the first check) |
 | `fb_agent_run_cancel` | 1 | `db`, `args.agent?`, `args.run_id` | cancel a queued/waiting run-now run; **409 conflict** once it runs |
 | `fb_agent_license_set` | 1 | `db`, `args.agent?`, `args.license` | install the vendor license document as `license.json` (agent verifies before writing; 400 `license_invalid`) |
+| `fb_agent_cluster_pairing` | 0 (`status`) / 1 (`on`, `off`) | `db?`, `args.agent?`, `args.action?` (status\|on\|off), `args.hours?` (1–24, default 24), `args.rcm_allow?`, `args.reason?` | the cluster pairing window of the host (port 7450: an RCM may invite the host into its cluster), as `fbagent --cluster-pairing status\|on\|off`. `status` (default) reads it without confirmation: `open` until `expires`, or `closed` with the reason (`window_closed`, `window_ended`, `claimed`, `in_cluster`, `not_free`), the certificate fingerprint, `rcm_allow`. `on` / `off` need `fb_confirm`; the request shows the window as it is now. Needs fbagent with capability `cluster_pairing` (Local API `GET`/`POST /v1/cluster/pairing`); an older agent answers 404 and the reply names the CLI |
 | `fb_agent_product_update_apply` | 2 | `db` (window key), `args.agent?`, `args.product`, `args.reason?` | queue job `{product}_update`: release check → stop / single-file swap / start / health-check, revert on failure; result carries `action` and per-install outcomes. **OOB** |
 | `fb_agent_discover` | 0 | `db?` | enumerate co-located fbagents from the Windows service registry (`HQbirdFBAgent-*` → `--run` config path) or Linux systemd units (ExecStart runs `fbagent --run <config>`; listen line from the journal), derive `base_url`/`instance_id` by the agent's own listen rule (config → log line → defaults); never reads tokens; prints the exact `fbmcpctl secret set` + `fb_agent_register` follow-up per candidate |
 | `fb_agent_register` | 2 | `db?`, `id`, `base_url`, `token_env`, `instance_id?`, `config_path?`, `mode?` | persist one discovered fbagent into `fbmcp.yaml` `agents:` (ADR-031 validation: loopback, token_env; duplicate id/base_url refused); after apply, best-effort identity check via `GET /v1/instances` reports verified / token-missing / other-agent. **OOB** |
@@ -265,7 +266,9 @@ rcm:
 
 `db` is the audit key; Tier 2 keys the maintenance window on it, like
 `fb_agent_restart`. The order of a new cluster is in
-[prompts/cluster-setup.md](../prompts/cluster-setup.md).
+[prompts/cluster-setup.md](../prompts/cluster-setup.md). The pairing window
+of a host (24 h after the setup) is an agent tool:
+`fb_agent_cluster_pairing` (fbagent bridge), on the fbmcp of that host.
 
 | Tool | Tier | Arguments | What it does |
 |---|---|---|---|

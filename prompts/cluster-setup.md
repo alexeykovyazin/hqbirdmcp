@@ -3,10 +3,17 @@
 Set up a master and its replica with fbmcp on the **master** host. Each
 server has the HQbird 2027 kit (`.run` / setup) with the cluster manager:
 the installer prints a `Pairing:` line with the certificate fingerprint and
-opens the pairing window for 24 hours (`sudo -u firebird fbagent
---cluster-pairing on` opens it again). `fbmcp ctl hqbird-install` wrote the
+opens the pairing window for 24 hours. `fbmcp ctl hqbird-install` wrote the
 `rcm:` section and the RCM password secret.
 
+0. On **every** server, with the fbmcp of that server:
+   `fb_agent_cluster_pairing` — the pairing window. When it is `closed`
+   (`window_ended` or `window_closed`: the 24 hours of the setup are over),
+   `fb_agent_cluster_pairing args={action:"on", hours:2}` (Tier 1) opens it
+   again. `in_cluster` means the server is already in a cluster: do not link
+   it. The fingerprint in the reply is the one the probe must show. Without
+   the fbagent pairing API: `sudo -u firebird fbagent --cluster-pairing on`
+   on the host.
 1. `fb_cluster_status` — the RCM answers; no nodes yet.
 2. `fb_cluster_rcm_password` (Tier 1) — once: the first RCM password must
    change. fbmcp stores the new one; to use the RCM UI, set your own there
