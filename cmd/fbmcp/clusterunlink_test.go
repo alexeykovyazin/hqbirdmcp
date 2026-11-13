@@ -191,7 +191,8 @@ func TestClusterUnlinkRefusals(t *testing.T) {
 		if !strings.Contains(pre, "will be refused") || !strings.Contains(pre, c.want) {
 			t.Fatalf("%v: preview %s", c.args, pre)
 		}
-		c.args["_revision"] = "7"
+		// The preview pins nothing for a refused request: the exec gives
+		// the refusal, not "no cluster revision" (DO lab 2026-11-13).
 		if _, err := gt.clusterUnlinkExec(ctx, "", c.args, nil); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Fatalf("%v: exec %v", c.args, err)
 		}

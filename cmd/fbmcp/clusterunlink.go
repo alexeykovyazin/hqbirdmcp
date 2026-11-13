@@ -151,13 +151,15 @@ func (gt *gatedTools) clusterUnlinkExec(ctx context.Context, dbID string, args m
 	if err != nil {
 		return "", err
 	}
-	pinned := agentStr(args["_revision"])
-	if pinned == "" {
-		return "", errors.New("the request has no cluster revision (RCM did not answer when it was requested); nothing changed. Request fb_cluster_unlink again")
-	}
+	// The refusal of the plan comes first: a request that was refused at
+	// request time has no pins either.
 	p, err := unlinkPlanOf(ctx, cl, args)
 	if err != nil {
 		return "", fmt.Errorf("%w; nothing changed", rcmDown(err, rc))
+	}
+	pinned := agentStr(args["_revision"])
+	if pinned == "" {
+		return "", errors.New("the request has no cluster revision (RCM did not answer when it was requested); nothing changed. Request fb_cluster_unlink again")
 	}
 	if strconv.FormatInt(p.doc.Revision, 10) != pinned || p.memberIDs() != agentStr(args["_members"]) {
 		return "", fmt.Errorf("cluster %s changed after the request (revision %s, now %d); nothing changed. Check fb_cluster_status view=nodes, then request fb_cluster_unlink again", p.doc.ClusterID, pinned, p.doc.Revision)
