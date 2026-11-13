@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -63,8 +64,10 @@ func rcmBudget(ctx context.Context, rc config.RCM) (context.Context, context.Can
 
 // rcmDown adds the hint for an RCM that does not answer.
 func rcmDown(err error, rc config.RCM) error {
-	var re *rcmapi.Error
-	if err == nil || errors.As(err, &re) {
+	// Only a transport error (no answer) gets the hint: not an RCM answer,
+	// not a wrong argument, not a wait budget.
+	var ue *url.Error
+	if err == nil || !errors.As(err, &ue) {
 		return err
 	}
 	return fmt.Errorf("%v\nNext: the cluster manager does not answer at %s. Check `systemctl status hqbirdrcm`. After fb_cluster_link the RCM of a replica host is stopped: use fbmcp on the master host", err, rc.URL)
@@ -488,7 +491,7 @@ func (gt *gatedTools) clusterLinkExec(ctx context.Context, dbID string, args map
 	job, err := cl.Link(ctx, req)
 	if err != nil {
 		if rcmapi.IsCode(err, rcmapi.CodeLoneMaster) {
-			return "", fmt.Errorf("%v\nNext: request fb_cluster_link again with replica_of=<master member id> (fb_cluster_status view=nodes) to add a replica of that master, or with new_master=true for a master of its own", err)
+			return "", fmt.Errorf("%v\n%s", err, loneMasterNext)
 		}
 		return "", err
 	}
@@ -504,10 +507,18 @@ func (gt *gatedTools) clusterLinkExec(ctx context.Context, dbID string, args map
 	}
 	out := linkText(job)
 	if job.State != rcmapi.LinkDone {
+		// RCM 2027.5.9 refuses lone_master in the job, not in the request.
+		if job.Code == rcmapi.CodeLoneMaster {
+			out += loneMasterNext
+		}
 		return "", errors.New(out)
 	}
 	return out + "Next: fb_cluster_status view=nodes (node ids), then fb_cluster_replica_folder on the replica node and fb_cluster_enroll on the master node.", nil
 }
+
+// loneMasterNext is the way out of lone_master: one free row into a
+// cluster that has a master.
+const loneMasterNext = "Next: request fb_cluster_link again with replica_of=<master member id> (fb_cluster_status view=nodes) to add a replica of that master, or with new_master=true for a master of its own."
 
 // linkModeError checks master, new_master and replica_of as RCM does.
 func linkModeError(args map[string]any) string {

@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,6 +34,8 @@ type stubRCM struct {
 	// loneMaster: the cluster has a master, so a link without replica_of
 	// or new_master is refused (RCM 2027.5.9).
 	loneMaster bool
+	// loneJob: the same refusal as RCM 2027.5.9 gives it, in the link job.
+	loneJob bool
 	// member: hosts that are in the cluster (the RCM host): the probe
 	// gives them state member and no fingerprint (RCM 2027.5.9).
 	member map[string]bool
@@ -72,7 +77,17 @@ func (s *stubRCM) handler(t *testing.T) http.Handler {
 			reply(w, 409, map[string]any{"error": map[string]any{"code": "lone_master", "message": "cluster c1 has the master a-master"}})
 			return
 		}
+		if s.loneJob && b["replica_of"] == nil && b["new_master"] != true {
+			// RCM 2027.5.9: the job starts and fails with lone_master.
+			reply(w, 202, map[string]any{"id": "L2", "state": "running", "step": "check"})
+			return
+		}
 		reply(w, 202, map[string]any{"id": "L1", "state": "running", "step": "certs"})
+	})
+	mux.HandleFunc("GET /v1/admin/pair/link/L2", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, 200, map[string]any{"id": "L2", "state": "failed", "step": "end", "master": "b", "code": "lone_master",
+			"error": "cluster c1 has the master a-master; a link of the one row b makes another master with no replica",
+			"hosts": []map[string]any{{"input": "b", "state": "free", "role": "master"}}})
 	})
 	mux.HandleFunc("GET /v1/admin/pair/link/L1", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, map[string]any{"id": "L1", "state": "done", "step": "done", "master": "a",
@@ -287,6 +302,36 @@ func TestClusterLinkModes(t *testing.T) {
 	}
 	if len(stub.links) != n {
 		t.Fatal("a refused link reached RCM")
+	}
+}
+
+func TestClusterLinkLoneMasterInJob(t *testing.T) {
+	gt, stub := newClusterGT(t)
+	t.Setenv(config.DefaultRCMPasswordEnv, "pw")
+	ctx := context.Background()
+	stub.loneJob = true
+	args := map[string]any{"hosts": "b"}
+	_ = gt.clusterLinkPreview(ctx, "", args)
+	_, err := gt.clusterLinkExec(ctx, "", args, nil)
+	if err == nil || !strings.Contains(err.Error(), "error lone_master") || !strings.Contains(err.Error(), "replica_of=<master member id>") {
+		t.Fatalf("want the lone_master job failure with a hint, got %v", err)
+	}
+}
+
+func TestRCMDownOnlyForNoAnswer(t *testing.T) {
+	rc := config.RCM{URL: "https://127.0.0.1:7444"}
+	for _, err := range []error{
+		fmt.Errorf("view reinit needs id"),
+		&rcmapi.Error{Status: 409, Code: "busy", Message: "busy"},
+		context.DeadlineExceeded,
+	} {
+		if got := rcmDown(err, rc); strings.Contains(got.Error(), "does not answer") {
+			t.Errorf("hint on %v", err)
+		}
+	}
+	noAnswer := fmt.Errorf("rcm 127.0.0.1:7444: %w", &url.Error{Op: "Get", URL: "https://127.0.0.1:7444/v1/health", Err: errors.New("connection refused")})
+	if got := rcmDown(noAnswer, rc); !strings.Contains(got.Error(), "does not answer at https://127.0.0.1:7444") {
+		t.Errorf("no hint on a transport error: %v", got)
 	}
 }
 

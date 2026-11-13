@@ -21,7 +21,8 @@ Master host (fbmcp of the master):
 3. On the host: `sudo fbmcp ctl hqbird-install` again — it writes the `rcm:`
    section and the RCM password secret. Reconnect the MCP client: the
    cluster tools (`fb_cluster_status` and the others) appear.
-4. `fb_cluster_status` — the RCM answers; one node (this host).
+4. `fb_cluster_status` — the RCM answers; no nodes yet (the node of this
+   host starts with the link in step 8).
 5. `fb_cluster_rcm_password` (Tier 1) — once: the first RCM password must
    change. fbmcp stores the new one; to use the RCM UI, set your own there
    and store it with `fbmcp ctl secret set FBMCP_RCM_PASSWORD`.
@@ -30,8 +31,9 @@ Replica host (fbmcp of the replica):
 
 6. `fb_agent_cluster_pairing args={action:"on", hours:2}` (Tier 1) — opens
    the pairing window on the pairing port of the agent's slot (7450–7459).
-   Note the fingerprint in the reply. `in_cluster`: the server is already
-   in a cluster, do not link it. Without fbmcp on that host:
+   Note the fingerprint in the reply. The agent opens the port within a
+   minute: probe after that (before it, the row is `no_agent`).
+   `in_cluster`: the server is already in a cluster, do not link it. Without fbmcp on that host:
    `sudo -u firebird fbagent --cluster-pairing on`.
 
 Master host again:
