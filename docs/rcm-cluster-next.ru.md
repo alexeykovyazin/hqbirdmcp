@@ -138,3 +138,32 @@ HQ Monitor 1.54.0, node и RCM 2027.5.9, fbmcp 2027.2.22, setups 2027.2.29,
 2. Этап C (C1-C8) → проверка C9 → C10 в следующем релизе.
 3. T2 — в тот же релиз (fbmcp первым).
 4. Этап D — после этапа C.
+
+## 7. Итог этапа C (2026-11-13, ветка `feat/rcm-cluster`)
+
+Сделано C1-C9; C10 (релиз) — по слову владельца.
+
+| Коммит | Что |
+|---|---|
+| 4ac219a | `fb_agent_cluster`, `fb_agent_cluster_rcm`; link `new_master` / `replica_of`; probe по агентам; строка хоста RCM (`member`, без отпечатка) связывается без пина |
+| 1351253 | playbook `prompts/cluster-setup.md` по порядку C7 |
+| d75dde8 | Go toolchain go1.26.11 (T2 для fbmcp), govulncheck чисто |
+| 4a8e2f3 | исправления по стенду: подсказка `lone_master` из задачи link, подсказка «RCM не отвечает» только при ошибке сети |
+
+Проверка C9 на DO (3 дроплета, Ubuntu 24.04, кит 2027.2.29 fb50 с
+ib-aid.com `--yes`, fbmcp из ветки; удалены вместе с файрволом):
+
+- `fb_agent_cluster` → `fb_agent_cluster_rcm` (RCM `rcmc` за ~1 мин,
+  пароль не показан) → `sudo fbmcp ctl hqbird-install` → инструменты
+  кластера без перезапуска → `fb_cluster_rcm_password`.
+- Реплика: `fb_agent_cluster_pairing on` → probe (мастер `member`, реплика
+  `free` с отпечатком) → link → `replica_folder` → `enroll` →
+  `firebird_restart` (Tier 2) → `publication` → `reinit` `ok` → verify
+  «the replica matches the master».
+- Третий узел: link без режима — задача падает с `lone_master`; с
+  `replica_of=rcmc-m-master` — узел `rcmc-r2-replica`, reinit и verify `ok`.
+- После первой записи на мастере все три — `Ok` / `IN_SYNC`; окно реплики
+  закрылось само после link.
+
+Найдено и исправлено: без правки 4ac219a link с хостом RCM в RCM 2027.5.9
+всегда отказывал (нет отпечатка у строки `member`).
