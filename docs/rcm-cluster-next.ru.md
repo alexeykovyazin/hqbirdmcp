@@ -100,13 +100,23 @@ HQ Monitor 1.54.0, node и RCM 2027.5.9, fbmcp 2027.2.22, setups 2027.2.29,
   Удалить дроплеты и файрвол по ID.
 - **C10.** fbmcp 2027.2.23 — в следующий релиз setups (`hqbird-release`).
 
-### Этап D. Выход из кластера через fbmcp (fbagent + fbmcp)
+### Этап D. Выход из кластера через fbmcp (сделан, только fbmcp)
 
-- **D1.** fbagent: `POST /v1/cluster/leave` (операция, как
-  `--cluster-leave`), capability `cluster_leave`. Нужен релиз fbagent.
-- **D2.** fbmcp: `fb_agent_cluster_leave` (Tier 2: останавливает службы
-  узла). Удаление члена через admin API RCM — проверить, есть ли маршрут.
-- **D3.** Проверка на DO: реплика выходит, потом связывается снова.
+Проверка исходников 2026-11-13 изменила план: новый API fbagent не нужен.
+fbagent 3.1.0 сам выходит из кластера, когда RCM отзывает агента или
+убирает его последнего члена. RCM 2027.5.9 убирает члена через `PUT
+/v1/admin/clusters/{id}` (`If-Match`, так делает страница Cluster) и
+отзывает агента через `POST /v1/admin/agents/{id}/revoke` (только без
+членов). Без отзыва следующий link хоста получает `stale_agent`.
+
+- **D1.** Не нужен: релиза fbagent нет. `fbagent --cluster-leave` (CLI)
+  остаётся для хоста, чей RCM потерян.
+- **D2.** fbmcp: `fb_cluster_unlink` (Tier 2, ключ окна `db`): `node`
+  или `agent`; запрос показывает членов, связи и проверку RCM
+  (`validate`), закрепляет ревизию; выполнение — `PUT` без членов агента,
+  затем `revoke`. Хост RCM не выходит; мастер с репликами — только после
+  них. `fb_cluster_status view=agents`.
+- **D3.** Проверка на DO — см. §8.
 
 ### Хвосты вне fbmcp
 
@@ -137,7 +147,7 @@ HQ Monitor 1.54.0, node и RCM 2027.5.9, fbmcp 2027.2.22, setups 2027.2.29,
 1. T1 (владелец).
 2. Этап C (C1-C8) → проверка C9 → C10 в следующем релизе.
 3. T2 — в тот же релиз (fbmcp первым).
-4. Этап D — после этапа C.
+4. Этап D — после этапа C (сделан, §8).
 
 ## 7. Итог этапа C (2026-11-13, ветка `feat/rcm-cluster`)
 
@@ -167,3 +177,25 @@ ib-aid.com `--yes`, fbmcp из ветки; удалены вместе с фай
 
 Найдено и исправлено: без правки 4ac219a link с хостом RCM в RCM 2027.5.9
 всегда отказывал (нет отпечатка у строки `member`).
+
+## 8. Итог этапа D (2026-11-13, ветка `feat/rcm-cluster`)
+
+| Коммит | Что |
+|---|---|
+| c808bc4 | `fb_cluster_unlink` (Tier 2), `fb_cluster_status view=agents`, playbook шаги 19-21 |
+| 11e960a | исправление по стенду: отказ (хост RCM) виден в задаче, а не «нет ревизии» |
+
+Проверка D3 на DO (2 дроплета, кит 2027.2.29 fb50, fbmcp из ветки;
+удалены вместе с файрволом):
+
+- Кластер с нуля по playbook: RCM `rcmd`, link, `replica_folder`,
+  `enroll`, `firebird_restart`, `publication`, `reinit` `ok`, verify `ok`.
+- `fb_cluster_unlink node=rcmd-m-master` — отказ: хост RCM не выходит.
+- `fb_cluster_unlink node=rcmd-r-replica` — RCM check `ok`; ревизия 3 → 4,
+  агент отозван. Через ~1 мин агент реплики: «RCM revoked this agent»,
+  служба `hqclusternode-replica-p3050` снята, порт 7051 закрыт, состояние
+  `free`, `source: none`; файлы остались.
+- `view=agents`: агент реплики `revoked: true`, без членов.
+- Снова: pairing on → probe `free` (не `stale_agent`) → link
+  `replica_of=rcmd-m-master` → узел `rcmd-r-replica-2` → `replica_folder`
+  → `reinit` `ok` → verify `ok` → после INSERT оба `Ok` / `IN_SYNC`.
