@@ -151,6 +151,7 @@ var clusterViews = map[string]struct {
 	"reinit":    {"/v1/reinit/%s", true},
 	"verify":    {"/v1/verify/%s", true},
 	"link":      {"/v1/admin/pair/link/%s", false},
+	"agents":    {"/v1/admin/agents", false},
 }
 
 func clusterViewNames() string {
@@ -788,6 +789,9 @@ func registerClusterTools(server *mcp.Server, gt *gatedTools) {
 	gt.registerToolOptDB(server, policy.ToolMeta{Name: "fb_cluster_firebird_restart", Tier: 2, Scope: "instance"},
 		"Restart Firebird on a cluster node through the cluster node service (window key: db %s). Connections to every database of that server break.",
 		gt.clusterFirebirdRestartExec, nil)
+	gt.registerToolOptDB(server, policy.ToolMeta{Name: "fb_cluster_unlink", Tier: 2, Scope: "instance"},
+		"Take a server out of the cluster (window key: db %s): RCM removes the members of its agent and their links, then revokes the agent; the agent stops its node and is free to be linked again. The request shows the members and the RCM check.",
+		gt.clusterUnlinkExec, gt.clusterUnlinkPreview)
 	gt.registerToolOptDB(server, policy.ToolMeta{Name: "fb_cluster_reinit", Tier: 2, Scope: "instance"},
 		"Initialize or re-initialize the replica of one database (db_id) or of all databases of a master node, and wait for the end (window key: db %s). Copies the master database to the replica node.",
 		gt.clusterReinitExec, nil)

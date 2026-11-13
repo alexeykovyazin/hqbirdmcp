@@ -185,6 +185,10 @@ var clusterArgSpecs = map[string]toolArgs{
 		{Name: "hold_on_long_transactions", Kind: "bool", Doc: "wait for long transactions instead of refusing"},
 		{Name: "force", Kind: "bool", Doc: "start even when the replica looks in sync"},
 	}, Note: "Needs an open window on db (fb_window_open). Then fb_cluster_verify."},
+	"fb_cluster_unlink": {Args: []argSpec{
+		{Name: "node", Kind: "string", Doc: "a node id from fb_cluster_status view=nodes: every member of its agent leaves"},
+		{Name: "agent", Kind: "string", Doc: "an agent id from fb_cluster_status view=agents, instead of node (also an agent with no members left: it is only revoked)"},
+	}, Note: "Needs an open window on db (fb_window_open). Not the RCM host; a master with replicas only after its replicas. Then fb_agent_cluster on that host shows free."},
 }
 
 func init() {

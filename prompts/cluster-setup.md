@@ -73,5 +73,19 @@ Replica host:
 18. `fb_agent_cluster_pairing` — `closed` (`claimed` or `in_cluster`) after
     the link. If it is still open: `args={action:"off"}`.
 
+Take a replica out (master host):
+
+19. `fb_cluster_status view=nodes` — the replica node `RN`.
+20. `fb_cluster_unlink db=<window db> args={node:RN}` (Tier 2) — the request
+    lists the members and links that leave (every member of that agent) and
+    the RCM check. RCM removes them and revokes the agent. The RCM host
+    cannot leave; a master with replicas only after its replicas.
+21. Replica host: `fb_agent_cluster` — `free` within about two minutes: the
+    agent stopped its node and forgot the cluster. The database files stay
+    in the old replica folder. To link it again: steps 6–8 with
+    `replica_of:MN`, then 9, 10, 16 and 17 (the replica gets a new node id).
+    A host that left by `fbagent --cluster-leave` is still known to RCM:
+    `fb_cluster_unlink args={node:RN}` takes its members out and revokes it.
+
 Do not change the cluster without the operator: every Tier 1 step needs
 `fb_confirm`, every Tier 2 step the operator's `fbmcp ctl approve`.

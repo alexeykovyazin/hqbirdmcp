@@ -134,5 +134,6 @@ func SystemTools() []ToolMeta {
 		{Name: "fb_cluster_publication", Tier: 1, Scope: "instance"},
 		{Name: "fb_cluster_firebird_restart", Tier: 2, Scope: "instance"},
 		{Name: "fb_cluster_reinit", Tier: 2, Scope: "instance"},
+		{Name: "fb_cluster_unlink", Tier: 2, Scope: "instance"},
 	}
 }

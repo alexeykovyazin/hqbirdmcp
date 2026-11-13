@@ -110,6 +110,11 @@ func IsCode(err error, code string) bool {
 // Do sends one request and returns the body of a 2xx answer. body is sent
 // as JSON when it is not nil.
 func (c *Client) Do(ctx context.Context, method, path string, body any) (json.RawMessage, error) {
+	return c.DoHeader(ctx, method, path, body, nil)
+}
+
+// DoHeader is Do with extra request headers (If-Match of a PUT).
+func (c *Client) DoHeader(ctx context.Context, method, path string, body any, hdr http.Header) (json.RawMessage, error) {
 	var payload []byte
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -125,7 +130,7 @@ func (c *Client) Do(ctx context.Context, method, path string, body any) (json.Ra
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.send(ctx, method, target, payload, "")
+	resp, err := c.send(ctx, method, target, payload, "", hdr)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +140,7 @@ func (c *Client) Do(ctx context.Context, method, path string, body any) (json.Ra
 		if !strings.HasPrefix(strings.ToLower(chal), "digest ") {
 			return nil, &Error{Status: resp.StatusCode, Message: "RCM asked for a login that is not Digest"}
 		}
-		resp, err = c.send(ctx, method, target, payload, c.digest(method, target, chal))
+		resp, err = c.send(ctx, method, target, payload, c.digest(method, target, chal), hdr)
 		if err != nil {
 			return nil, err
 		}
@@ -151,7 +156,7 @@ func (c *Client) Do(ctx context.Context, method, path string, body any) (json.Ra
 	return raw, nil
 }
 
-func (c *Client) send(ctx context.Context, method string, target *url.URL, payload []byte, authz string) (*http.Response, error) {
+func (c *Client) send(ctx context.Context, method string, target *url.URL, payload []byte, authz string, hdr http.Header) (*http.Response, error) {
 	var rdr io.Reader
 	if payload != nil {
 		rdr = bytes.NewReader(payload)
@@ -159,6 +164,11 @@ func (c *Client) send(ctx context.Context, method string, target *url.URL, paylo
 	req, err := http.NewRequestWithContext(ctx, method, target.String(), rdr)
 	if err != nil {
 		return nil, err
+	}
+	for k, vs := range hdr {
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
 	}
 	req.Header.Set("Accept", "application/json")
 	if payload != nil {

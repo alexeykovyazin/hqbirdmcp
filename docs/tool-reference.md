@@ -275,7 +275,7 @@ of a host and the start of the RCM on the master are agent tools:
 
 | Tool | Tier | Arguments | What it does |
 |---|---|---|---|
-| `fb_cluster_status` | 0 | `db?`, `view?`, `id?` | `overview` (health, cluster, nodes, databases) or one view: `nodes`, `databases`, `commands`, `command`, `alerts`, `releases`, `node`, `config`, `reinit`, `verify`, `link` (`id` default `latest`) |
+| `fb_cluster_status` | 0 | `db?`, `view?`, `id?` | `overview` (health, cluster, nodes, databases) or one view: `nodes`, `databases`, `commands`, `command`, `alerts`, `releases`, `node`, `config`, `reinit`, `verify`, `link` (`id` default `latest`), `agents` (agents RCM knows: members, revoked) |
 | `fb_cluster_probe` | 0 | `db?`, `hosts` | `POST /v1/admin/pair/probe`: one row per agent (`host` probes the slot ports 7450–7459, `host:port` one slot): pairing state, instance, Firebird port, node port, versions, certificate fingerprint, member ids, own RCM; closed or skipped ports in a separate list |
 | `fb_cluster_verify` | 0 | `db?`, `master_node`, `master_db`, `replica_node`, `replica_db?` | `POST /v1/verify` and wait: `COUNT(*)` of every table, verdict `ok` \| `desynced` \| `no_tables` \| `timeout` \| `failed` |
 | `fb_cluster_rcm_password` | 1 | `db?` | new random 24-character password of the RCM user (clears `must_change`), stored in the fbmcp secret first, old value put back if RCM refuses; never printed. Refused when the secret comes from an environment variable |
@@ -285,6 +285,7 @@ of a host and the start of the RCM on the master are agent tools:
 | `fb_cluster_publication` | 1 | `db?`, `args.node`, `args.db_id?` | publication sync of the node (or one database) and wait for the command |
 | `fb_cluster_firebird_restart` | 2 | `db` (window key), `args.node` | Firebird restart through the cluster node service (`ignore_window`: the fbmcp window is the gate). **OOB** |
 | `fb_cluster_reinit` | 2 | `db` (window key), `args.node`, `args.db_id?` (empty/`all` = every database), `args.to?`, `args.mode?` (smooth\|standard), `args.remove_old_replica?`, `args.allow_restart?`, `args.hold_on_long_transactions?`, `args.force?` | initialize or re-initialize replicas; one database waits for the reinit job (phase, percent; RCM code and error on failure). **OOB** |
+| `fb_cluster_unlink` | 2 | `db` (window key), `args.node?` or `args.agent?` (one of them) | take a server out of the cluster: RCM removes every member of its agent and their links (`PUT` of the cluster document, pinned to the revision of the request), then revokes the agent; fbagent 3.1.0+ stops its node and becomes `free`. Not the RCM host; a master with replicas only after them (the request shows the RCM check). `args.agent` of an agent with no members only revokes it. **OOB** |
 
 ---
 
