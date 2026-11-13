@@ -223,14 +223,28 @@ func probeTable(p rcmapi.ProbeAnswer) string {
 		if h.FirebirdVersion != "" {
 			fmt.Fprintf(&b, ", Firebird %s", h.FirebirdVersion)
 		}
+		if h.Instance != "" {
+			fmt.Fprintf(&b, ", instance %s", h.Instance)
+		}
+		if h.FirebirdPort != 0 {
+			fmt.Fprintf(&b, ", Firebird port %d", h.FirebirdPort)
+		}
+		if h.NodePort != 0 {
+			fmt.Fprintf(&b, ", node port %d", h.NodePort)
+		}
 		if h.RCMHost {
 			b.WriteString(", RCM host")
+		}
+		if h.RCMLocal {
+			b.WriteString(", own RCM (stopped and disabled when it joins)")
 		}
 		if len(h.Roles) > 0 {
 			fmt.Fprintf(&b, ", roles %s", strings.Join(h.Roles, "+"))
 		}
 		if h.Fingerprint != "" {
 			fmt.Fprintf(&b, "\n  fingerprint %s", h.Fingerprint)
+		} else if h.State == rcmapi.HostMember {
+			b.WriteString("\n  in this cluster: no fingerprint to compare")
 		}
 		if len(h.MemberIDs) > 0 {
 			keys := make([]string, 0, len(h.MemberIDs))
@@ -249,6 +263,9 @@ func probeTable(p rcmapi.ProbeAnswer) string {
 		}
 		b.WriteString("\n")
 	}
+	for _, k := range p.Skipped {
+		fmt.Fprintf(&b, "skipped ports of %s: %s\n", k.Input, k.Summary)
+	}
 	return b.String()
 }
 
@@ -264,7 +281,7 @@ func clusterProbe(ctx context.Context, cl *rcmapi.Client, _ config.RCM, a cluste
 	if err != nil {
 		return "", err
 	}
-	return probeTable(p) + "\nCompare each fingerprint with the line `Pairing:` the installer printed on that host. Next: fb_cluster_link.", nil
+	return probeTable(p) + "\nEach row is one agent (host:port of its pairing port). Compare each fingerprint with fb_agent_cluster_pairing on that host (or the line `Pairing:` of the installer). Next: fb_cluster_link with the rows to link; a new replica of a running pair needs replica_of.", nil
 }
 
 func clusterVerify(ctx context.Context, cl *rcmapi.Client, rc config.RCM, a clusterVerifyArg) (string, error) {
@@ -393,6 +410,11 @@ func (gt *gatedTools) clusterPasswordExec(ctx context.Context, dbID string, args
 
 // clusterLinkPreview probes the hosts, shows the fingerprints and pins them
 // into the request: the executor links only hosts with the same ones.
+// memberPin is the pin of a row that is in the cluster at request time (the
+// RCM host since RCM 2027.5.9): it has no fingerprint, and the confirmed
+// run links it only when it is still a member.
+const memberPin = "member"
+
 func (gt *gatedTools) clusterLinkPreview(ctx context.Context, dbID string, args map[string]any) string {
 	cl, _, err := gt.rcmClient("")
 	if err != nil {
@@ -404,12 +426,19 @@ func (gt *gatedTools) clusterLinkPreview(ctx context.Context, dbID string, args 
 	}
 	pins := map[string]any{}
 	for _, h := range p.Hosts {
-		if h.Fingerprint != "" {
+		switch {
+		case h.State == rcmapi.HostMember:
+			pins[h.Input] = memberPin
+		case h.Fingerprint != "":
 			pins[h.Input] = h.Fingerprint
 		}
 	}
 	args["_fingerprints"] = pins
-	s := "Probe — compare each fingerprint with the line `Pairing:` the installer printed on that host; the link runs only with these fingerprints:\n" + probeTable(p)
+	s := "Probe — compare each fingerprint with fb_agent_cluster_pairing on that host (or the line `Pairing:` of the installer); the link takes every row below and runs only with these fingerprints:\n" + probeTable(p)
+	if msg := linkModeError(args); msg != "" {
+		s += "The request will be refused when confirmed: " + msg + "\n"
+	}
+	s += "mode: " + linkMode(args) + "\n"
 	if agentStr(args["rcm_url"]) == "" {
 		s += "rcm_url: " + p.RCMURL + " (the RCM default)\n"
 	}
@@ -430,13 +459,26 @@ func (gt *gatedTools) clusterLinkExec(ctx context.Context, dbID string, args map
 	if err != nil {
 		return "", rcmDown(err, rc)
 	}
-	req := rcmapi.LinkRequest{Master: agentStr(args["master"]), RCMURL: agentStr(args["rcm_url"])}
+	if msg := linkModeError(args); msg != "" {
+		return "", fmt.Errorf("%s; nothing linked", msg)
+	}
+	newMaster, _ := args["new_master"].(bool)
+	req := rcmapi.LinkRequest{Master: agentStr(args["master"]), RCMURL: agentStr(args["rcm_url"]),
+		NewMaster: newMaster, ReplicaOf: strings.TrimSpace(agentStr(args["replica_of"]))}
 	for _, h := range p.Hosts {
 		want := agentStr(pins[h.Input])
 		switch {
 		case h.State == rcmapi.HostError:
 			return "", fmt.Errorf("host %s: %s %s; nothing linked", h.Input, h.Code, h.Error)
-		case want == "":
+		case h.State == rcmapi.HostMember:
+			// The RCM host (or an agent already in this cluster): RCM
+			// knows it by its certificate, there is no fingerprint.
+			if want != memberPin {
+				return "", fmt.Errorf("host %s was not a member of the cluster when the link was requested; nothing linked. Request fb_cluster_link again", h.Input)
+			}
+			req.Hosts = append(req.Hosts, rcmapi.LinkHostIn{Host: h.Input})
+			continue
+		case want == "" || want == memberPin:
 			return "", fmt.Errorf("host %s had no fingerprint when the link was requested; nothing linked. Request fb_cluster_link again", h.Input)
 		case want != h.Fingerprint:
 			return "", fmt.Errorf("the fingerprint of host %s changed after the request (was %s, now %s); nothing linked. Check the host, then request fb_cluster_link again", h.Input, want, h.Fingerprint)
@@ -445,6 +487,9 @@ func (gt *gatedTools) clusterLinkExec(ctx context.Context, dbID string, args map
 	}
 	job, err := cl.Link(ctx, req)
 	if err != nil {
+		if rcmapi.IsCode(err, rcmapi.CodeLoneMaster) {
+			return "", fmt.Errorf("%v\nNext: request fb_cluster_link again with replica_of=<master member id> (fb_cluster_status view=nodes) to add a replica of that master, or with new_master=true for a master of its own", err)
+		}
 		return "", err
 	}
 	wctx, cancel := rcmBudget(ctx, rc)
@@ -464,9 +509,40 @@ func (gt *gatedTools) clusterLinkExec(ctx context.Context, dbID string, args map
 	return out + "Next: fb_cluster_status view=nodes (node ids), then fb_cluster_replica_folder on the replica node and fb_cluster_enroll on the master node.", nil
 }
 
+// linkModeError checks master, new_master and replica_of as RCM does.
+func linkModeError(args map[string]any) string {
+	newMaster, _ := args["new_master"].(bool)
+	if strings.TrimSpace(agentStr(args["replica_of"])) != "" && (newMaster || strings.TrimSpace(agentStr(args["master"])) != "") {
+		return "replica_of names the master: give no master and no new_master with it"
+	}
+	return ""
+}
+
+// linkMode says what the link makes of the rows.
+func linkMode(args map[string]any) string {
+	if r := strings.TrimSpace(agentStr(args["replica_of"])); r != "" {
+		return "every row gets a replica of master member " + r
+	}
+	m := strings.TrimSpace(agentStr(args["master"]))
+	if m == "" {
+		m = "the first row"
+	}
+	s := "the master is " + m + ", the other rows get its replica"
+	if newMaster, _ := args["new_master"].(bool); newMaster {
+		s += " (new_master: a master of its own beside the masters the cluster has)"
+	}
+	return s
+}
+
 func linkText(j rcmapi.LinkJob) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "link job %s: %s (step %s), master %s, RCM %s\n", j.ID, j.State, j.Step, j.Master, j.RCMURL)
+	if j.ReplicaOf != "" {
+		fmt.Fprintf(&b, "every row is a replica of %s\n", j.ReplicaOf)
+	}
+	if j.NewMaster {
+		b.WriteString("new master allowed (another instance pair)\n")
+	}
 	if j.Error != "" {
 		fmt.Fprintf(&b, "error %s: %s\n", j.Code, j.Error)
 	}
@@ -480,6 +556,9 @@ func linkText(j rcmapi.LinkJob) string {
 		}
 		if h.Service != "" {
 			fmt.Fprintf(&b, ", service %s", h.Service)
+		}
+		if h.NodePort != 0 {
+			fmt.Fprintf(&b, ", node port %d", h.NodePort)
 		}
 		if h.Error != "" {
 			fmt.Fprintf(&b, ", error %s", h.Error)

@@ -145,7 +145,10 @@ var gatedArgSpecs = map[string]toolArgs{
 		{Name: "action", Kind: "string", Enum: []string{"status", "on", "off"}, Doc: "status (default: read, no confirmation), on = open the window, off = close it"},
 		{Name: "hours", Kind: "int", Min: 1, Max: 24, Doc: "with on: how long the window stays open, default 24"},
 		{Name: "rcm_allow", Kind: "string", Doc: "with on: who may invite this host, comma-separated IP addresses, CIDR ranges, host names; any = any RCM; absent keeps the list"},
-	}, Note: "Use it when the 24 h window of the setup is over, before fb_cluster_probe / fb_cluster_link; on every server of the cluster."},
+	}, Note: "Use it on a replica host before fb_cluster_probe / fb_cluster_link (since kit 2027.2.29 the setup opens no window unless --cluster-pairing on), or when the 24 h window is over."},
+	"fb_agent_cluster_rcm": {Args: []argSpec{agentArgSpec, reasonArgSpec,
+		{Name: "cluster_id", Kind: "string", Doc: "id of the new cluster: a DNS label (a-z, 0-9, -); default from the host name"},
+	}, Note: "On the master host only. Check first with fb_agent_cluster. Then sudo fbmcp ctl hqbird-install on the host writes the rcm: section and the password secret."},
 }
 
 var clusterNodeArgSpec = argSpec{Name: "node", Kind: "string", Required: true, Doc: "node id from fb_cluster_status view=nodes"}
@@ -154,10 +157,12 @@ var clusterNodeArgSpec = argSpec{Name: "node", Kind: "string", Required: true, D
 var clusterArgSpecs = map[string]toolArgs{
 	"fb_cluster_rcm_password": {Note: "Run it once after the install: the first RCM password must change."},
 	"fb_cluster_link": {Args: []argSpec{
-		{Name: "hosts", Kind: "string", Required: true, Doc: "every server, comma-separated: host or host:port of its pairing port (7450)"},
+		{Name: "hosts", Kind: "string", Required: true, Doc: "the rows to link, comma-separated: host (every agent of the host: pairing ports 7450-7459) or host:port (one agent), as fb_cluster_probe shows them"},
 		{Name: "master", Kind: "string", Doc: "the host (as in hosts) that gets the master; default the first"},
 		{Name: "rcm_url", Kind: "string", Doc: "URL the agents join; default the RCM address the probe shows"},
-	}, Note: "Probe first: fb_cluster_probe."},
+		{Name: "new_master", Kind: "bool", Doc: "one row that gets a master of its own in a cluster that has a master already (another instance pair)"},
+		{Name: "replica_of", Kind: "string", Doc: "a master member id of the cluster: every row gets a replica of it (add a replica to a running pair); not with master or new_master"},
+	}, Note: "Probe first: fb_cluster_probe. One free row into a cluster that has a master needs replica_of or new_master (RCM refuses lone_master)."},
 	"fb_cluster_replica_folder": {Args: []argSpec{clusterNodeArgSpec,
 		{Name: "root", Kind: "string", Doc: "folder; default /databases/replica/<node>"},
 	}},

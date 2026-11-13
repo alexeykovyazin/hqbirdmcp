@@ -21,7 +21,7 @@ fbmcp is an MCP server for Firebird 2.5–5.0 on Windows and Linux. An MCP
 client (Claude Desktop, Claude Code, Cursor, Codex, ZCode, others) uses it
 to work as a DBA: monitoring, backups and verified restores, SQL/DDL/DCL,
 indexes, users and grants, `firebird.conf`, a scheduler, migrations, and the
-HQbird fbagent. It has **109 tools**: 54 read-only (Tier 0), 38 Tier 1,
+HQbird fbagent. It has **111 tools**: 55 read-only (Tier 0), 39 Tier 1,
 16 Tier 2, 1 Tier 3 (disabled). `fb_demo_write` is there only when the
 server runs with `FBMCP_DEMO_TOOLS=1`.
 

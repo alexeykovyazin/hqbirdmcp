@@ -498,8 +498,9 @@ type ClusterPairingRequest struct {
 
 // ClusterPairing is the answer of GET and POST /v1/cluster/pairing.
 type ClusterPairing struct {
-	// State is "open" when port 7450 can open now, else "closed" with
-	// Reason: window_closed, window_ended, claimed, in_cluster, not_free.
+	// State is "open" when the pairing port of the agent's slot (Port,
+	// 7450-7459) can open now, else "closed" with Reason: window_closed,
+	// window_ended, claimed, in_cluster, not_free.
 	State         string   `json:"state"`
 	Reason        string   `json:"reason,omitempty"`
 	Expires       string   `json:"expires,omitempty"`
@@ -514,6 +515,83 @@ type ClusterPairing struct {
 	ClaimedAt     string   `json:"claimed_at,omitempty"`
 	ClaimedBy     string   `json:"claimed_by_rcm_url,omitempty"`
 	Message       string   `json:"message"`
+	// Firewall says what the agent did with the firewall rules of the
+	// pairing port and the node port (fbagent 3.1.0+).
+	Firewall string `json:"firewall,omitempty"`
+}
+
+// ClusterRCMInfo is the "rcm" object of GET /v1/cluster: the RCM of the
+// host.
+type ClusterRCMInfo struct {
+	// Installed: the host has an RCM (the service, or a folder with a seed).
+	Installed bool `json:"installed"`
+	// Staged: hqbirdrcm is in the agent's product cache, so POST
+	// /v1/cluster/rcm can install it.
+	Staged       bool   `json:"staged"`
+	Running      bool   `json:"running"`
+	Dir          string `json:"dir,omitempty"`
+	OwnerAgentID string `json:"owner_agent_id,omitempty"`
+	ClusterID    string `json:"cluster_id,omitempty"`
+	// ThisAgent: this agent made it.
+	ThisAgent  bool   `json:"this_agent"`
+	ConsoleURL string `json:"console_url,omitempty"`
+}
+
+// ClusterState is GET /v1/cluster (fbagent 3.1.0+, capability cluster).
+type ClusterState struct {
+	// State is free, in_cluster or rcm_owner (the agent runs the RCM of the
+	// host and its cluster has no other member).
+	State     string `json:"state"`
+	ClusterID string `json:"cluster_id,omitempty"`
+	// Source is rcm, goafts or none.
+	Source string `json:"source"`
+	// RCMOwner: the agent runs the RCM of the host.
+	RCMOwner bool   `json:"rcm_owner"`
+	Reason   string `json:"reason,omitempty"`
+	// Slot is the agent's cluster slot; -1 without a cluster_ports block
+	// (the ports of slot 0 apply).
+	Slot        int             `json:"slot"`
+	PairingPort int             `json:"pairing_port"`
+	NodePorts   []int           `json:"node_ports"`
+	Pairing     *ClusterPairing `json:"pairing,omitempty"`
+	RCM         ClusterRCMInfo  `json:"rcm"`
+	Warnings    []string        `json:"warnings,omitempty"`
+}
+
+// ClusterRCMRequest is the body of POST /v1/cluster/rcm: what fbagent
+// --cluster-init does (the RCM of a new cluster on this host).
+type ClusterRCMRequest struct {
+	// ClusterID is the new cluster's id (a DNS label); "" is from the host
+	// name.
+	ClusterID   string `json:"cluster_id,omitempty"`
+	RequestedBy string `json:"requested_by,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+}
+
+// ClusterRCMResult is the result of a succeeded cluster_rcm operation. The
+// password is never in it: PasswordFile names the file on the host.
+type ClusterRCMResult struct {
+	ClusterID    string `json:"cluster_id"`
+	RCMURL       string `json:"rcm_url"`
+	ConsoleURL   string `json:"console_url"`
+	CAHash       string `json:"ca_hash"`
+	Login        string `json:"login,omitempty"`
+	PasswordFile string `json:"password_file,omitempty"`
+	Firewall     string `json:"firewall,omitempty"`
+	Note         string `json:"note,omitempty"`
+}
+
+// GetCluster reads the agent's cluster state and the RCM of the host.
+func (c *Client) GetCluster(ctx context.Context) (ClusterState, error) {
+	var out ClusterState
+	return out, c.do(ctx, http.MethodGet, "/v1/cluster", nil, nil, &out)
+}
+
+// MakeClusterRCM queues the cluster_rcm operation (202): the agent installs
+// and starts the RCM of a new cluster on this host.
+func (c *Client) MakeClusterRCM(ctx context.Context, req ClusterRCMRequest) (runResponse, error) {
+	var out runResponse
+	return out, c.do(ctx, http.MethodPost, "/v1/cluster/rcm", nil, req, &out)
 }
 
 // GetClusterPairing reads the pairing window of the agent's host.

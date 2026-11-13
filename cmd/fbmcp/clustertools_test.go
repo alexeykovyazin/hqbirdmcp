@@ -14,6 +14,7 @@ import (
 
 	"github.com/aleks/fbmcp/internal/config"
 	"github.com/aleks/fbmcp/internal/policy"
+	"github.com/aleks/fbmcp/internal/rcmapi"
 	"github.com/aleks/fbmcp/internal/secrets"
 )
 
@@ -27,6 +28,12 @@ type stubRCM struct {
 	password  string
 	enrolls   []map[string]any
 	actors    []string
+	// loneMaster: the cluster has a master, so a link without replica_of
+	// or new_master is refused (RCM 2027.5.9).
+	loneMaster bool
+	// member: hosts that are in the cluster (the RCM host): the probe
+	// gives them state member and no fingerprint (RCM 2027.5.9).
+	member map[string]bool
 }
 
 func (s *stubRCM) handler(t *testing.T) http.Handler {
@@ -47,14 +54,24 @@ func (s *stubRCM) handler(t *testing.T) http.Handler {
 		var hosts []map[string]any
 		for _, h := range body(r)["hosts"].([]any) {
 			hs := h.(string)
+			if s.member[hs] {
+				hosts = append(hosts, map[string]any{"input": hs, "host": hs, "port": 7450, "state": "member", "rcm_host": true, "node_name": hs + "-fb50"})
+				continue
+			}
 			hosts = append(hosts, map[string]any{"input": hs, "host": hs, "port": 7450, "fingerprint": s.fp[hs], "state": "free", "node_name": hs + "-fb50"})
 		}
 		reply(w, 200, map[string]any{"cluster_id": "c1", "rcm_url": "https://10.0.0.1:7443", "seats": 2, "hosts": hosts, "ok": true})
 	})
 	mux.HandleFunc("POST /v1/admin/pair/link", func(w http.ResponseWriter, r *http.Request) {
+		b := body(r)
 		s.mu.Lock()
-		s.links = append(s.links, body(r))
+		s.links = append(s.links, b)
+		lone := s.loneMaster
 		s.mu.Unlock()
+		if lone && b["replica_of"] == nil && b["new_master"] != true {
+			reply(w, 409, map[string]any{"error": map[string]any{"code": "lone_master", "message": "cluster c1 has the master a-master"}})
+			return
+		}
 		reply(w, 202, map[string]any{"id": "L1", "state": "running", "step": "certs"})
 	})
 	mux.HandleFunc("GET /v1/admin/pair/link/L1", func(w http.ResponseWriter, r *http.Request) {
@@ -158,6 +175,146 @@ func TestClusterLinkPinsFingerprints(t *testing.T) {
 	}
 	if len(stub.links) != 1 {
 		t.Fatalf("a refused link reached RCM: %d", len(stub.links))
+	}
+}
+
+// Since RCM 2027.5.9 the RCM host is a member row without a fingerprint:
+// the link takes it without a pin, and only while it is still a member.
+func TestClusterLinkRCMHostRow(t *testing.T) {
+	gt, stub := newClusterGT(t)
+	t.Setenv(config.DefaultRCMPasswordEnv, "pw")
+	ctx := context.Background()
+	stub.member = map[string]bool{"a": true}
+
+	args := map[string]any{"hosts": "a,b", "master": "a"}
+	pre := gt.clusterLinkPreview(ctx, "", args)
+	if !strings.Contains(pre, "- a: state member") || !strings.Contains(pre, "RCM host") || !strings.Contains(pre, "no fingerprint to compare") || !strings.Contains(pre, "SHA256:bbb") {
+		t.Fatalf("preview: %s", pre)
+	}
+	if _, err := gt.clusterLinkExec(ctx, "", args, nil); err != nil {
+		t.Fatal(err)
+	}
+	hosts := stub.links[0]["hosts"].([]any)
+	if h := hosts[0].(map[string]any); h["host"] != "a" || h["fingerprint"] != "" {
+		t.Fatalf("RCM host row %v", h)
+	}
+	if h := hosts[1].(map[string]any); h["fingerprint"] != "SHA256:bbb" {
+		t.Fatalf("replica row %v", h)
+	}
+
+	// A member row that is free at run time is not linked without a pin.
+	stub.member = nil
+	if _, err := gt.clusterLinkExec(ctx, "", args, nil); err == nil || !strings.Contains(err.Error(), "host a had no fingerprint") {
+		t.Fatalf("want a refusal, got %v", err)
+	}
+	// A free row that became a member is refused too.
+	args = map[string]any{"hosts": "a,b", "master": "a"}
+	_ = gt.clusterLinkPreview(ctx, "", args)
+	stub.member = map[string]bool{"b": true}
+	if _, err := gt.clusterLinkExec(ctx, "", args, nil); err == nil || !strings.Contains(err.Error(), "host b was not a member") {
+		t.Fatalf("want a refusal, got %v", err)
+	}
+	if len(stub.links) != 1 {
+		t.Fatalf("a refused link reached RCM: %d", len(stub.links))
+	}
+}
+
+func TestClusterLinkModes(t *testing.T) {
+	for _, tc := range []struct {
+		args map[string]any
+		bad  bool
+	}{
+		{map[string]any{"hosts": "b"}, false},
+		{map[string]any{"hosts": "b", "replica_of": "a-master"}, false},
+		{map[string]any{"hosts": "a,b", "master": "a", "new_master": true}, false},
+		{map[string]any{"hosts": "b", "replica_of": "a-master", "master": "b"}, true},
+		{map[string]any{"hosts": "b", "replica_of": "a-master", "new_master": true}, true},
+	} {
+		if got := linkModeError(tc.args) != ""; got != tc.bad {
+			t.Errorf("linkModeError(%v) = %v, want %v", tc.args, got, tc.bad)
+		}
+	}
+	if s := linkMode(map[string]any{"replica_of": "a-master"}); !strings.Contains(s, "replica of master member a-master") {
+		t.Errorf("linkMode replica_of: %q", s)
+	}
+	if s := linkMode(map[string]any{"new_master": true}); !strings.Contains(s, "the first row") || !strings.Contains(s, "new_master") {
+		t.Errorf("linkMode new_master: %q", s)
+	}
+
+	gt, stub := newClusterGT(t)
+	t.Setenv(config.DefaultRCMPasswordEnv, "pw")
+	ctx := context.Background()
+	stub.loneMaster = true
+
+	// One free row into a cluster with a master: RCM refuses, the reply
+	// names the way out.
+	args := map[string]any{"hosts": "b"}
+	_ = gt.clusterLinkPreview(ctx, "", args)
+	if _, err := gt.clusterLinkExec(ctx, "", args, nil); err == nil || !strings.Contains(err.Error(), "lone_master") || !strings.Contains(err.Error(), "replica_of=") {
+		t.Fatalf("want lone_master with a hint, got %v", err)
+	}
+	if b := stub.links[len(stub.links)-1]; b["replica_of"] != nil || b["new_master"] != nil {
+		t.Fatalf("empty mode fields were sent: %v", b)
+	}
+
+	args = map[string]any{"hosts": "b", "replica_of": "a-master"}
+	pre := gt.clusterLinkPreview(ctx, "", args)
+	if !strings.Contains(pre, "mode: every row gets a replica of master member a-master") {
+		t.Fatalf("preview: %s", pre)
+	}
+	if _, err := gt.clusterLinkExec(ctx, "", args, nil); err != nil {
+		t.Fatal(err)
+	}
+	if b := stub.links[len(stub.links)-1]; b["replica_of"] != "a-master" || b["new_master"] != nil || agentStr(b["master"]) != "" {
+		t.Fatalf("replica_of body: %v", b)
+	}
+
+	args = map[string]any{"hosts": "b", "new_master": true}
+	_ = gt.clusterLinkPreview(ctx, "", args)
+	if _, err := gt.clusterLinkExec(ctx, "", args, nil); err != nil {
+		t.Fatal(err)
+	}
+	if b := stub.links[len(stub.links)-1]; b["new_master"] != true || b["replica_of"] != nil {
+		t.Fatalf("new_master body: %v", b)
+	}
+
+	// A bad mix is refused before RCM.
+	n := len(stub.links)
+	args = map[string]any{"hosts": "b", "replica_of": "a-master", "master": "b"}
+	_ = gt.clusterLinkPreview(ctx, "", args)
+	if _, err := gt.clusterLinkExec(ctx, "", args, nil); err == nil || !strings.Contains(err.Error(), "nothing linked") {
+		t.Fatalf("bad mix: %v", err)
+	}
+	if len(stub.links) != n {
+		t.Fatal("a refused link reached RCM")
+	}
+}
+
+func TestProbeTableRowsPerAgent(t *testing.T) {
+	p := rcmapi.ProbeAnswer{ClusterID: "c1", RCMURL: "https://10.0.0.1:7443", Seats: 4,
+		Hosts: []rcmapi.ProbeHost{
+			{Input: "h2:7450", State: "free", Instance: "fb50", FirebirdPort: 3050, NodePort: 7460, Fingerprint: "SHA256:aaa"},
+			{Input: "h2:7451", State: "free", Instance: "fb30", FirebirdPort: 3053, NodePort: 7462, RCMLocal: true},
+		},
+		Skipped: []rcmapi.ProbeSkipped{{Input: "h2", Closed: []int{7452, 7453}, Summary: "closed 7452-7453"}},
+	}
+	out := probeTable(p)
+	for _, want := range []string{"- h2:7450: state free", "instance fb50, Firebird port 3050, node port 7460", "fingerprint SHA256:aaa",
+		"- h2:7451: state free", "own RCM (stopped and disabled when it joins)", "skipped ports of h2: closed 7452-7453"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestLinkRequestJSON(t *testing.T) {
+	b, _ := json.Marshal(rcmapi.LinkRequest{Hosts: []rcmapi.LinkHostIn{{Host: "b", Fingerprint: "SHA256:bbb"}}})
+	if s := string(b); strings.Contains(s, "new_master") || strings.Contains(s, "replica_of") {
+		t.Fatalf("empty mode fields in %s", s)
+	}
+	b, _ = json.Marshal(rcmapi.LinkRequest{NewMaster: true, ReplicaOf: "x"})
+	if s := string(b); !strings.Contains(s, `"new_master":true`) || !strings.Contains(s, `"replica_of":"x"`) {
+		t.Fatalf("mode fields missing in %s", s)
 	}
 }
 

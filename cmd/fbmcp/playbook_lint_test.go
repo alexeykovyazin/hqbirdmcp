@@ -17,6 +17,7 @@ var toolNameRe = regexp.MustCompile(`fb_[a-z][a-z0-9_]*`)
 var lintExempt = map[string]bool{
 	"docs/decisions/phase5-gap-notes.md": true,
 	"docs/rcm-cluster-plan.ru.md":        true, // plan: names stage B tools before they exist
+	"docs/rcm-cluster-next.ru.md":        true, // plan: names stage D tools before they exist
 }
 
 func lintOneMarkdown(t *testing.T, known map[string]bool, repoRoot, path string) int {

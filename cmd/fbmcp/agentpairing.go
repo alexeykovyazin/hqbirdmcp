@@ -15,11 +15,12 @@ import (
 
 // fb_agent_cluster_pairing: the pairing window of the host's fbagent
 // (GET/POST /v1/cluster/pairing, fbagent with capability cluster_pairing).
-// While the window is open and the host is free, the agent listens on 7450
-// and an RCM may invite the host into its cluster (fb_cluster_probe,
-// fb_cluster_link). The setup opens the window for 24 h; after that this
-// tool opens it again, as `sudo -u firebird fbagent --cluster-pairing on`
-// on the host.
+// While the window is open and the host is free, the agent listens on the
+// pairing port of its slot (7450-7459) and an RCM may invite the host into
+// its cluster (fb_cluster_probe, fb_cluster_link). Since kit 2027.2.29 the
+// setup opens the window only with --cluster-pairing on (for 24 h); this
+// tool opens it, as `sudo -u firebird fbagent --cluster-pairing on` on the
+// host.
 //
 // One tool, two tiers: action=status reads at Tier 0 (policy + audit, no
 // gate); on and off change the window at Tier 1 (fb_confirm). The registry
@@ -28,7 +29,7 @@ import (
 
 const agentPairingTool = "fb_agent_cluster_pairing"
 
-const agentPairingImpact = "Open or close the cluster pairing window of the host's fbagent (port 7450; an RCM on the network may then invite this host into its cluster; audit key: db %s)."
+const agentPairingImpact = "Open or close the cluster pairing window of the host's fbagent (the pairing port of the agent's slot, 7450-7459; an RCM on the network may then invite this host into its cluster; audit key: db %s)."
 
 func registerAgentClusterPairing(server *mcp.Server, gt *gatedTools) {
 	gt.execs[agentPairingTool] = gt.agentPairingExec
@@ -37,7 +38,7 @@ func registerAgentClusterPairing(server *mcp.Server, gt *gatedTools) {
 		Mode string         `json:"mode,omitempty" jsonschema:"preview = dry run"`
 		Args map[string]any `json:"args,omitempty"`
 	}
-	desc := "Cluster pairing window of the host's fbagent (port 7450, where an RCM invites the host into a cluster), as fbagent --cluster-pairing on|off|status. " +
+	desc := "Cluster pairing window of the host's fbagent (the pairing port of its slot, 7450-7459, where an RCM invites the host into a cluster), as fbagent --cluster-pairing on|off|status. " +
 		"action=status reads it: Tier 0, no confirmation. action=on opens it for hours (1-24, default 24), action=off closes it: Tier 1 (fb_confirm). " +
 		gatedArgSpecs[agentPairingTool].Note + " args: " + argsSummary(gatedArgSpecs[agentPairingTool])
 	mcp.AddTool(server, &mcp.Tool{Name: agentPairingTool, Description: desc}, func(ctx context.Context, req *mcp.CallToolRequest, a pairingArg) (*mcp.CallToolResult, any, error) {
@@ -204,6 +205,9 @@ func formatAgentPairing(agentID string, st agentapi.ClusterPairing) string {
 	}
 	if st.Message != "" {
 		b.WriteString(st.Message + "\n")
+	}
+	if st.Firewall != "" {
+		fmt.Fprintf(&b, "firewall: %s\n", st.Firewall)
 	}
 	if st.State == "open" && st.Fingerprint != "" {
 		b.WriteString("Next: fb_cluster_probe on the master shows this host and its fingerprint; compare them before fb_cluster_link.")

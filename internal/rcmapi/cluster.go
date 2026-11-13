@@ -8,35 +8,63 @@ import (
 	"time"
 )
 
-// ProbeHost is one host of POST /v1/admin/pair/probe (hqcluster3
+// ProbeHost is one row of POST /v1/admin/pair/probe: one agent (hqcluster3
 // clustersrv.ProbeHost; only the fields fbmcp shows).
 type ProbeHost struct {
-	Input           string            `json:"input"`
-	Host            string            `json:"host"`
-	Port            int               `json:"port"`
-	Address         string            `json:"address,omitempty"`
-	Hostname        string            `json:"hostname,omitempty"`
-	NodeName        string            `json:"node_name,omitempty"`
-	Platform        string            `json:"platform,omitempty"`
-	FBAgentVersion  string            `json:"fbagent_version,omitempty"`
-	FirebirdVersion string            `json:"firebird_version,omitempty"`
-	Fingerprint     string            `json:"fingerprint,omitempty"`
-	PairState       string            `json:"pair_state,omitempty"`
-	RCMHost         bool              `json:"rcm_host"`
-	Roles           []string          `json:"roles"`
-	MemberIDs       map[string]string `json:"member_ids,omitempty"`
-	State           string            `json:"state"`
-	Code            string            `json:"code,omitempty"`
-	Error           string            `json:"error,omitempty"`
+	// Input is the key of the row: host:port of the pairing port the agent
+	// answered on (RCM 2027.5.9+), or the line as written for a row in
+	// error. The link, its master and member_ids name a row by it.
+	Input string `json:"input"`
+	// Line is the host as the operator wrote it: one line gives a row per
+	// agent of the host (pairing ports 7450-7459).
+	Line            string `json:"line,omitempty"`
+	Host            string `json:"host"`
+	Port            int    `json:"port"`
+	Address         string `json:"address,omitempty"`
+	AgentID         string `json:"agent_id,omitempty"`
+	Hostname        string `json:"hostname,omitempty"`
+	NodeName        string `json:"node_name,omitempty"`
+	Platform        string `json:"platform,omitempty"`
+	FBAgentVersion  string `json:"fbagent_version,omitempty"`
+	FirebirdVersion string `json:"firebird_version,omitempty"`
+	// Instance, FirebirdPort and NodePorts are the agent's slot; none from
+	// an older fbagent.
+	Instance     string `json:"instance,omitempty"`
+	FirebirdPort int    `json:"firebird_port,omitempty"`
+	NodePorts    []int  `json:"node_ports,omitempty"`
+	// NodePort is the listen port of the row's node.
+	NodePort    int    `json:"node_port,omitempty"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+	PairState   string `json:"pair_state,omitempty"`
+	RCMHost     bool   `json:"rcm_host"`
+	// RCMLocal: the host runs an RCM of its own with no cluster; its agent
+	// stops and disables that RCM when it joins.
+	RCMLocal  bool              `json:"rcm_local,omitempty"`
+	Roles     []string          `json:"roles"`
+	MemberIDs map[string]string `json:"member_ids,omitempty"`
+	State     string            `json:"state"`
+	Code      string            `json:"code,omitempty"`
+	Error     string            `json:"error,omitempty"`
+}
+
+// ProbeSkipped is the ports of one line (a host without a port) that showed
+// no agent.
+type ProbeSkipped struct {
+	Input    string `json:"input"`
+	Closed   []int  `json:"closed,omitempty"`
+	NotAgent []int  `json:"not_agent,omitempty"`
+	Contract []int  `json:"contract,omitempty"`
+	Summary  string `json:"summary"`
 }
 
 // ProbeAnswer is the answer of the probe.
 type ProbeAnswer struct {
-	ClusterID string      `json:"cluster_id"`
-	RCMURL    string      `json:"rcm_url"`
-	Seats     int         `json:"seats"`
-	Hosts     []ProbeHost `json:"hosts"`
-	OK        bool        `json:"ok"`
+	ClusterID string         `json:"cluster_id"`
+	RCMURL    string         `json:"rcm_url"`
+	Seats     int            `json:"seats"`
+	Hosts     []ProbeHost    `json:"hosts"`
+	Skipped   []ProbeSkipped `json:"skipped,omitempty"`
+	OK        bool           `json:"ok"`
 }
 
 // Host states of a probe and a link (clustersrv).
@@ -52,7 +80,14 @@ const (
 	LinkRunning = "running"
 	LinkDone    = "done"
 	LinkFailed  = "failed"
+	// LinkTimeout: the document is stored, but a node did not report
+	// running in time.
+	LinkTimeout = "timeout"
 )
+
+// CodeLoneMaster is the refusal of a link of one free row into a cluster
+// that has a master already (RCM 2027.5.9+): give ReplicaOf or NewMaster.
+const CodeLoneMaster = "lone_master"
 
 // LinkHostIn is one host of POST /v1/admin/pair/link.
 type LinkHostIn struct {
@@ -65,6 +100,12 @@ type LinkRequest struct {
 	Hosts  []LinkHostIn `json:"hosts"`
 	Master string       `json:"master"`
 	RCMURL string       `json:"rcm_url"`
+	// NewMaster allows one row that gets a master of its own in a cluster
+	// that has a master already (RCM 2027.5.9+).
+	NewMaster bool `json:"new_master,omitempty"`
+	// ReplicaOf is a master member of the cluster: each row gets a replica
+	// of it, no row gets a master; Master stays empty (RCM 2027.5.9+).
+	ReplicaOf string `json:"replica_of,omitempty"`
 }
 
 // LinkHost is one host of a link job.
@@ -77,16 +118,18 @@ type LinkHost struct {
 
 // LinkJob is GET /v1/admin/pair/link/{id}.
 type LinkJob struct {
-	ID       string     `json:"id"`
-	State    string     `json:"state"`
-	Step     string     `json:"step"`
-	Code     string     `json:"code,omitempty"`
-	Error    string     `json:"error,omitempty"`
-	Errors   []string   `json:"errors,omitempty"`
-	Master   string     `json:"master"`
-	RCMURL   string     `json:"rcm_url"`
-	Revision int64      `json:"revision,omitempty"`
-	Hosts    []LinkHost `json:"hosts"`
+	ID        string     `json:"id"`
+	State     string     `json:"state"`
+	Step      string     `json:"step"`
+	Code      string     `json:"code,omitempty"`
+	Error     string     `json:"error,omitempty"`
+	Errors    []string   `json:"errors,omitempty"`
+	Master    string     `json:"master"`
+	RCMURL    string     `json:"rcm_url"`
+	NewMaster bool       `json:"new_master,omitempty"`
+	ReplicaOf string     `json:"replica_of,omitempty"`
+	Revision  int64      `json:"revision,omitempty"`
+	Hosts     []LinkHost `json:"hosts"`
 }
 
 // Probe asks every host's pairing port for its facts.

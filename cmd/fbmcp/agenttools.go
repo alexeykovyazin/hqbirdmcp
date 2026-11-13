@@ -636,6 +636,7 @@ func registerAgentTools(server *mcp.Server, gt *gatedTools) {
 		"Queue a product update (check goafts, then stop / single-file swap / start / health-check with revert) for hqmonitor, hqclusternode or hqbirdrcm via fbagent (agent of %s). The operation result carries action and per-install outcomes.",
 		gt.agentProductUpdateExec())
 	registerAgentClusterPairing(server, gt)
+	registerAgentCluster(server, gt)
 }
 
 // agentProductUpdateExec drives POST products/{product}/update/apply and
