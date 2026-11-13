@@ -4,9 +4,17 @@ Versions follow ADR-038 (`YYYY.N.N`, own line). Older builds were `dev`.
 
 ## [Unreleased]
 
-- Docs: runbook, remote, hqbird, claude-desktop and tool-reference use the
-  `--config` forms and say which tools the client does not see. New: the
-  full guide in Portuguese (Brazil), `docs/runbook-pt-br.md`.
+## [2027.2.22] - 2026-11-13
+
+Cluster tools for HQbird RCM and the agent pairing window.
+
+- `fb_agent_cluster_pairing` opens and closes the agent's pairing window
+  (no SSH).
+- `fb_cluster_*` tools for RCM link, enroll, reinit and verify.
+- `fbmcp ctl hqbird-install` finds the cluster manager, writes the `rcm`
+  section and the password secret.
+- Gated cluster tools accept a missing `db` on a fresh host.
+- Docs: cluster tools reference and cluster-setup playbook.
 
 ## [2027.2.21] - 2026-11-09
 
