@@ -180,3 +180,8 @@ Tier 0 (без подтверждения), `on`/`off` — Tier 1 (`fb_confirm`)
 
 Этап B требует релиза fbagent (capability `cluster_pairing`); со старым
 fbagent инструмент отвечает `not-found` и подсказывает команду CLI.
+
+## 8. Дальше
+
+Что сделано, что поменялось в релизе 2027.2.29 и план этапов C и D:
+[rcm-cluster-next.ru.md](rcm-cluster-next.ru.md).
