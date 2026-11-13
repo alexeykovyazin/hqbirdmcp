@@ -48,8 +48,8 @@ HQ Monitor 1.54.0, node и RCM 2027.5.9, fbmcp 2027.2.22, setups 2027.2.29,
 | G1 | Нет команды fbmcp «создать RCM» | На ките 2027.2.29 по умолчанию RCM нет → `hqbird-install` не пишет `rcm:` → `fb_cluster_*` скрыты. Цель «поднять RCM через fbmcp» не выполнена |
 | G2 | `fb_cluster_link` без `new_master` / `replica_of` | Новая реплика к готовому кластеру (одна строка) → `lone_master` |
 | G3 | `fb_cluster_probe` не показывает поля агента и `skipped` | Два экземпляра на хосте не различить. Проверить: повторный probe перед link сверяет отпечаток по `host:port`, а не по хосту |
-| G4 | RCM только через Digest и секрет `FBMCP_RCM_PASSWORD` | После `POST /v1/cluster/rcm` нужен повторный `hqbird-install`. Прокси агента убирает пароль из fbmcp |
-| G5 | В команде RCM `actor` = `rcmadmin` | Проверить, передаёт ли прокси агента имя пользователя fbmcp |
+| G4 | RCM только через Digest и секрет `FBMCP_RCM_PASSWORD` | После `POST /v1/cluster/rcm` нужен повторный `sudo fbmcp ctl hqbird-install`. Прокси агента (`/v1/cluster/admin`) в RCM 2027.5.9 пропускает только `/clusters` и `/agents`: probe, link, nodes, enroll, reinit, verify через него не идут |
+| G5 | В команде RCM `actor` = `rcmadmin` | Остаётся: RCM пишет `X-Admin-User` только в аудит admin-маршрутов |
 | G6 | Тексты `fb_agent_cluster_pairing` говорят «порт 7450» | Слот может быть 7451-7459; поле `firewall` не показано |
 | G7 | Нет выхода из кластера и удаления члена | Только CLI fbagent и консоль RCM |
 | G8 | Playbook описывает порядок кита 2027.2.28 | Не подходит для установки по умолчанию 2027.2.29 |
@@ -59,17 +59,18 @@ HQ Monitor 1.54.0, node и RCM 2027.5.9, fbmcp 2027.2.22, setups 2027.2.29,
 ### Этап C. Кластер с нуля на ките 2027.2.29 (fbmcp 2027.2.23)
 
 - **C1.** fbmcp `agentapi`: `GET /v1/cluster`, `POST /v1/cluster/rcm`
-  (операция), прокси `/v1/cluster/admin`. Новые инструменты:
+  (операция). Новые инструменты:
   - `fb_agent_cluster` — Tier 0: кластер агента, RCM хоста, слот, окно.
   - `fb_agent_cluster_rcm` — Tier 1 (`fb_confirm`): создать RCM на этом
     хосте, ждать операцию. Вывод: `cluster_id`, `rcm_url`, `console_url`,
     `ca_hash`, путь к файлу пароля. Пароля в выводе нет.
-- **C2.** `rcmapi`: второй транспорт — `/v1/cluster/admin/<route>` локального
-  агента. Порядок: прокси, если у агента есть `cluster_admin`; иначе Digest
-  и пароль (fbagent < 3.1.0).
-- **C3.** Видимость `fb_cluster_*`: секция `rcm:` **или** capability
-  `cluster_admin`. Проверить: появляются ли инструменты после
-  `fb_agent_cluster_rcm` без переподключения (`tools/list_changed`).
+- **C2.** Транспорт RCM не меняется: Digest и секрет `FBMCP_RCM_PASSWORD`
+  (решение R1 = A). `fb_agent_cluster_rcm` в конце говорит следующий шаг:
+  `sudo fbmcp ctl hqbird-install` на этом хосте (секция `rcm:` и секрет из
+  `clusterca/<id>/rcm-initial-password`), потом переподключить MCP-клиент.
+- **C3.** Видимость `fb_cluster_*` — как раньше, по секции `rcm:`.
+  `fb_agent_cluster` подсказывает `hqbird-install`, когда RCM на хосте есть,
+  а секции нет.
 - **C4.** `fb_cluster_link`: параметры `new_master`, `replica_of`. Ошибка
   `lone_master` → подсказка с обоими вариантами.
 - **C5.** `fb_cluster_probe`: строки по агентам (`host:port`, `instance`,
@@ -79,7 +80,9 @@ HQ Monitor 1.54.0, node и RCM 2027.5.9, fbmcp 2027.2.22, setups 2027.2.29,
   `firewall`, тексты без «7450».
 - **C7.** Playbook `prompts/cluster-setup.md` и справочник, новый порядок:
   1. Оба хоста: кит 2027.2.29 без флагов, `fbmcp ctl hqbird-install`.
-  2. Мастер: `fb_agent_cluster` → `fb_agent_cluster_rcm`.
+  2. Мастер: `fb_agent_cluster` → `fb_agent_cluster_rcm` →
+     `sudo fbmcp ctl hqbird-install` → переподключение →
+     `fb_cluster_rcm_password`.
   3. Реплика: `fb_agent_cluster_pairing action=on hours=2`.
   4. Мастер: `fb_cluster_probe` → `fb_cluster_link` (две строки; для
      новой реплики — `replica_of`).
@@ -87,12 +90,12 @@ HQ Monitor 1.54.0, node и RCM 2027.5.9, fbmcp 2027.2.22, setups 2027.2.29,
      `fb_cluster_firebird_restart` → `fb_cluster_publication` →
      `fb_cluster_reinit` → `fb_cluster_verify`.
   6. Реплика: `fb_agent_cluster_pairing action=off`.
-- **C8.** Тесты: unit (`agentapi`, прокси `rcmapi`, параметры link, гейт),
-  `go vet`, `gofmt`, `govulncheck`.
+- **C8.** Тесты: unit (`agentapi`, параметры link, probe, гейт), `go vet`,
+  `gofmt`, `govulncheck`. Go 1.26.11 в fbmcp (T2).
 - **C9.** Проверка на DO: 2 дроплета, кит 2027.2.29 с ib-aid.com, сборка
-  fbmcp ветки. Весь порядок C7 с нуля; после установки кита по SSH только
-  `hqbird-install`. Критерии: RCM создан через fbmcp, секрет
-  `FBMCP_RCM_PASSWORD` не нужен, пара `Ok` / `IN_SYNC`, verify `ok`.
+  fbmcp ветки. Весь порядок C7 с нуля; по SSH только установка кита и
+  `fbmcp ctl hqbird-install`. Критерии: RCM создан через fbmcp, пара `Ok` /
+  `IN_SYNC`, verify `ok`.
   Доп. случаи: отказ `lone_master` и третий узел через `replica_of`.
   Удалить дроплеты и файрвол по ID.
 - **C10.** fbmcp 2027.2.23 — в следующий релиз setups (`hqbird-release`).
@@ -120,18 +123,18 @@ HQ Monitor 1.54.0, node и RCM 2027.5.9, fbmcp 2027.2.22, setups 2027.2.29,
 - **T3.** node main `fa02184` (сегмент, который Firebird ещё пишет, не
   применяется) не выпущен. Идёт в следующий релиз node и RCM (одна версия).
 
-## 5. Решения владельца (до этапа C)
+## 5. Решения владельца (2026-11-13)
 
-- **R1.** RCM через прокси агента — основной путь; Digest и пароль —
-  запасной для fbagent < 3.1.0. Рекомендация: да.
-- **R2.** `fb_agent_cluster_rcm` — Tier 1, не Tier 2: Firebird не
-  останавливается. Рекомендация: Tier 1.
-- **R3.** Этап D — после этапа C, с отдельным релизом fbagent.
-  Рекомендация: да.
+- **R1 = A.** Транспорт RCM — Digest и пароль, RCM не меняем. Прокси
+  агента не подходит: в RCM 2027.5.9 он пропускает только `/clusters` и
+  `/agents`. Расширение прокси в RCM (вариант B) отклонено.
+- **R2 = Tier 1.** `fb_agent_cluster_rcm` — Tier 1 (`fb_confirm`): Firebird
+  не останавливается.
+- **R3 = да.** Этап D — после этапа C, с отдельным релизом fbagent.
 
 ## 6. Порядок
 
 1. T1 (владелец).
-2. R1-R3 → этап C (C1-C8) → проверка C9 → C10 в следующем релизе.
+2. Этап C (C1-C8) → проверка C9 → C10 в следующем релизе.
 3. T2 — в тот же релиз (fbmcp первым).
 4. Этап D — после этапа C.
