@@ -2,6 +2,8 @@ module github.com/aleks/fbmcp
 
 go 1.25.13
 
+toolchain go1.26.11
+
 require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/getlantern/systray v1.2.2
