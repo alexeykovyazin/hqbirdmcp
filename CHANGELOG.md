@@ -4,6 +4,8 @@ Versions follow ADR-038 (`YYYY.N.N`, own line). Older builds were `dev`.
 
 ## [Unreleased]
 
+## [2027.2.23] - 2026-11-14
+
 - Cluster from scratch on kit 2027.2.29: `fb_agent_cluster` (Tier 0) and
   `fb_agent_cluster_rcm` (Tier 1) make the RCM through fbagent 3.1.0;
   `fb_cluster_link` takes `replica_of` and `new_master`; the probe has a row
