@@ -199,3 +199,68 @@ ib-aid.com `--yes`, fbmcp из ветки; удалены вместе с фай
 - Снова: pairing on → probe `free` (не `stale_agent`) → link
   `replica_of=rcmd-m-master` → узел `rcmd-r-replica-2` → `replica_folder`
   → `reinit` `ok` → verify `ok` → после INSERT оба `Ok` / `IN_SYNC`.
+
+## 9. Этап E. Сервисы кластера: switchover, failover, rejoin (2026-11-14)
+
+Ветка `claude/rcm-cluster-switchover-ui-fbmcp` (от `master` 2027.2.23), не
+выпущено. Нужен RCM 2027.5.11 или новее (hqcluster3 `main`: страницы
+Services, `allowed_actions`, `operation_id` в отказах, `?check=1`).
+
+Что делает оператор на страницах Services в UI RCM, теперь есть в fbmcp:
+
+| Инструмент | Tier | Что делает |
+|---|---|---|
+| `fb_cluster_service` | 0 | сервисы, один сервис, правило, операции и шаги одной, роутеры, `locate`; проверки без изменений: `check_switchover`, `check_failover`, `check_resume` |
+| `fb_cluster_service_put` | 1 | создать сервис или заменить определение; запрос показывает проверку RCM; `new`, `if_match` |
+| `fb_cluster_service_policy` | 1 | правило автоматического failover; не заданный аргумент сохраняет значение |
+| `fb_cluster_resume` | 1 | выход из `failed` |
+| `fb_cluster_operation_cancel` | 1 | отмена до точки невозврата |
+| `fb_cluster_router_sync` | 1 | новая версия таблицы всем роутерам |
+| `fb_cluster_switchover` | 2 | плановое переключение, ждёт конец операции |
+| `fb_cluster_failover` | 2 | мастер потерян; нужен `accept_data_loss: true` |
+| `fb_cluster_rejoin` | 2 | старый хост снова реплика |
+| `fb_cluster_service_delete` | 2 | удалить запись сервиса в RCM |
+
+Порядок работы: `prompts/cluster-services.md`. Всего 122 инструмента.
+
+### Проверка на стенде
+
+Стенд: clawnuc3, RCM 2027.5.10.2 (hqcluster3 `main`) и fbmcp 2027.2.23.1
+на ubuntu-1, сервис `shop` на ubuntu-2 и ubuntu-3, Firebird 5.0.5 HQbird,
+три роутера HAProxy. `sudo fbmcp ctl hqbird-install` сам нашёл RCM и записал
+раздел `rcm:` и секрет пароля. Для окна Tier 2 в реестр добавлена одна
+база хоста (`cluster`). Клиент MCP: stdio через `lxc exec … fbmcp -config
+/etc/fbmcp/fbmcp.yaml`. Нагрузка fb-loadgen шла через роутер в прогонах
+4–8: 13 120 транзакций, 99,8 % успешных.
+
+Запросы Tier 1 подтверждались `fb_confirm`, запросы Tier 2 одобрялись на
+хосте (`fbmcp ctl approve <id> --yes`). Владелец стенда разрешил сессии
+делать это самой; без такого разрешения клиент этого не делает.
+
+| № | Что сделано вызовами MCP | Итог |
+|---|---|---|
+| 1 | `fb_cluster_service`: список, `show`, `policy`, `operations`, `routers`, `locate`, три проверки | прошёл |
+| 2 | `fb_cluster_router_sync`; правило вкл и выкл; `fb_window_open` | прошёл |
+| 3 | `fb_cluster_switchover` под нагрузкой, туда и обратно | прошёл: 45–60 с, шаги со временем и чертой точки невозврата |
+| 4 | `fb_cluster_switchover wait=false`, затем `fb_cluster_operation_cancel` | прошёл: шаг `quiesce` — «cancelled», сервис остался на старом хосте |
+| 5 | проверка второго оператора во время операции | прошёл: `service_busy` и id идущей операции |
+| 6 | рестарт RCM во время rejoin | прошёл: операция продолжилась и закончилась `ok` |
+| 7 | хост мастера выключен: `check_failover`, `fb_cluster_failover`, fence, `fb_cluster_rejoin` | прошёл: без `accept_data_loss` запрос отклонён на проверке аргументов; failover 13 с; ограждение через 8 с после включения |
+| 8 | зависший Firebird мастера: `failed`, `check_resume`, `fb_cluster_resume` | прошёл: `failed` через 90 с; Resume отклонён, пока Firebird висит |
+| 9 | failover из `failed` (узел мастера остановлен), fence, rejoin | прошёл: при работающем узле отказ `master_reachable` |
+| 10 | автоматический failover: правило вкл, хост выключен, fence, rejoin, правило снова | прошёл: сработал через 111 с, актор `system:autofailover`, правило само выключилось |
+| 11 | `fb_cluster_service_put`: новый сервис, повтор с `new`, правка с `if_match`, устаревший `if_match`; `fb_cluster_service_delete` | прошёл: `service_exists`, `409 conflict`, ошибки определения списком |
+| 12 | `fb_cluster_verify` после всех операций | `ok`: реплика совпадает с мастером |
+
+Замечания:
+
+- Сразу после rejoin и после рестарта RCM список показывает «replica: none
+  follows the master», пока узел реплики не прислал stats (до 30 с). Это
+  ответ RCM, не ошибка fbmcp.
+- fb-loadgen, запущенный за секунды до switchover, вышел с ошибкой при
+  старте. Нагрузку надо запускать за 20–30 с до операции.
+- На стенде одна пара баз: новый сервис создан без мастера. Сервис с
+  настоящим мастером и эпохой 1 через fbmcp не проверен.
+
+Стенд после проверки: мастер ubuntu-3, эпоха 230, правило выключено. fbmcp
+оставлен на ubuntu-1 (служба `fbmcp`, окно на `cluster` до 00:40Z).
