@@ -4,6 +4,24 @@ Versions follow ADR-038 (`YYYY.N.N`, own line). Older builds were `dev`.
 
 ## [Unreleased]
 
+- Cluster services through fbmcp (RCM 2027.5.11+, hqcluster3
+  `docs/rcm.md`, "The Services pages"): what an operator does on the
+  Services pages of the RCM UI, as tools.
+  `fb_cluster_service` (Tier 0): the services with their master, replicas,
+  routers, problems and what may start now; one service, its rule, the
+  operations and the steps of one; the routers; `locate`; and the checks
+  that change nothing (`check_switchover`, `check_failover`,
+  `check_resume`).
+  Tier 1: `fb_cluster_service_put` (create or replace a definition, with
+  the check of RCM in the request), `fb_cluster_service_policy` (the rule
+  of the automatic failover), `fb_cluster_resume`,
+  `fb_cluster_operation_cancel`, `fb_cluster_router_sync`.
+  Tier 2 (window + approval out of band): `fb_cluster_switchover`,
+  `fb_cluster_failover` (needs `accept_data_loss: true`),
+  `fb_cluster_rejoin`, `fb_cluster_service_delete`. A start carries a
+  request id and waits for the operation; the answer lists its steps and
+  says what is left to do.
+
 ## [2027.2.23] - 2026-11-14
 
 - Cluster from scratch on kit 2027.2.29: `fb_agent_cluster` (Tier 0) and

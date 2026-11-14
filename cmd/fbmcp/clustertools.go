@@ -795,4 +795,5 @@ func registerClusterTools(server *mcp.Server, gt *gatedTools) {
 	gt.registerToolOptDB(server, policy.ToolMeta{Name: "fb_cluster_reinit", Tier: 2, Scope: "instance"},
 		"Initialize or re-initialize the replica of one database (db_id) or of all databases of a master node, and wait for the end (window key: db %s). Copies the master database to the replica node.",
 		gt.clusterReinitExec, nil)
+	registerClusterServiceTools(server, gt)
 }

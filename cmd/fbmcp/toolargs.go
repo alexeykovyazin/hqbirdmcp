@@ -153,6 +153,9 @@ var gatedArgSpecs = map[string]toolArgs{
 
 var clusterNodeArgSpec = argSpec{Name: "node", Kind: "string", Required: true, Doc: "node id from fb_cluster_status view=nodes"}
 
+var clusterServiceArgSpec = argSpec{Name: "service", Kind: "string", Required: true, Doc: "service id from fb_cluster_service"}
+var clusterWaitArgSpec = argSpec{Name: "wait", Kind: "bool", Doc: "false = return when the operation started (default: wait for its end)"}
+
 // clusterArgSpecs are the gated fb_cluster_* tools.
 var clusterArgSpecs = map[string]toolArgs{
 	"fb_cluster_rcm_password": {Note: "Run it once after the install: the first RCM password must change."},
@@ -185,6 +188,47 @@ var clusterArgSpecs = map[string]toolArgs{
 		{Name: "hold_on_long_transactions", Kind: "bool", Doc: "wait for long transactions instead of refusing"},
 		{Name: "force", Kind: "bool", Doc: "start even when the replica looks in sync"},
 	}, Note: "Needs an open window on db (fb_window_open). Then fb_cluster_verify."},
+	"fb_cluster_service_put": {Args: []argSpec{
+		clusterServiceArgSpec,
+		{Name: "members", Kind: "json", Required: true, Doc: "one object per host: {host, master_node, replica_node, path, priority?}; node ids from fb_cluster_status view=nodes"},
+		{Name: "alias", Kind: "string", Doc: "the databases.conf alias of the service; default: the service id"},
+		{Name: "router_port", Kind: "int", Min: 1, Max: 65535, Doc: "the port the routers listen on for this service; without it routers do not serve it"},
+		{Name: "new", Kind: "bool", Doc: "true = only create: refused when the service exists"},
+		{Name: "if_match", Kind: "string", Doc: "updated_at from fb_cluster_service view=show: refused when the service changed since"},
+	}, Note: "The rule of the automatic failover is not here: fb_cluster_service_policy."},
+	"fb_cluster_service_policy": {Args: []argSpec{
+		clusterServiceArgSpec,
+		{Name: "auto_failover", Kind: "bool", Doc: "true = RCM starts a failover by itself when the master host is lost"},
+		{Name: "max_data_loss_sec", Kind: "int", Min: 0, Max: 86400, Doc: "the largest lag of the replica, seconds"},
+		{Name: "failover_delay_sec", Kind: "int", Min: 0, Max: 86400, Doc: "seconds the master must be silent; not below stale_after_sec of RCM"},
+		{Name: "min_interval_sec", Kind: "int", Min: 0, Max: 2592000, Doc: "the smallest interval between two automatic failovers, seconds"},
+		{Name: "fence_mode", Kind: "string", Enum: []string{"route", "shutdown"}, Doc: "what RCM does with the old master when its node answers again: route = it stops shipping; shutdown = RCM also shuts its database down"},
+	}, Note: "After one automatic failover the rule turns itself off: turn it on here again."},
+	"fb_cluster_resume":           {Args: []argSpec{clusterServiceArgSpec}, Note: "For a service in the state failed, once its master serves again."},
+	"fb_cluster_operation_cancel": {Args: []argSpec{{Name: "id", Kind: "string", Required: true, Doc: "operation id from fb_cluster_service view=operations"}}},
+	"fb_cluster_router_sync":      {Args: []argSpec{{Name: "router", Kind: "string", Doc: "a router id of rcm.json; default: any (the table is one for all routers)"}}},
+	"fb_cluster_switchover": {Args: []argSpec{
+		clusterServiceArgSpec,
+		{Name: "target_host", Kind: "string", Doc: "the host the master moves to; default: the other host of a service with two"},
+		{Name: "quiesce_timeout_sec", Kind: "int", Min: 1, Max: 900, Doc: "seconds the old master waits for its connections to end (RCM default 120)"},
+		{Name: "apply_timeout_sec", Kind: "int", Min: 1, Max: 3600, Doc: "seconds the target may take to apply the last segment (RCM default 300)"},
+		{Name: "settle_sec", Kind: "int", Min: 0, Max: 600, Doc: "seconds to wait after the shutdown before the last segment is read"},
+		{Name: "force_sec", Kind: "int", Min: 0, Max: 600, Doc: "seconds of a forced shutdown; 0 waits for the connections to end"},
+		clusterWaitArgSpec,
+	}, Note: "Needs an open window on db (fb_window_open). Check first: fb_cluster_service view=check_switchover."},
+	"fb_cluster_failover": {Args: []argSpec{
+		clusterServiceArgSpec,
+		{Name: "accept_data_loss", Kind: "bool", Required: true, Doc: "must be true: the data the lost master did not ship is lost"},
+		{Name: "target_host", Kind: "string", Doc: "the host that takes over; default: the replica that applied the most"},
+		{Name: "apply_timeout_sec", Kind: "int", Min: 1, Max: 3600, Doc: "seconds the replica may take to apply what it received (RCM default 60)"},
+		clusterWaitArgSpec,
+	}, Note: "Needs an open window on db (fb_window_open). Only when the master host does not answer; else fb_cluster_switchover. Then fb_cluster_rejoin."},
+	"fb_cluster_rejoin": {Args: []argSpec{
+		clusterServiceArgSpec,
+		{Name: "host", Kind: "string", Doc: "the host to rejoin; default: the other host of a service with two"},
+		clusterWaitArgSpec,
+	}, Note: "Needs an open window on db (fb_window_open)."},
+	"fb_cluster_service_delete": {Args: []argSpec{clusterServiceArgSpec}, Note: "Needs an open window on db (fb_window_open)."},
 	"fb_cluster_unlink": {Args: []argSpec{
 		{Name: "node", Kind: "string", Doc: "a node id from fb_cluster_status view=nodes: every member of its agent leaves"},
 		{Name: "agent", Kind: "string", Doc: "an agent id from fb_cluster_status view=agents, instead of node (also an agent with no members left: it is only revoked)"},

@@ -135,5 +135,18 @@ func SystemTools() []ToolMeta {
 		{Name: "fb_cluster_firebird_restart", Tier: 2, Scope: "instance"},
 		{Name: "fb_cluster_reinit", Tier: 2, Scope: "instance"},
 		{Name: "fb_cluster_unlink", Tier: 2, Scope: "instance"},
+		// Cluster services: the logical databases RCM moves between hosts
+		// (switchover, failover, rejoin). The checks are POSTs that change
+		// nothing, so the read tool is Tier 0.
+		{Name: "fb_cluster_service", Tier: 0, Scope: "instance"},
+		{Name: "fb_cluster_service_put", Tier: 1, Scope: "instance"},
+		{Name: "fb_cluster_service_policy", Tier: 1, Scope: "instance"},
+		{Name: "fb_cluster_resume", Tier: 1, Scope: "instance"},
+		{Name: "fb_cluster_operation_cancel", Tier: 1, Scope: "instance"},
+		{Name: "fb_cluster_router_sync", Tier: 1, Scope: "instance"},
+		{Name: "fb_cluster_switchover", Tier: 2, Scope: "instance"},
+		{Name: "fb_cluster_failover", Tier: 2, Scope: "instance"}, // data loss: the operator accepts it in the args and out of band
+		{Name: "fb_cluster_rejoin", Tier: 2, Scope: "instance"},
+		{Name: "fb_cluster_service_delete", Tier: 2, Scope: "instance"},
 	}
 }
