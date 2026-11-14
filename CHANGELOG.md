@@ -21,6 +21,7 @@ Versions follow ADR-038 (`YYYY.N.N`, own line). Older builds were `dev`.
   `fb_cluster_rejoin`, `fb_cluster_service_delete`. A start carries a
   request id and waits for the operation; the answer lists its steps and
   says what is left to do.
+  Playbook `prompts/cluster-services.md`.
 
 ## [2027.2.23] - 2026-11-14
 
