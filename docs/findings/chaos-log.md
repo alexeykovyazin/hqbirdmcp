@@ -112,3 +112,25 @@ ALERT: 2 consecutive RED nights - triage now (M3 clean streak is blocked)
 2026-11-03 01:30:05 count=50 verdict=GREEN exit=0
 2026-11-04 01:30:49 count=50 verdict=RED exit=1
 2026-11-04 01:30:49 triage(auto): harness-failure - failing: TestKillScheduleMidDispatch
+2026-11-05 01:30:03 count=50 verdict=GREEN exit=0
+2026-11-06 01:30:10 count=50 verdict=RED exit=1
+2026-11-06 01:30:10 triage(auto): harness-failure - failing: TestKillScheduleMidDispatch
+2026-11-07 01:30:14 count=50 verdict=RED exit=1
+2026-11-07 01:30:14 triage(auto): harness-failure - failing: TestKillScheduleMidDispatch
+ALERT: 2 consecutive RED nights - triage now (M3 clean streak is blocked)
+2026-11-08 01:30:06 count=50 verdict=RED exit=1
+2026-11-08 01:30:06 triage(auto): harness-failure - failing: TestKillScheduleMidDispatch
+ALERT: 3 consecutive RED nights - triage now (M3 clean streak is blocked)
+2026-11-09 01:30:07 count=50 verdict=RED exit=1
+2026-11-09 01:30:07 triage(auto): harness-failure - failing: TestKillScheduleMidDispatch
+ALERT: 4 consecutive RED nights - triage now (M3 clean streak is blocked)
+2026-11-10 01:30:06 count=50 verdict=GREEN exit=0
+2026-11-11 01:30:06 count=50 verdict=RED exit=1
+2026-11-11 01:30:06 triage(auto): harness-failure - failing: TestKillScheduleMidDispatch
+2026-11-12 01:30:05 count=50 verdict=RED exit=1
+2026-11-12 01:30:05 triage(auto): harness-failure - failing: TestKillScheduleMidDispatch
+ALERT: 2 consecutive RED nights - triage now (M3 clean streak is blocked)
+2026-11-13 01:30:04 count=50 verdict=RED exit=1
+2026-11-13 01:30:04 triage(auto): engine-down - failing: TestKillScheduleMidDispatch, TestKillAtJobRunning, TestKillAtRestoreReplaceC7a - check engine services/ports first (detail log below)
+ALERT: 3 consecutive RED nights - triage now (M3 clean streak is blocked)
+2026-11-14 01:30:07 count=50 verdict=GREEN exit=0
