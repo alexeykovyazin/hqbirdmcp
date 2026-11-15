@@ -4,6 +4,8 @@ Versions follow ADR-038 (`YYYY.N.N`, own line). Older builds were `dev`.
 
 ## [Unreleased]
 
+## [2027.2.24] - 2026-11-15
+
 - Cluster services through fbmcp (RCM 2027.5.11+, hqcluster3
   `docs/rcm.md`, "The Services pages"): what an operator does on the
   Services pages of the RCM UI, as tools.
