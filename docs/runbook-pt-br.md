@@ -3,9 +3,9 @@
 [English](runbook.md) | **Português (Brasil)**
 
 Para quem instala e opera o fbmcp e **não** o compilou. Não é preciso
-conhecer Go nem os detalhes internos do Firebird. Estado em 2026-11-09,
-versão 2027.2.21 (modo local e remoto, instalação no HQbird, ponte fbagent,
-grade de resultados).
+conhecer Go nem os detalhes internos do Firebird. Estado em 2026-11-16,
+versão 2027.2.24 (modo local e remoto, instalação no HQbird, ponte fbagent,
+cluster HQbird, grade de resultados).
 
 Versões curtas: [English](quickstart-en.md) | [Русский](quickstart-ru.md) |
 [Português (Brasil)](quickstart-pt.md). Detalhes (em inglês):
@@ -22,16 +22,18 @@ O fbmcp é um servidor MCP para Firebird 2.5–5.0 no Windows e no Linux. Um
 cliente MCP (Claude Desktop, Claude Code, Cursor, Codex, ZCode e outros) o
 usa para trabalhar como um DBA: monitoramento, backups e restores
 verificados, SQL/DDL/DCL, índices, usuários e permissões, `firebird.conf`,
-agendador, migrações e o fbagent do HQbird. Ele tem **98 ferramentas**: 51
-somente leitura (Tier 0), 32 Tier 1, 14 Tier 2, 1 Tier 3 (desativada).
+agendador, migrações, o fbagent do HQbird e o cluster HQbird. Ele tem
+**122 ferramentas**: 56 somente leitura (Tier 0), 44 Tier 1, 21 Tier 2,
+1 Tier 3 (desativada).
 `fb_demo_write` só existe quando o servidor roda com `FBMCP_DEMO_TOOLS=1`.
 
 O cliente vê apenas as ferramentas que pode usar. A lista de ferramentas
 esconde: Tier 3, ferramentas acima do tier máximo da identidade,
 `fb_confirm` e `fb_cancel` para uma identidade somente leitura, as
 ferramentas do fbagent enquanto `agents:` estiver vazio
-(`fb_agent_discover` e `fb_agent_register` continuam visíveis) e as
-ferramentas de migração enquanto nenhum banco tiver `migrations_dir`. Quando
+(`fb_agent_discover` e `fb_agent_register` continuam visíveis), as
+ferramentas de migração enquanto nenhum banco tiver `migrations_dir` e as
+ferramentas de cluster enquanto o `fbmcp.yaml` não tiver a seção `rcm:`. Quando
 um reload da configuração muda esse conjunto, o cliente recebe uma nova
 lista. Uma chamada direta a uma ferramenta escondida recebe uma recusa clara.
 
@@ -88,9 +90,11 @@ chaves de API).
 
 ## 4. Obter os binários
 
-Requisitos: Go ≥ 1.25.13 (para compilar), CGO não é necessário; Firebird
-2.5–5.0; fbagent ≥ 2.67 com a Local API para as ferramentas de agente
-(opcional).
+Requisitos: Go ≥ 1.26.11 (um Go mais antigo, 1.21+, baixa o go1.26.11
+sozinho na primeira compilação; isso precisa de internet), CGO não é
+necessário; Firebird 2.5–5.0; fbagent ≥ 2.67 com a Local API para as
+ferramentas de agente (opcional); fbagent 3.1.0+ e RCM 2027.5.11+ para as
+ferramentas de cluster (opcional).
 
 ```powershell
 git clone https://github.com/alexeykovyazin/hqbirdmcp.git
@@ -288,7 +292,7 @@ Linux (sem bandeja): `sudo -u firebird fbmcpctl approve [id]`. Ele encontra
 Somente leitura por padrão; todo pedido Tier 1 espera um operador, e
 `fb_confirm` vindo do agente é recusado. Limites: remote.md §6–7.
 
-## 9. Ponte fbagent (opcional)
+## 9. Ponte fbagent e cluster HQbird (opcional)
 
 As ferramentas de agente (`fb_agent_status`, `fb_agent_job_run`, ...) usam
 a Local API do fbagent do HQbird no mesmo host. Elas ficam desligadas até
@@ -312,6 +316,25 @@ Esse arquivo contém o token e as credenciais do Firebird, então essa
 permissão é decisão do operador ([agent-bridge.md](agent-bridge.md)). Quando
 a verificação do agente falha, a ferramenta não grava nada.
 
+**Cluster HQbird (RCM).** As ferramentas de cluster chamam o gerenciador de
+cluster do HQbird (`hqbirdrcm`) no mesmo host. Elas só aparecem quando o
+`fbmcp.yaml` tem a seção `rcm:` (`url`, `ca_file`, `user`,
+`password_env`). Em um servidor HQbird Linux, `fbmcp ctl hqbird-install` a
+escreve a partir de `/opt/hqbirdrcm/rcm.json` e guarda a primeira senha do
+RCM no segredo `FBMCP_RCM_PASSWORD`; nos outros casos, adicione a seção à
+mão ([tool-reference.md](tool-reference.md#hqbird-cluster-rcm)). Depois:
+
+1. `fb_cluster_rcm_password`: troque a primeira senha do RCM (Tier 1).
+2. Um cluster novo: abra a janela de pareamento em cada host
+   (`fb_agent_cluster_pairing`), inicie o RCM no master
+   (`fb_agent_cluster_rcm`), ligue os hosts (`fb_cluster_link`), crie as
+   réplicas (`fb_cluster_reinit`, Tier 2) e compare os dados
+   (`fb_cluster_verify`). Passos (em inglês):
+   [prompts/cluster-setup.md](../prompts/cluster-setup.md).
+3. Serviços do cluster (switchover, failover, rejoin): `fb_cluster_service`
+   mostra os serviços e as verificações; as mudanças são Tier 2. Passos (em
+   inglês): [prompts/cluster-services.md](../prompts/cluster-services.md).
+
 ## 10. Uso diário
 
 Peça ao cliente em linguagem comum; ele escolhe as ferramentas. Exemplos:
@@ -330,6 +353,8 @@ Peça ao cliente em linguagem comum; ele escolhe as ferramentas. Exemplos:
 | Configuração do servidor | `fb_config_get`, `fb_config_diff`, `fb_config_set` (Tier 2) |
 | Logs | `fb_firebird_log` |
 | Capacidade | `fb_trends`, `fb_gstat`, `fb_index_stats` |
+| Estado do cluster | `fb_cluster_status`, `fb_cluster_service` |
+| Mudar o master | `fb_cluster_switchover` (sem perda de dados) ou `fb_cluster_failover` (master perdido), depois `fb_cluster_rejoin` (Tier 2) |
 
 Os jobs são assíncronos: envie → `fb_job_status`. Os jobs de um banco rodam
 um de cada vez. Um job sobrevive a um reinício do fbmcp apenas como
@@ -415,7 +440,7 @@ encontra o arquivo.
 | Sintoma | Significado / solução |
 |---|---|
 | As ferramentas não aparecem | Sintaxe do JSON, caminhos absolutos, reinício completo do cliente; o log MCP do cliente |
-| Falta uma ferramenta na lista | Escondida de propósito (§1): acima do seu tier máximo, sem entrada em `agents:` ou sem `migrations_dir` |
+| Falta uma ferramenta na lista | Escondida de propósito (§1): acima do seu tier máximo, sem entrada em `agents:`, sem `migrations_dir` ou sem a seção `rcm:` |
 | O servidor sai na hora | `fbmcpctl doctor`; um segredo faltando; um serviço não lê o seu keyring (use `secrets.dir`) |
 | Tier 2 "confirmation rejected: channel policy" | Esperado no chat. Aprove na bandeja ou com `fbmcpctl approve` |
 | Tier 2 "no open maintenance window" | `fb_window_open` para o **mesmo** `db` que você passa para a ferramenta |

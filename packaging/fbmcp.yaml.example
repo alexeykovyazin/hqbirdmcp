@@ -30,6 +30,12 @@ state:
 #   rate_burst: 60          # burst size
 #   max_live_sessions: 16   # open MCP sessions per key
 #   session_idle_minutes: 30  # global only: an idle session is closed
+# rcm:                       # HQbird cluster manager on this host (fb_cluster_* tools);
+#   url: https://127.0.0.1:7444   # hqbird-install writes it on Linux. Loopback only,
+#   ca_file: /opt/hqbirdrcm/certs/ca.crt   # unless allow_non_loopback: true
+#   user: rcmadmin
+#   password_env: FBMCP_RCM_PASSWORD
+#   timeout_seconds: 900
 notify:
   webhook_url: ""
   webhook_secret_env: ""

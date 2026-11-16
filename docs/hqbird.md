@@ -31,7 +31,7 @@ Prints one JSON line and exits 0. It never reads a config and never starts
 the kernel. fbagent reads it (`productupdate` `VersionFromCLI`, 2 s).
 
 ```
-{"version":"2027.2.21"}
+{"version":"2027.2.24"}
 ```
 
 A build without `-ldflags "-X main.version=…"` prints `dev`.
@@ -97,6 +97,13 @@ Exit codes: `0` done (there can be warnings), `1` failed, `2` usage error.
 3. **Secrets** go to the secrets folder: the Local API token of each line
    (from stdin, else from `agent_config.json` when it is plain text) and
    the SYSDBA password (stdin only).
+   **Cluster manager** (Linux): when `/opt/hqbirdrcm/rcm.json` exists, it
+   adds the `rcm:` section (`url` `https://127.0.0.1:7444`, `ca_file`,
+   `user`) and stores the first RCM password (`clusterca/*/rcm-initial-password`
+   in an agent folder) in the secret `FBMCP_RCM_PASSWORD`, only when that
+   secret does not exist yet. When the RCM is gone, it removes the section
+   it added. An `rcm:` section of the operator stays. Replace the first
+   password with `fb_cluster_rcm_password`.
 4. **Service.** Windows: service `fbmcp` as `NT SERVICE\fbmcp`, folder
    ACLs, start/stop rights on the Firebird service of every line, read on
    each `agent_config.json`. Linux: unit, sudoers for the Firebird units.
@@ -148,7 +155,7 @@ Only `agent_config` is required. A field given here wins over the files.
 
 ```json
 {
-  "version": "2027.2.21",
+  "version": "2027.2.24",
   "config": "C:\\HQbirdData\\fbmcp\\fbmcp.yaml",
   "state_dir": "C:\\HQbirdData\\fbmcp\\state",
   "service": "fbmcp",

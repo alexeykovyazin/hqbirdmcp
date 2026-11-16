@@ -23,11 +23,11 @@ lines): see [`hqbird.md`](hqbird.md) instead of sections 3–4.
 
 ## 2. Get and build
 
-1. Install **git** and **Go ≥ 1.25.13** (CGO is not needed). Windows:
+1. Install **git** and **Go ≥ 1.26.11** (CGO is not needed). Windows:
    ```powershell
    winget install Git.Git
    winget install GoLang.Go
-   go version        # go1.25.13 or later; if "go" is not found, open a new window
+   go version        # go1.26.11 or later (an older Go downloads it on the first build); if "go" is not found, open a new window
    ```
    Linux: git from your packages, Go from https://go.dev/dl/.
 2. Get the source and build:

@@ -24,11 +24,11 @@ Firebird): veja [`hqbird.md`](hqbird.md) em vez das seções 3–4.
 
 ## 2. Obter e compilar
 
-1. Instale o **git** e o **Go ≥ 1.25.13** (CGO não é necessário). Windows:
+1. Instale o **git** e o **Go ≥ 1.26.11** (CGO não é necessário). Windows:
    ```powershell
    winget install Git.Git
    winget install GoLang.Go
-   go version        # go1.25.13 ou mais novo; se "go" não for encontrado, abra uma nova janela
+   go version        # go1.26.11 ou mais novo (um Go antigo o baixa na primeira compilação); se "go" não for encontrado, abra uma nova janela
    ```
    Linux: git pelos pacotes da distribuição, Go em https://go.dev/dl/.
 2. Baixe o código e compile:

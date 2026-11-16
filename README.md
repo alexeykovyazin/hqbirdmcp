@@ -33,7 +33,8 @@ recovery; in Portuguese (Brazil):
 
 ## Build from source
 
-Requirements: Go ≥ 1.25.13, CGO not needed (pure-Go Firebird driver),
+Requirements: Go ≥ 1.26.11 (an older Go 1.21+ downloads go1.26.11 by itself on the first build; this needs internet),
+CGO not needed (pure-Go Firebird driver),
 a reachable Firebird 2.5–5.0 server. Windows and Linux.
 
 ```bash
@@ -89,7 +90,7 @@ must not.
 
 ### Environment (this dev host)
 
-- Go 1.25.13, Windows amd64
+- Go 1.26.11 (the toolchain line of `go.mod`), Windows amd64
 - Local Firebird instances (HQbird installs, all running as services):
   - FB 2.5 — port 3052 (`C:\HQbird\Firebird25`)
   - FB 3.0 — port 3053 (`C:\HQbird\Firebird30`)

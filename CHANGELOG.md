@@ -4,6 +4,10 @@ Versions follow ADR-038 (`YYYY.N.N`, own line). Older builds were `dev`.
 
 ## [Unreleased]
 
+- Docs: runbook (en, pt-BR), hqbird, agent-bridge, tool-reference and the
+  example config describe the HQbird cluster tools and the `rcm:` section;
+  Go 1.26.11 in the requirements; version examples 2027.2.24.
+
 ## [2027.2.24] - 2026-11-15
 
 - Cluster services through fbmcp (RCM 2027.5.11+, hqcluster3

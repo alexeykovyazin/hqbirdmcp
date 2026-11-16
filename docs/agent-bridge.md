@@ -54,8 +54,8 @@ Per-tool reference (args, tiers, confirmation channels):
 
 | Tier | Tools |
 |---|---|
-| 0 (17) | `fb_agent_instances`, `fb_agent_status`, `fb_agent_databases`, `fb_agent_artifact_list`, `fb_agent_artifact_get`, `fb_agent_job_status`, `fb_agent_operation`, `fb_agent_dbaccess`, `fb_agent_dbaccess_check`, `fb_agent_update_status`, `fb_agent_runs`, `fb_agent_license`, `fb_agent_license_request`, `fb_agent_product_update_status`, `fb_agent_discover`, `fb_agent_perf_report`, `fb_agent_backup_config` (+ `fb_firebird_log`, instance-scoped, agent optional) |
-| 1 (5) | `fb_agent_job_run` (dynamic), `fb_agent_run_cancel`, `fb_agent_license_set`, `fb_agent_config_reload`, `fb_agent_pprof` |
+| 0 (18) | `fb_agent_cluster` (fbagent 3.1.0+), `fb_agent_instances`, `fb_agent_status`, `fb_agent_databases`, `fb_agent_artifact_list`, `fb_agent_artifact_get`, `fb_agent_job_status`, `fb_agent_operation`, `fb_agent_dbaccess`, `fb_agent_dbaccess_check`, `fb_agent_update_status`, `fb_agent_runs`, `fb_agent_license`, `fb_agent_license_request`, `fb_agent_product_update_status`, `fb_agent_discover`, `fb_agent_perf_report`, `fb_agent_backup_config` (+ `fb_firebird_log`, instance-scoped, agent optional) |
+| 1 (7) | `fb_agent_job_run` (dynamic), `fb_agent_run_cancel`, `fb_agent_license_set`, `fb_agent_config_reload`, `fb_agent_pprof`, `fb_agent_cluster_pairing` (dynamic: `status` is Tier 0), `fb_agent_cluster_rcm` (fbagent 3.1.0+) |
 | 2 (7) | `fb_agent_restart`, `fb_agent_stop`, `fb_agent_start`, `fb_agent_update_apply`, `fb_agent_product_update_apply`, `fb_agent_register`, `fb_agent_config_set` |
 
 Async agent operations (202 → `operation_id`) are polled internally

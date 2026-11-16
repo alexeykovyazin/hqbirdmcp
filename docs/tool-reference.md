@@ -4,7 +4,7 @@ Catalog of tools the server advertises. Source of truth is `toolMeta` in [`cmd/f
 
 Examples use instance ids **`fb3`**, **`fb4`**, **`fb5`** and database ids **`spike3`**, **`spike4`**, **`spike5`** (the dev host). Tools take a registry id (`db` or `instance`), never a file path or connection string.
 
-A client sees only the tools it can use. The tool list hides Tier 3, tools above the identity's max tier, `fb_confirm` / `fb_cancel` for a read-only identity, the fbagent tools while `agents:` is empty (`fb_agent_discover` and `fb_agent_register` stay), and the migration tools while no database has `migrations_dir`. A direct call to a hidden tool gets a clear refusal. `fb_demo_write` is registered only with `FBMCP_DEMO_TOOLS=1`.
+A client sees only the tools it can use. The tool list hides Tier 3, tools above the identity's max tier, `fb_confirm` / `fb_cancel` for a read-only identity, the fbagent tools while `agents:` is empty (`fb_agent_discover` and `fb_agent_register` stay), the migration tools while no database has `migrations_dir`, and the cluster tools while there is no `rcm:` section. A direct call to a hidden tool gets a clear refusal. `fb_demo_write` is registered only with `FBMCP_DEMO_TOOLS=1`.
 
 ## How confirmation works
 

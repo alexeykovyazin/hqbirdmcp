@@ -1,9 +1,9 @@
 # fbmcp — full guide: install and use
 
 Audience: the person who installs and runs fbmcp, and did **not** build it.
-No Go or Firebird internals knowledge is needed. State as of 2026-11-09,
-version 2027.2.21 (local and remote mode, HQbird install, fbagent bridge,
-result grid).
+No Go or Firebird internals knowledge is needed. State as of 2026-11-16,
+version 2027.2.24 (local and remote mode, HQbird install, fbagent bridge,
+HQbird cluster, result grid).
 
 Short versions: [English](quickstart-en.md) | [Русский](quickstart-ru.md) |
 [Português (Brasil)](quickstart-pt.md). This guide in Portuguese (Brazil):
@@ -20,16 +20,17 @@ ADRs in [decisions/](decisions/).
 fbmcp is an MCP server for Firebird 2.5–5.0 on Windows and Linux. An MCP
 client (Claude Desktop, Claude Code, Cursor, Codex, ZCode, others) uses it
 to work as a DBA: monitoring, backups and verified restores, SQL/DDL/DCL,
-indexes, users and grants, `firebird.conf`, a scheduler, migrations, and the
-HQbird fbagent. It has **122 tools**: 56 read-only (Tier 0), 44 Tier 1,
+indexes, users and grants, `firebird.conf`, a scheduler, migrations, the
+HQbird fbagent and the HQbird cluster. It has **122 tools**: 56 read-only (Tier 0), 44 Tier 1,
 21 Tier 2, 1 Tier 3 (disabled). `fb_demo_write` is there only when the
 server runs with `FBMCP_DEMO_TOOLS=1`.
 
 A client sees only the tools it can use. The tool list hides: Tier 3,
 tools above the identity's max tier, `fb_confirm` and `fb_cancel` for a
 read-only identity, the fbagent tools while `agents:` is empty
-(`fb_agent_discover` and `fb_agent_register` stay), and the migration tools
-while no database has `migrations_dir`. When a config reload changes this
+(`fb_agent_discover` and `fb_agent_register` stay), the migration tools
+while no database has `migrations_dir`, and the cluster tools while
+`fbmcp.yaml` has no `rcm:` section. When a config reload changes this
 set, the client gets a new list. A direct call to a hidden tool gets a
 clear refusal.
 
@@ -83,8 +84,10 @@ default: one service per server for all Firebird lines, set up by
 
 ## 4. Get the binaries
 
-Requirements: Go ≥ 1.25.13 (to build), CGO not needed; Firebird 2.5–5.0;
-fbagent ≥ 2.67 with the Local API for the agent tools (optional).
+Requirements: Go ≥ 1.26.11 (an older Go 1.21+ downloads go1.26.11 by itself on the first build; this needs internet),
+CGO not needed; Firebird 2.5–5.0; fbagent ≥ 2.67 with the Local API for
+the agent tools (optional); fbagent 3.1.0+ and RCM 2027.5.11+ for the
+cluster tools (optional).
 
 ```powershell
 git clone https://github.com/alexeykovyazin/hqbirdmcp.git
@@ -272,7 +275,7 @@ Firebird unit and the ufw rule, then runs `doctor --remote`. Add
 Read-only by default; every Tier 1 request waits for an operator, and
 `fb_confirm` from the agent is refused. Limits: remote.md §6–7.
 
-## 9. fbagent bridge (optional)
+## 9. fbagent bridge and HQbird cluster (optional)
 
 The agent tools (`fb_agent_status`, `fb_agent_job_run`, ...) use the HQbird
 fbagent Local API on the same host.
@@ -295,6 +298,24 @@ credentials, so this grant is the operator's decision
 ([agent-bridge.md](agent-bridge.md)). When the agent check fails, the tool
 writes nothing.
 
+**HQbird cluster (RCM).** The cluster tools call the HQbird cluster
+manager (`hqbirdrcm`) on the same host. They are shown only when
+`fbmcp.yaml` has an `rcm:` section (`url`, `ca_file`, `user`,
+`password_env`). On a Linux HQbird server `fbmcp ctl hqbird-install` writes
+it from `/opt/hqbirdrcm/rcm.json` and stores the first RCM password in the
+secret `FBMCP_RCM_PASSWORD`; elsewhere add the section by hand
+([tool-reference.md](tool-reference.md#hqbird-cluster-rcm)). Then:
+
+1. `fb_cluster_rcm_password`: replace the first RCM password (Tier 1).
+2. A new cluster: open the pairing window on each host
+   (`fb_agent_cluster_pairing`), start the RCM on the master
+   (`fb_agent_cluster_rcm`), link the hosts (`fb_cluster_link`), make the
+   replicas (`fb_cluster_reinit`, Tier 2) and compare the data
+   (`fb_cluster_verify`). Steps: [prompts/cluster-setup.md](../prompts/cluster-setup.md).
+3. Cluster services (switchover, failover, rejoin):
+   `fb_cluster_service` shows them and the checks; the moves are Tier 2.
+   Steps: [prompts/cluster-services.md](../prompts/cluster-services.md).
+
 ## 10. Daily use
 
 Ask the client in plain words; it picks the tools. Examples:
@@ -313,6 +334,8 @@ Ask the client in plain words; it picks the tools. Examples:
 | Server config | `fb_config_get`, `fb_config_diff`, `fb_config_set` (Tier 2) |
 | Logs | `fb_firebird_log` |
 | Capacity | `fb_trends`, `fb_gstat`, `fb_index_stats` |
+| Cluster state | `fb_cluster_status`, `fb_cluster_service` |
+| Move the master | `fb_cluster_switchover` (no data loss) or `fb_cluster_failover` (master lost), then `fb_cluster_rejoin` (Tier 2) |
 
 Jobs are async: submit → `fb_job_status`. Jobs on one database run one at
 a time. A job survives an fbmcp restart only as `interrupted`: submit it
@@ -397,7 +420,7 @@ the file.
 | Symptom | Meaning / fix |
 |---|---|
 | Tools do not appear | JSON syntax, absolute paths, full client restart; the client's MCP log |
-| One tool is missing from the list | Hidden on purpose (§1): above your max tier, no `agents:` entry, or no `migrations_dir` |
+| One tool is missing from the list | Hidden on purpose (§1): above your max tier, no `agents:` entry, no `migrations_dir`, or no `rcm:` section |
 | Server exits at once | `fbmcpctl doctor`; a missing secret; a service cannot read your keyring (use `secrets.dir`) |
 | Tier 2 "confirmation rejected: channel policy" | Expected in the chat. Approve in the tray or with `fbmcpctl approve` |
 | Tier 2 "no open maintenance window" | `fb_window_open` for the **same** `db` you pass to the tool |
