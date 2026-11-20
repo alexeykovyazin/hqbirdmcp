@@ -637,6 +637,7 @@ func registerAgentTools(server *mcp.Server, gt *gatedTools) {
 		gt.agentProductUpdateExec())
 	registerAgentClusterPairing(server, gt)
 	registerAgentCluster(server, gt)
+	registerAgentDBA(server, gt)
 }
 
 // agentProductUpdateExec drives POST products/{product}/update/apply and

@@ -105,6 +105,17 @@ func SystemTools() []ToolMeta {
 		{Name: "fb_agent_pprof", Tier: 1, Scope: "instance"},
 		{Name: "fb_agent_cluster_pairing", Tier: 1, Scope: "instance"}, // dynamic: action=status reads at Tier 0; on/off Tier 1 (fbagent cluster_pairing)
 		{Name: "fb_agent_cluster_rcm", Tier: 1, Scope: "instance"},     // POST /v1/cluster/rcm: make the RCM of a new cluster (Firebird does not stop)
+		// fbagent DBA operations (/v1/dba/..., fbagent DBA_ASSISTANT_PLAN.ru.md
+		// §3): reads and checks are Tier 0; a run takes its tier from the class
+		// of the check.
+		{Name: "fb_agent_tools_running", Tier: 0, Scope: "instance"}, // Firebird tools in the process table
+		{Name: "fb_agent_dba_ops", Tier: 0, Scope: "instance"},
+		{Name: "fb_agent_dba_database", Tier: 0, Scope: "instance"},
+		{Name: "fb_agent_dba_runs", Tier: 0, Scope: "instance"},
+		{Name: "fb_agent_dba_check", Tier: 0, Scope: "instance"}, // POST, but changes nothing
+		{Name: "fb_agent_dba_output", Tier: 0, Scope: "instance"},
+		{Name: "fb_agent_dba_cancel", Tier: 1, Scope: "instance"},
+		{Name: "fb_agent_dba_run", Tier: 1, Scope: "instance"}, // dynamic: read/normal 1, disruptive 2, destructive 3, critical refused
 		{Name: "fb_agent_restart", Tier: 2, Scope: "instance"},
 		{Name: "fb_agent_stop", Tier: 2, Scope: "instance"},
 		{Name: "fb_agent_start", Tier: 2, Scope: "instance"},

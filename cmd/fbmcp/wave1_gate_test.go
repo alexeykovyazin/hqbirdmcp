@@ -223,7 +223,7 @@ func TestGatedToolsHaveArgSpecs(t *testing.T) {
 	ownPath := map[string]bool{
 		"fb_write": true, "fb_migration_apply": true, "fb_schedule_create": true,
 		"fb_db_register": true, "fb_demo_write": true, "fb_agent_register": true, "fb_agent_config_set": true,
-		"fb_agent_job_run": true,
+		"fb_agent_job_run": true, "fb_agent_dba_run": true,
 	}
 	gt := newTestGT(t)
 	gt.wf = workflows.New(gt.st)

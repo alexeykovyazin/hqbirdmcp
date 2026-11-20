@@ -4,6 +4,18 @@ Versions follow ADR-038 (`YYYY.N.N`, own line). Older builds were `dev`.
 
 ## [Unreleased]
 
+- One-time DBA operations through fbagent (`/v1/dba/...`, capability
+  `dba_ops`). Tier 0: `fb_agent_tools_running` (Firebird tools that run
+  now), `fb_agent_dba_ops` (the catalog), `fb_agent_dba_database` (state of
+  a database; `tables=true` lists its tables), `fb_agent_dba_runs`,
+  `fb_agent_dba_check` (check lines and the exact commands, changes
+  nothing), `fb_agent_dba_output` (at most 64 KB, says when it was cut).
+  Tier 1: `fb_agent_dba_cancel`. `fb_agent_dba_run` calls the check first,
+  runs nothing when it blocks, and takes its tier from the class of the
+  check: read/normal Tier 1, disruptive Tier 2, destructive Tier 3
+  (disabled), critical refused (Firebird stop/start/restart stay with
+  `fb_agent_stop`/`start`/`restart`). The approver sees the check lines and
+  the exact commands. On a 409 the run checks once more and runs once more.
 - Docs: runbook (en, pt-BR), hqbird, agent-bridge, tool-reference and the
   example config describe the HQbird cluster tools and the `rcm:` section;
   Go 1.26.11 in the requirements; version examples 2027.2.24.

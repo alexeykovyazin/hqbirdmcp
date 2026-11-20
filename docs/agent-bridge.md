@@ -54,14 +54,35 @@ Per-tool reference (args, tiers, confirmation channels):
 
 | Tier | Tools |
 |---|---|
-| 0 (18) | `fb_agent_cluster` (fbagent 3.1.0+), `fb_agent_instances`, `fb_agent_status`, `fb_agent_databases`, `fb_agent_artifact_list`, `fb_agent_artifact_get`, `fb_agent_job_status`, `fb_agent_operation`, `fb_agent_dbaccess`, `fb_agent_dbaccess_check`, `fb_agent_update_status`, `fb_agent_runs`, `fb_agent_license`, `fb_agent_license_request`, `fb_agent_product_update_status`, `fb_agent_discover`, `fb_agent_perf_report`, `fb_agent_backup_config` (+ `fb_firebird_log`, instance-scoped, agent optional) |
-| 1 (7) | `fb_agent_job_run` (dynamic), `fb_agent_run_cancel`, `fb_agent_license_set`, `fb_agent_config_reload`, `fb_agent_pprof`, `fb_agent_cluster_pairing` (dynamic: `status` is Tier 0), `fb_agent_cluster_rcm` (fbagent 3.1.0+) |
+| 0 (24) | `fb_agent_cluster` (fbagent 3.1.0+), `fb_agent_instances`, `fb_agent_status`, `fb_agent_databases`, `fb_agent_artifact_list`, `fb_agent_artifact_get`, `fb_agent_job_status`, `fb_agent_operation`, `fb_agent_dbaccess`, `fb_agent_dbaccess_check`, `fb_agent_update_status`, `fb_agent_runs`, `fb_agent_license`, `fb_agent_license_request`, `fb_agent_product_update_status`, `fb_agent_discover`, `fb_agent_perf_report`, `fb_agent_backup_config`, `fb_agent_tools_running`, `fb_agent_dba_ops`, `fb_agent_dba_database`, `fb_agent_dba_runs`, `fb_agent_dba_check`, `fb_agent_dba_output` (+ `fb_firebird_log`, instance-scoped, agent optional) |
+| 1 (9) | `fb_agent_job_run` (dynamic), `fb_agent_dba_run` (dynamic: class of the check), `fb_agent_run_cancel`, `fb_agent_dba_cancel`, `fb_agent_license_set`, `fb_agent_config_reload`, `fb_agent_pprof`, `fb_agent_cluster_pairing` (dynamic: `status` is Tier 0), `fb_agent_cluster_rcm` (fbagent 3.1.0+) |
 | 2 (7) | `fb_agent_restart`, `fb_agent_stop`, `fb_agent_start`, `fb_agent_update_apply`, `fb_agent_product_update_apply`, `fb_agent_register`, `fb_agent_config_set` |
 
 Async agent operations (202 → `operation_id`) are polled internally
 (~2 s ticks, bounded by `timeout_seconds`, progress via the job runner);
 if the budget runs out the tool returns the `operation_id` and the client
 can resume later with Tier-0 `fb_agent_operation`.
+
+## One-time DBA operations
+
+An fbagent with capability `dba_ops` serves `/v1/dba/...`: one-time DBA
+actions on its host — shutdown and online, copy, nbackup unlock, online and
+exclusive validation, mend, gstat, sweep, ICU fix, history cleanup, the
+database properties, trace sessions, limbo transactions, the stop of a
+Firebird tool or of a gbak. The database is named by its full path as the
+agent knows it.
+
+1. `fb_agent_dba_ops` lists the operations, their class and parameters;
+   `fb_agent_dba_database` shows the state of a database;
+   `fb_agent_tools_running` shows the Firebird tools that run now.
+2. `fb_agent_dba_check` (Tier 0) shows the check lines and the exact
+   commands (passwords masked). It changes nothing.
+3. `fb_agent_dba_run` calls the check itself and takes the tier from its
+   class: `read`/`normal` Tier 1, `disruptive` Tier 2 (window on `db`),
+   `destructive` Tier 3 (disabled), `critical` refused — Firebird stop,
+   start and restart stay with `fb_agent_stop`/`start`/`restart`.
+4. `fb_agent_dba_runs` and `fb_agent_dba_output` follow the run;
+   `fb_agent_dba_cancel` (Tier 1) stops it.
 
 ## Phase 11: discovery, logs, perf reports, job settings
 

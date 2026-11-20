@@ -48,11 +48,30 @@ func New(baseURL, token string) (*Client, error) {
 // do is the single request choke point: Bearer header, JSON in/out, and the
 // error mapping every tool relies on.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body, out any) error {
+	status, _, data, err := c.send(ctx, method, path, query, body)
+	if err != nil {
+		return err
+	}
+	if status < 300 && out != nil {
+		if err := json.Unmarshal(data, out); err != nil {
+			return fmt.Errorf("fbagent service-error: %s %s: response is not valid JSON: %w", method, path, err)
+		}
+	}
+	if status >= 300 {
+		return apiError(status, data)
+	}
+	return nil
+}
+
+// send makes one request and returns the status, the headers and the body
+// (at most maxBody bytes). Only a transport failure is an error: the caller
+// maps the status.
+func (c *Client) send(ctx context.Context, method, path string, query url.Values, body any) (int, http.Header, []byte, error) {
 	var rd io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("fbagent bad-request: encode body: %w", err)
+			return 0, nil, nil, fmt.Errorf("fbagent bad-request: encode body: %w", err)
 		}
 		rd = bytes.NewReader(b)
 	}
@@ -62,7 +81,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	}
 	req, err := http.NewRequestWithContext(ctx, method, u, rd)
 	if err != nil {
-		return fmt.Errorf("fbagent transport: %w", err)
+		return 0, nil, nil, fmt.Errorf("fbagent transport: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	if body != nil {
@@ -70,22 +89,14 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("fbagent transport: %s %s: %w", method, path, err)
+		return 0, nil, nil, fmt.Errorf("fbagent transport: %s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 	if err != nil {
-		return fmt.Errorf("fbagent transport: read body: %w", err)
+		return 0, nil, nil, fmt.Errorf("fbagent transport: read body: %w", err)
 	}
-	if resp.StatusCode < 300 && out != nil {
-		if err := json.Unmarshal(data, out); err != nil {
-			return fmt.Errorf("fbagent service-error: %s %s: response is not valid JSON: %w", method, path, err)
-		}
-	}
-	if resp.StatusCode >= 300 {
-		return apiError(resp.StatusCode, data)
-	}
-	return nil
+	return resp.StatusCode, resp.Header, data, nil
 }
 
 // apiError maps the agent's error envelope {"error":{"code","message"}} +
