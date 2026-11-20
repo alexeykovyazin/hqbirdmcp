@@ -245,6 +245,9 @@ func (gt *gatedTools) requestAgentDBARun(ctx context.Context, a agentDBARunArg) 
 	argsMap := map[string]any{
 		"agent": a.Agent, "op": a.Op, "database": a.Database, "params": a.Params, "reason": a.Reason,
 		"class": chk.Class, "confirm_token": chk.ConfirmToken, "confirm_name": chk.ConfirmName,
+		// What the approver was shown. A new check must give the same
+		// commands, or the approval does not cover it.
+		"commands": dbaCommandText(chk.Commands),
 	}
 	reply, denied := gt.requestGatedMeta(ctx, policy.ToolMeta{Name: agentDBARunTool, Tier: tier, Scope: "instance"}, impact, a.Db, argsMap, a.Mode)
 	if denied {
@@ -256,8 +259,19 @@ func (gt *gatedTools) requestAgentDBARun(ctx context.Context, a agentDBARunArg) 
 	return reply, denied
 }
 
+// dbaCommandText is the commands of a check as one text: what an approval
+// covers.
+func dbaCommandText(cmds []agentapi.DBACommand) string {
+	lines := make([]string, 0, len(cmds))
+	for _, c := range cmds {
+		lines = append(lines, c.Command)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // runAgentDBA is the fb_agent_dba_run executor: run with the token of the
-// check; on a refusal one new check and one more run; then a short wait.
+// check; on a refusal one new check and one more run - only when the class
+// and the commands are the ones that were approved; then a short wait.
 func (gt *gatedTools) runAgentDBA(ctx context.Context, dbID string, args map[string]any, prog func(float64, string)) (string, error) {
 	if prog == nil {
 		prog = func(float64, string) {}
@@ -290,6 +304,8 @@ func (gt *gatedTools) runAgentDBA(ctx context.Context, dbID string, args map[str
 			return "", fmt.Errorf("%s\nthe new check blocks it; nothing was run:\n%s", formatDBARefusal(refused), formatDBACheck("", chk))
 		case chk.Class != agentStr(args["class"]):
 			return "", fmt.Errorf("%s\nthe class changed from %s to %s; nothing was run. Request the action again", formatDBARefusal(refused), agentStr(args["class"]), chk.Class)
+		case dbaCommandText(chk.Commands) != agentStr(args["commands"]):
+			return "", fmt.Errorf("%s\nthe commands changed since the approval; nothing was run. Request the action again. The commands now:\n%s", formatDBARefusal(refused), dbaCommandText(chk.Commands))
 		}
 		req.ConfirmToken, req.ConfirmName = chk.ConfirmToken, chk.ConfirmName
 		start, err = cl.DBARun(ctx, op, req)

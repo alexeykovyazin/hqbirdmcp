@@ -270,7 +270,8 @@ func TestDBARunRetryOnce(t *testing.T) {
 	ctx := context.Background()
 	prog := func(float64, string) {}
 	args := func() map[string]any {
-		return map[string]any{"op": "stale", "database": "/data/a.fdb", "class": "disruptive", "confirm_token": "old", "_grant_identity": "tester"}
+		return map[string]any{"op": "stale", "database": "/data/a.fdb", "class": "disruptive", "confirm_token": "old", "_grant_identity": "tester",
+			"commands": "gfix -stale -user SYSDBA -password *** /data/a.fdb"}
 	}
 
 	// One refusal: check again, run again with the new token.
@@ -303,6 +304,19 @@ func TestDBARunRetryOnce(t *testing.T) {
 	stub.staleClass = "destructive"
 	if _, err := gt.execs[agentDBARunTool](ctx, "spike5", args(), prog); err == nil || !contains(err.Error(), "class changed") {
 		t.Fatalf("class change: %v", err)
+	}
+	if _, r := stub.counts("stale"); r != 1 {
+		t.Fatalf("runs = %d, want 1", r)
+	}
+
+	// The commands changed on the new check: the approval does not cover
+	// them, so there is no second run.
+	gt, _, stub = newDBAGT(t)
+	stub.staleRefusals = 1
+	other := args()
+	other["commands"] = "gfix -stale -user SYSDBA -password *** /data/other.fdb"
+	if _, err := gt.execs[agentDBARunTool](ctx, "spike5", other, prog); err == nil || !contains(err.Error(), "commands changed") {
+		t.Fatalf("command change: %v", err)
 	}
 	if _, r := stub.counts("stale"); r != 1 {
 		t.Fatalf("runs = %d, want 1", r)

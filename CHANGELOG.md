@@ -15,7 +15,8 @@ Versions follow ADR-038 (`YYYY.N.N`, own line). Older builds were `dev`.
   check: read/normal Tier 1, disruptive Tier 2, destructive Tier 3
   (disabled), critical refused (Firebird stop/start/restart stay with
   `fb_agent_stop`/`start`/`restart`). The approver sees the check lines and
-  the exact commands. On a 409 the run checks once more and runs once more.
+  the exact commands. On a 409 the run checks once more and runs once more,
+  only when the class and the commands are the ones that were approved.
 - Docs: runbook (en, pt-BR), hqbird, agent-bridge, tool-reference and the
   example config describe the HQbird cluster tools and the `rcm:` section;
   Go 1.26.11 in the requirements; version examples 2027.2.24.
