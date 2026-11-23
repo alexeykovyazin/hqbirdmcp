@@ -4,6 +4,8 @@ Versions follow ADR-038 (`YYYY.N.N`, own line). Older builds were `dev`.
 
 ## [Unreleased]
 
+## [2027.2.25] - 2026-11-23
+
 - One-time DBA operations through fbagent (`/v1/dba/...`, capability
   `dba_ops`). Tier 0: `fb_agent_tools_running` (Firebird tools that run
   now), `fb_agent_dba_ops` (the catalog), `fb_agent_dba_database` (state of
