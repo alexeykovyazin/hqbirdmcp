@@ -145,6 +145,9 @@ jobs:
           GPATH="$(docker exec "$FBMCP_CID" sh -c 'command -v gstat 2>/dev/null || ls /opt/firebird/bin/gstat /usr/local/firebird/bin/gstat 2>/dev/null | head -1')"
           test -n "$GPATH" || { echo "no gstat inside container" >&2; exit 1; }
           echo "container gstat: $GPATH"
+          # gstat can be a link to the shared Debian fb_wrapper (firebird-utils 4.0):
+          # tee through the link would turn isql, gbak and the rest into this wrapper.
+          sudo rm -f /usr/local/firebird/bin/gstat
           cat <<WRAP | sudo tee /usr/local/firebird/bin/gstat > /dev/null
           #!/bin/sh
           # firebird 2.5 refuses to run gstat as root, prefer the firebird user
