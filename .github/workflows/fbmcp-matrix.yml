@@ -103,28 +103,35 @@ jobs:
       - name: expose container tools at bin_dir (Debian renames isql→isql-fb, gstat→fbstat)
         run: |
           sudo mkdir -p /usr/local/firebird/bin
+          # Ubuntu 26.04: /usr/bin/<tool> is the Debian fb_wrapper. It takes the tool
+          # from the name it is called by and picks Firebird 4.0 before 3.0, so a link
+          # named isql or gstat finds no tool, and gbak 4.0 cannot restore into 2.5.
+          # Call the Debian name and pin 3.0 (the variable does nothing without the wrapper).
           link_tool() { # target-name candidate...
             local name="$1"; shift
             for cand in "$@"; do
               if src="$(command -v "$cand" 2>/dev/null)"; then
-                sudo ln -sf "$(readlink -f "$src")" "/usr/local/firebird/bin/$name"
+                printf '#!/bin/sh\nFIREBIRD_VERSION=3.0\nexport FIREBIRD_VERSION\nexec %s "$@"\n' "$src" \
+                  | sudo tee "/usr/local/firebird/bin/$name" > /dev/null
+                sudo chmod +x "/usr/local/firebird/bin/$name"
                 return 0
               fi
             done
             echo "warning: no candidate for $name" >&2
           }
-          link_tool isql isql isql-fb
-          link_tool gstat gstat fbstat gstat-fb
+          link_tool isql isql-fb isql
+          link_tool gstat fbstat gstat gstat-fb
           link_tool gbak gbak gbak-fb
           link_tool gfix gfix gfix-fb
           link_tool nbackup nbackup nbackup-fb
           link_tool fbsvcmgr fbsvcmgr fbsvcmgr-fb
           link_tool gsec gsec gsec-fb
           ls -la /usr/local/firebird/bin
+          /usr/local/firebird/bin/isql -z < /dev/null 2>&1 | head -2 || true
       - name: restore the employee sample over the empty container DB, then seed it
         run: |
-          ISQL="$(command -v isql-fb || command -v isql)"
-          GBAK="$(command -v gbak-fb || command -v gbak)"
+          ISQL=/usr/local/firebird/bin/isql
+          GBAK=/usr/local/firebird/bin/gbak
           DSN="127.0.0.1/3050:${{ matrix.data }}/employee.fdb"
           "$GBAK" -rep -user SYSDBA -password masterkey \
             packaging/docker/testdata/employee.fbk "$DSN"
